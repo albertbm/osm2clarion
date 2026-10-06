@@ -151,6 +151,25 @@ grid pair at 0x5d4 stays (11, 11), so its byte order never mattered. Level 5 (th
 level 4 still have to be rebuilt for the new cells even where shipped parcels exist, because the
 shipped ones are sea only. `lev_coarse.py` replaces them.
 
+Measured once, on Grimsey. A one-cell profile (B60R078R, no shift, a 4.4 km2 island)
+built against the stock 2017 card replaced the coarse sheet with one describing only that
+clip. Record counts in `LEV3456R.DAT`, stock then built:
+
+| section, level | stock | built |
+|---|---|---|
+| 1, 3 | 15,423 | 15,680 |
+| 1, 4 | 46 | 46 |
+| 1, 5 | 1,024 | 154 |
+| 1, 6 | 1,022 | 176 |
+| 2, 4 | 154 | 154 |
+| 2, 5 | 883 | 137 |
+
+Level 3 gains the new tile's parcels. Levels 5 and 6 and section 2 level 5 lose everything
+outside the clip, because the coarse steps build those levels from the profile's own source
+and write the result over the sheet. So a profile is a whole-database statement at levels 3
+to 6, not an addition to one. Every record in the result inflates: 16,347 in the coarse file
+and 69,639 in the tile, none failed. The chain runs; the output is not a card.
+
 That replacement is untested over a populated cell. Only four cells have ever been built, the
 four over Iceland, and they were the easy case: their level-4 and level-5 parcels shipped
 empty or sea-only, so there was nothing to preserve. `lev_coarse.py` replaces a coarse parcel
