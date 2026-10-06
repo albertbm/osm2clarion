@@ -17,6 +17,10 @@ Record layout (all big-endian, sizes in 16-bit words unless noted; "unit" = 4 by
           zero padded to a unit boundary.
   shape   u16 nvertices, u16 type, u16 ref (ffff), u16 x0, u16 y0, (n-1) x int8 dx,dy.
           Polygons repeat the first vertex as the last one. Points: type, ref, x, y.
+
+Only this form is modelled. A road-shape record (`fa_encode`, `lev_roads.fa_record`) shares
+the w2 = 0x00fa kind but counts shapes in a pair's second word rather than measuring units, so
+parse_record refuses it instead of returning a record short of its tail.
 """
 import struct
 
@@ -170,6 +174,12 @@ def parse_record(d):
         if off != 0xffff: nlayers = min(nlayers, off)
     assert nlayers == len(table), (nlayers, len(table))
     if geo_off == 0xffff: assert geo_len == 0
+    # A road-shape record counts shapes in a pair's second word instead of measuring units, so
+    # its layers stop short of the section and the groups below would drop the tail unnoticed.
+    if nlayers:
+        reach = max([off + ln for off, ln in table if off != 0xffff] + [nlayers])
+        assert reach == geo_len, ('layers reach %d of %d units: a road-shape record, whose '
+                                  'layer pairs count shapes, is not modelled here' % (reach, geo_len))
     layers = {}
     for i, (off, ln) in enumerate(table):
         if off == 0xffff: continue

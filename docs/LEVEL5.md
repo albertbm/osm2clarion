@@ -194,6 +194,12 @@ and 3 record of both databases: level 5 went from 110 byte-exact / 132 mismatche
 unchanged at 1,708 / 1,043, level 3 unchanged at 18,808 / 13,194. The 84 that still differ are the 42
 road-carrying records in each database, whose road block `clarion_bg` does not model.
 
+The level-4 and level-3 second numbers are road-shape records, not background records, and
+`parse_record` now refuses those outright rather than rebuilding them short, so they count as errors
+and no longer as mismatches. Level 4 over the two shipped files is 1,358 byte-exact and 1,027 refused.
+The level-5 figures are unaffected: the 84 are background records whose separate road block is simply
+not carried over.
+
 That replacement rule tested `w[9] == 0xffff` alone, so it read a record of the 2014 rebuilt kind
 (`w9/w10 = 0000/0000`) at w9/w10. `gi` came out 9, `geo_off` came out 0, the layer table was read from
 the record header, and `assert nlayers == len(table)` tripped. So all 13 such records in a 2014 rebuild

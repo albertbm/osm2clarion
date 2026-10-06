@@ -263,7 +263,7 @@ the two OSM readers.
 | tool | what it does |
 |---|---|
 | `clarion_tile.py` | read a tile into objects and write it back. Run on a tile it checks a byte-identical rebuild |
-| `clarion_bg.py` | parse and build inflated background records. Run on `*.bin` it checks byte-exact rebuilds |
+| `clarion_bg.py` | parse and build inflated background records. Run on `*.bin` it checks byte-exact rebuilds. A road-shape record shares the kind word but not the layout, and is refused |
 | `clarion_rd.py` | read a section-2 road record: node lists with per-node link entries |
 | `clarion_profile.py` | read a build profile; run it on a profile name to dump what the tools will see |
 | `inflate_tile.py` | every zlib record of a tile as a file, one per record |
