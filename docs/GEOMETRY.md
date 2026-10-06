@@ -257,7 +257,7 @@ reads the count. The Azores and Svalbard need the same move as Iceland. See
 
 ## Tools
 
-All in `tools/`, Python 3. `shapely` is needed wherever geometry is built; `pyosmium` only by
+All in `tools/`, Python 3. `shapely` is needed wherever geometry is built; `osmium` only by
 the two OSM readers.
 
 | tool | what it does |

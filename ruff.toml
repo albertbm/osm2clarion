@@ -1,0 +1,7 @@
+# The tools import each other by bare name and run as scripts, so tools/ is the
+# import root rather than a package.
+src = ["tools", "tests"]
+line-length = 100
+
+[lint]
+ignore = ["E402"]   # tests insert tools/ on sys.path before importing from it

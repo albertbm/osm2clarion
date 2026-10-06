@@ -14,3 +14,30 @@ work/
 
 # Port scaffolding, not part of the repository's history.
 NOTES-PORT.md
+
+# Virtualenvs, under any of the usual names.
+venv/
+env/
+.env
+
+# Tool caches.
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+
+# Editors.
+.idea/
+.vscode/
+*.swp
+
+# More map and firmware shapes, so none of it can be committed by accident.
+*.pbf
+*.bin
+*.7z
+*.tar.gz
+*.zip
+specimens/

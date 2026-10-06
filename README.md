@@ -19,9 +19,9 @@ DRSTR001.DAT                the directory index the unit reads instead of scanni
 
 ## What you need
 
-- Python 3.11 or later, for `tomllib`.
+- Python 3.11 or later, for `tomllib`. Not 3.14 yet: `osmium` has no wheel for it.
 - `shapely`, for everything that touches geometry.
-- `pyosmium`, only for the two scripts that read a `.pbf`. Supply their coastline and road
+- `osmium`, only for the two scripts that read a `.pbf`. Supply their coastline and road
   JSON another way and you can skip it.
 - An OSM extract as `.osm.pbf`. Geofabrik publishes them per country.
 - A base card, mounted read-only: the unit's own SD card, or an image. Four files are read
@@ -31,7 +31,7 @@ DRSTR001.DAT                the directory index the unit reads instead of scanni
 ## Running it
 
 ```
-pip install shapely pyosmium
+pip install shapely osmium
 python3 build.py --profile iceland --base /path/to/card --out out --only extract
 python3 build.py --profile iceland --base /path/to/card --out out
 
@@ -43,7 +43,7 @@ python3 build.py --profile iceland --base /path/to/card --out out
                                      index        DRSTR001.DAT
 ```
 
-`extract` is split off as the one step needing `pyosmium`. The rest takes a couple of minutes
+`extract` is split off as the one step needing `osmium`. The rest takes a couple of minutes
 on a laptop and leaves `out/` to copy onto a card. Copy those files and nothing else, and
 regenerate `DRSTR001.DAT` whenever one of them changes size, because the index stores sizes.
 Each step prints the command it runs, so it can be repeated by hand.

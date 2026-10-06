@@ -123,7 +123,7 @@ def main():
         if first not in names: raise SystemExit('no step %r (have: %s)' % (first, ', '.join(names)))
         plan = plan[names.index(first):]
     else:
-        plan = plan[1:]      # the extract step needs pyosmium; ask for it by name
+        plan = plan[1:]      # the extract step needs osmium; ask for it by name
     for name, fn in plan:
         print('\n===== %s' % name, flush=True)
         fn()
