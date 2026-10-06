@@ -18,7 +18,7 @@ w7/w8 instead. Either way the background ends up at w9/w10 and the roads at w7/w
 
     ./lev5_roads.py --profile iceland IN.DAT OUT.DAT [roads.json]
     --classes trunk,primary   which OSM classes reach 64 km
-    --simplify METRES
+    --simplify METRES         default 500, the value build.py passes
 """
 import json, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -141,7 +141,7 @@ def main():
     P = clarion_profile.take_arg(argv)
     use_profile(P)
     classes = {'trunk', 'trunk_link', 'primary', 'primary_link'}
-    tol = 400.0
+    tol = 500.0            # what build.py passes, and the only value a build has run with
     if '--classes' in argv:
         i = argv.index('--classes'); classes = set(argv[i + 1].split(',')); del argv[i:i + 2]
     if '--simplify' in argv:
