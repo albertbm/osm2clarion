@@ -144,13 +144,24 @@ def build_group(g):
     while len(out) % 4: out.append(0)
     return bytes(out)
 
+def bg_slot(w):
+    """Which pointer pair holds a record's geometry.
+
+    A road-only record (the even pair at levels 3 and 4) keeps it at w7/w8 and a background
+    record at w9/w10, but a level-5 record has w2 = 0xfa either way and carries both, so the
+    slot has to come off the pointers rather than off w2. An unused pair reads ffff/0000 as
+    shipped and 0000/0000 on a record rebuilt against the 2014 database; neither can be a real
+    offset, since the 44-byte header puts the first one at unit 11. w9/w10 wins when both are
+    filled, and stands in when neither is.
+    """
+    if w[9] not in (0, 0xffff) and w[10]: return 9
+    if w[7] != 0xffff and w[8]: return 7
+    return 9
+
 def parse_record(d):
     w = list(struct.unpack_from('>22H', d, 0))
     assert w[2] in (0x19, 0x3e8, 0xfa, 0xfa0), 'not a background record (w2=%#x)' % w[2]   # 0xfa: roads (even pair) and level 5
-    # A road-only record (the even pair at levels 3 and 4) keeps its geometry at w7/w8;
-    # a background record uses w9/w10. A level-5 record has w2 = 0xfa either way and
-    # carries both, so read the slot off the record rather than guessing from w2.
-    gi = 7 if (w[9] == 0xffff and w[7] != 0xffff) else 9
+    gi = bg_slot(w)
     geo_off, geo_len = w[gi], w[gi + 1]
     base = 4 * geo_off
     table = []; nlayers = 1 << 30 if geo_off != 0xffff else 0

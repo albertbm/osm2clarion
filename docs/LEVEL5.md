@@ -166,9 +166,14 @@ differs. The unit then reads the coastline and sea polygons as road shapes: at 6
 out a solid fill hatched with thousands of thin red lines, cut off dead straight at the parcel edge.
 16 km on the same card is unaffected.
 
-A tool must pick the slot by inspection rather than assume w9/w10. `lev5_roads.bg_slot` does: the
-background is at w9/w10 when w9 is neither 0 nor 0xffff and w10 is non-zero, at w7/w8 otherwise, where
-it moves to w9/w10 before the road block goes in.
+A tool must pick the slot by inspection rather than assume w9/w10. `clarion_bg.bg_slot` is the one
+rule, and `lev5_roads.bg_slot` calls it: the background is at w9/w10 when w9 is neither 0 nor 0xffff
+and w10 is non-zero, at w7/w8 otherwise, where `lev5_roads` moves it to w9/w10 before the road block
+goes in. An offset of 0 cannot be real, because the 44-byte header puts the first block at unit 11.
+
+Counted over the level-5 directory of three files: neither shipped card carries the `0000/0000` form
+(2017, 121 records: 18 background-only, 42 with both blocks, 61 empty; 2014, 121 records: 10, 42, 69),
+while a 2014 rebuild carries it in 13 of its 121.
 
 ## Two bugs worth not repeating
 
@@ -187,9 +192,14 @@ record, whose geometry is at w9/w10. The rule now reads the slot off the pointer
 hands it to `build_record` so a round trip keeps it. Parse-then-build over every section-1 level 5, 4
 and 3 record of both databases: level 5 went from 110 byte-exact / 132 mismatched to 158 / 84, level 4
 unchanged at 1,708 / 1,043, level 3 unchanged at 18,808 / 13,194. The 84 that still differ are the 42
-road-carrying records in each database, whose road block `clarion_bg` does not model. The new rule
-tests `w[9] == 0xffff` only, so it still reads a misplaced record of the 2014 kind
-(`w9/w10 = 0000/0000`) as a background there; `lev5_roads.bg_slot` covers both.
+road-carrying records in each database, whose road block `clarion_bg` does not model.
+
+That replacement rule tested `w[9] == 0xffff` alone, so it read a record of the 2014 rebuilt kind
+(`w9/w10 = 0000/0000`) at w9/w10 and raised on a layer table taken from offset 0: all 13 such records
+in a 2014 rebuild failed, level 5 coming out 66 byte-exact / 42 mismatched / 13 errors. The rule is now
+`clarion_bg.bg_slot`, which counts both `ffff/0000` and `0000/0000` as an empty pair, and which
+`lev5_roads.bg_slot` calls so the two cannot drift. Those 13 records now round-trip byte for byte at
+w7/w8, for 79 / 42 / 0, and the shipped-byte counts above are unchanged.
 
 ## Not known
 

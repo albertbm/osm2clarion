@@ -100,13 +100,15 @@ def bg_slot(w):
     """Which pointer pair holds the background. w9/w10 is where it belongs and where the 2017
     card keeps it; the 2014 card was built with a `clarion_bg` that chose the slot from w2, so
     its rebuilt records have it at w7/w8 with w9/w10 zero. Either way the road block goes to
-    w7/w8 and the background moves to w9/w10."""
-    if w[9] not in (0, 0xffff) and w[10]:
+    w7/w8 and the background moves to w9/w10. The checks are the ones this pass needs, over
+    the shared rule in `clarion_bg`."""
+    gi = clarion_bg.bg_slot(w)
+    assert w[gi] not in (0, 0xffff) and w[gi + 1], 'record carries no geometry in either slot'
+    if gi == 9:
         assert w[7] == 0xffff, 'record already has a road block at w7/w8'
-        return 9
-    assert w[7] != 0xffff and w[8], 'record carries no geometry in either slot'
-    assert w[9] in (0, 0xffff) and not w[10], 'w9/w10 = %#x/%#x is not empty' % (w[9], w[10])
-    return 7
+    else:
+        assert w[9] in (0, 0xffff) and not w[10], 'w9/w10 = %#x/%#x is not empty' % (w[9], w[10])
+    return gi
 
 
 def patch_record(plain, shapes):
