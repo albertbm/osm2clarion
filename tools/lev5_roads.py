@@ -8,7 +8,7 @@ section: the existing record is taken apart at its own offsets, the road block i
 in front of the background, and the three pointers are renumbered.
 
 The block is the eleven-pair layout `lev_roads.fa_record` writes, pairs being
-(offset in 4-byte units, shape count), with the shapes in layer 6 -- which is where every
+(offset in 4-byte units, shape count), with the shapes in layer 6, where every
 shipped level-5 record of classes 3 to 6 keeps them.
 
 Works on both card vintages. The 2017 card keeps the background at w9/w10; the 2014 card was

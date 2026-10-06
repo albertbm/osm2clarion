@@ -3,8 +3,8 @@
 directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
 (w17, w18) = a 5-dword tail table, w19 0x8104, w20 0x017c. Geometry unit: u16 count, twelve
 (u16 offset in dwords from the unit start, u16 shape count) layer pairs, a pad word, then the
-shapes. Roads sit in the layer their class belongs to -- layer 7 for classes 1-2, 6 for 3-6,
-5 for 8, 4 for 9, 0 for ferries -- and the class is the top nibble of shape word 2. A shape:
+shapes. Roads sit in the layer their class belongs to (layer 7 for classes 1-2, 6 for 3-6,
+5 for 8, 4 for 9, 0 for ferries), and the class is the top nibble of shape word 2. A shape:
 u16 length in words (itself included), 0x8000 | point count, class << 12, 0x0004, 0x000c,
 0x8004, 0, then for each link of the chain (val, link id) and its points as (x | flags,
 y | flags), the chain's start point first.

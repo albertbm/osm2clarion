@@ -3,8 +3,8 @@
 
 The 2017 and 2014 European tiles are byte-identical apart from six header bytes: the
 UTF-16BE "DATA VERSION 17/09/01/01" string and the NAVTEQ quarter. Measured on all four
-tiles of both cards -- same size, same six offsets, nothing else. So one build serves
-both vintages and this does the substitution. Control: run on the 2017 card's own four
+tiles of both cards: same size, same six offsets, nothing else. So one build covers both
+vintages, and this does the substitution. Control: run on the 2017 card's own four
 tiles it reproduces the 2014 card's four tiles byte for byte.
 
     ./tile_retarget.py IN.DAT OUT.DAT [--to 2014]

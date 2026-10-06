@@ -12,22 +12,22 @@ tree of zlib records.
 
 | check | result |
 |---|---|
-| Decoded coastline against OSM, level 2 (7.5′×5′ parcels) | 1,806 vertices, median 6 m, max 29 m |
-| Decoded coastline against OSM, level 1 (1.875′×1.25′ parcels) | 1,827 vertices, median 2–5 m, max 52 m |
+| Decoded coastline against OSM, level 2 (7.5′ x 5′ parcels) | 1,806 vertices, median 6 m, max 29 m |
+| Decoded coastline against OSM, level 1 (1.875′ x 1.25′ parcels) | 1,827 vertices, median 2-5 m, max 52 m |
 | Same decode with the parcel shifted one column | median 8.7 km |
 | Rebuild every zlib record from its parsed form | byte-exact, 4 tiles, 6,630 records |
 | Rebuild the whole tile from its parsed form | byte-identical, all 4 tiles |
-| Encode the OSM GeoJSON → tile → decode → compare | level 2 max 5.0 m, level 1 max 1.3 m, both directions |
+| Encode the OSM GeoJSON -> tile -> decode -> compare | level 2 max 5.0 m, level 1 max 1.3 m, both directions |
 
 The clipping check holds: every decoded parcel stops at 12.0°E.
 
 ## What the tile is
 
 The format is a KIWI descendant (the Japanese car-navigation map standard Zenrin co-wrote):
-first-level meshes of 1° × 40′, 2048-byte sectors, parcels with normalised coordinates.
+first-level meshes of 1° x 40′, 2048-byte sectors, parcels with normalised coordinates.
 
-Mesh coordinates: `y = lat_deg × 1.5`, `x = lon_deg + 924`. A tile `BbbRrrr` is the 8×8 mesh
-block with `y0 = bb_hex`, `x0 = 1024 − rrr_hex`. That is the same grid `tile_grid.py` checks,
+Mesh coordinates: `y = lat_deg * 1.5`, `x = lon_deg + 924`. A tile `BbbRrrr` is the 8x8 mesh
+block with `y0 = bb_hex`, `x0 = 1024 - rrr_hex`. That is the same grid `tile_grid.py` checks,
 restated in mesh units.
 
 ```
@@ -52,11 +52,11 @@ Each section table:
 
 ```
 u16 nwords
-u16 × nlevels   word offset of that level's group, ffff if none (same order as the level table)
-per group:  u16 len (= 2 + 6·count), u16 count, then count × {ymax ymin xmin xmax  u32 address}
+u16 x nlevels   word offset of that level's group, ffff if none (same order as the level table)
+per group:  u16 len (= 2 + 6*count), u16 count, then count x {ymax ymin xmin xmax  u32 address}
 ```
 
-Box values are mesh coordinates. Level 2 directories cover a 4×4-mesh quadrant, level 1
+Box values are mesh coordinates. Level 2 directories cover a 4x4-mesh quadrant, level 1
 directories a single mesh.
 
 ### Directories
@@ -67,8 +67,8 @@ u16 0x2046 (section 1) or 0x1046 (section 2)   u16 0x20  u16 0x20  u16 y  u16 x 
 ```
 
 A slot is a **parcel row**. The body is an array of u32 pairs `(compressed words,
-inflated words)`; the pair index is `2·col + 1` for the background record of parcel `col`
-in section 1 (index `2·col` is a second record kind, present only where ferry routes cross),
+inflated words)`; the pair index is `2*col + 1` for the background record of parcel `col`
+in section 1 (index `2*col` is a second record kind, present only where ferry routes cross),
 and `col` in section 2. Absent pairs are `ffffffff ffffffff`, except even pairs in level-1
 section-1 directories which are `7fffffff 7fffffff`. Empty slots have address `ffffffff` and
 the same fill.
@@ -76,16 +76,16 @@ the same fill.
 The address points at the parcel row's block: the records of that row, concatenated in
 pair order, zero-padded to 256 bytes. So one block holds every record of one parcel row.
 
-Parcel grid: 32 rows × 32 columns per directory, row 0 at the south, column 0 at the west.
+Parcel grid: 32 rows x 32 columns per directory, row 0 at the south, column 0 at the west.
 
 | level | directory covers | parcel size | 2048 units = |
 |---|---|---|---|
-| 2 | 4×4 meshes | 7.5′ × 5′ | 16,384 × 24,576 units per degree |
-| 1 | 1 mesh | 1.875′ × 1.25′ | 65,536 × 98,304 units per degree |
+| 2 | 4x4 meshes | 7.5′ x 5′ | 16,384 x 24,576 units per degree |
+| 1 | 1 mesh | 1.875′ x 1.25′ | 65,536 x 98,304 units per degree |
 
 ### Records
 
-Every record in these tiles starts with `58 85`: a zlib stream (window 8 KiB, level 6 —
+Every record in these tiles starts with `58 85`: a zlib stream (window 8 KiB, level 6;
 `zlib.compressobj(6, DEFLATED, 13)` reproduces the shipped bytes). Odd-length streams get
 one zero byte. The inflated size is the second number of the slot pair, in words. Section 2
 level 2 records are the exception: stored raw, two parts of `a` and `b` words.
@@ -104,7 +104,7 @@ w21        0
 ```
 
 Parcel code, with `row`/`col` absolute in that level's parcel units (level 2:
-`row = y_mesh·8 + slot`, `col = x_mesh·8 + col`; level 1: ×32):
+`row = y_mesh*8 + slot`, `col = x_mesh*8 + col`; level 1: *32):
 
 ```
 level 2:  w0 = 0x8000 | (row>>4)<<8 | (row&15)<<4 | 0xf      w1 = ((col>>4)&0xff)<<8 | (col&15)<<4 | 2
@@ -121,12 +121,12 @@ the section start, `ffff 0000` when empty; the table's own length equals the fir
 ```
 group:  0001 0003, u8 kind (0x80 polygon, 0x40 polyline, 0x00 point), u8 shape count,
         shapes, zero-padded to 4 bytes
-shape:  u16 vertex count, u16 type, u16 ffff, u16 x0, u16 y0, (count−1) × (int8 dx, int8 dy)
+shape:  u16 vertex count, u16 type, u16 ffff, u16 x0, u16 y0, (count-1) x (int8 dx, int8 dy)
 point:  u16 type, u16 ffff, u16 x, u16 y
 ```
 
-Polygons repeat the first vertex last. Long straight edges are walked in ±127 steps. A
-parcel that is all sea holds one rectangle `(0,0)→(0,2047)→(2047,2047)→(2047,0)`. A parcel
+Polygons repeat the first vertex last. Long straight edges are walked in +/-127 steps. A
+parcel that is all sea holds one rectangle `(0,0)->(0,2047)->(2047,2047)->(2047,0)`. A parcel
 that is all land has no layer 1 at all.
 
 Layers and types seen (level 2 uses `0x50xx`, level 1 the same low byte with `0xc0xx`):
@@ -137,7 +137,7 @@ Layers and types seen (level 2 uses `0x50xx`, level 1 the same low byte with `0x
 | 1 | polygon | 0x5012 | **sea**, clipped to the parcel |
 | 4, 5, 7, 9 | polygon | 0x5026 0x5074 0x5015 0x5011 | other land cover, plus one group format (`0002 0005`) not parsed |
 | 11 | polyline | 0x5007 | **coastline**; 0x500a/0x500b other lines |
-| 25 | point | 0x100c 0x400c … | place markers |
+| 25 | point | 0x100c 0x400c ... | place markers |
 
 Names section: `u16 6, u16 count` then five `ffff 0000` pairs, then entries
 `u16 type, u16 flags, u16 x, u16 y, u16 len, text` (0x4089/0x8089 area labels such as
@@ -157,7 +157,7 @@ pair per column; level-1 records are zlib, level-2 records raw in two parts. The
 table lists levels 5, 4, 2, 1; the level table at 0x1ac and the box table at 0x2ac carry a
 section-2 group (box in arc-minutes of the data extent).
 
-Record: words 0–1 parcel code (same as the background record), two zero dwords, five
+Record: words 0-1 parcel code (same as the background record), two zero dwords, five
 `(u32 offset, u32 length)` unit pairs in 16-bit words from the record start, `u16 0x017c`;
 the first unit starts at word 27. Unit 0 is the graph: `u32 nodes, u32 links` (links counted
 once per end, so twice), three zero dwords, eight `(u16 nodes, u16 links)` per class group,
@@ -170,7 +170,7 @@ coordinate in the low 11 bits, `u16 y` with bit 15 set (bit 12 for group 1) and 
 coordinate in the low 11 bits, a flag word (0 or 0x2000), then per entry `other node index,
 w4, w5, link id, class, a, b` and `(w5 >> 6) & 0xf` extra words. The link id carries
 `0x2000` at the end with the larger y. `a` is `0x8000 | travel time in quarter seconds`
-(0.4 × length for the common 10 m/s links) with class bits above bit 9; `b` is the length in
+(0.4 * length for the common 10 m/s links) with class bits above bit 9; `b` is the length in
 metres. Extra words look like turn or lane lists (`1001 2001 2002 0001`, `f001`); w4 is 0,
 0x80 or 0x140 on roads. A node on a parcel edge has a last entry with class `0x8898` plus
 the side in the top bits (0x8 top, 0xa right, 0xc bottom, 0xe left), whose "other node" is
@@ -178,11 +178,11 @@ an index in the neighbouring parcel. Curvature is shape nodes of degree 2; there
 separate geometry, and the background records carry no road lines.
 
 **Drawn road geometry is a separate record**: the even pair of a level-1 background
-directory (`2·col`, kind `0x00fa`, earlier mistaken for ferry routes) exists for exactly the
+directory (`2*col`, kind `0x00fa`, earlier mistaken for ferry routes) exists for exactly the
 parcels that have a road graph (37 of 37 on Pantelleria, 42,077 of 45,154 in the Paris tile).
 `tools/fa_encode.py` writes it. Header: parcel code, `0x00fa`, `347a 2aef`, 0, 0, then
 `(w7, w8)` = geometry unit at dword 11 (length in dwords), `(w17, w18)` = a 5-dword tail
-(`0004 0001 ffff 0000 ×3 NN01 0000`, NN = shapes + links), w19 `0x8104`, w20 `0x017c`. The
+(`0004 0001 ffff 0000 x3 NN01 0000`, NN = shapes + links), w19 `0x8104`, w20 `0x017c`. The
 geometry unit: u16 (unknown count), twelve `(offset in dwords from the unit start, shape
 count)` layer pairs, a pad word, the shapes. Layer 5 holds roads, layer 0 ferries. A shape
 is a chain of consecutive link ids along one way: `u16 length in words (itself included)`,
@@ -209,8 +209,8 @@ both levels; which OSM classes reach level 2 is a profile setting, and
 [ROAD-CLASSES.md](ROAD-CLASSES.md) has the measurements behind the default. Level-2 roads
 with names drew from 1 km down, and did not hang.
 
-Coarse roads live in `LEV3456R.DAT`: section 2 has a level-5 directory (11×11, one pair per
-column, 42 raw two-part records, classes 0x393/0x515/0x696...) and a level-4 one (44×44,
+Coarse roads live in `LEV3456R.DAT`: section 2 has a level-5 directory (11x11, one pair per
+column, 42 raw two-part records, classes 0x393/0x515/0x696...) and a level-4 one (44x44,
 one pair per column, 513 records); the level-4 background directory's even pairs hold 513
 shape records (kind 0x00fa, level-2 layout with eleven pairs, header word 20 = a per-parcel
 token that the graph record's header tail repeats, shapes `len, 0x8000|points, 0xa000, 0,
@@ -242,15 +242,18 @@ Road names sit in the background record's names section as `00ff 2000 0000 0000 
 and the length includes the pad). A shape's header word 4 is the word offset of its name
 entry from the start of the names section (12 for an entry right after the header), 0xffff
 for no name; word 3 is 0x0004 or 0x0144. The second sub-table (pair 2 of the names header,
-`0008 count ffff 0000 ×3`) has one item per shape in shape order, `8000 0009 80xx 0006 0bc0
-017c 000e 0008 000d` with `80xx = 0x8000 | 2·(points − 2)`.
+`0008 count ffff 0000 x3`) has one item per shape in shape order, `8000 0009 80xx 0006 0bc0
+017c 000e 0008 000d` with `80xx = 0x8000 | 2*(points - 2)`.
 
 ### LEV3456R.DAT
 
 Same container. Section 1 holds levels 6, 5 and 4 as one directory each covering the whole
-database extent (y 32–120, x 904–992), and level 3 as 52 directories, one per tile cell. A
+database extent (y 32-120, x 904-992), and level 3 as 52 directories, one per tile cell. A
 region drawn at the coarse zooms needs entries there too, and the shipped extent stops at
-−20° — see [BUILD-LOG.md](BUILD-LOG.md) for what the unit accepts and what it refuses.
+-20°. Reaching past it means moving the whole grid west by whole 8-mesh blocks, because a
+widened directory is refused: the unit assumes 44 level-4 and 11 level-5 columns and never
+reads the count. The Azores and Svalbard need the same move as Iceland. See
+[BUILD-LOG.md](BUILD-LOG.md) for what the unit accepts and what it refuses.
 
 ## Tools
 
@@ -274,7 +277,7 @@ the two OSM readers.
 | `rd_build.py` | levels 1 and 2 of a whole cell from OSM ways: graphs, shapes and names |
 
 A tile template only lends its 0x1000 header; every table is regenerated. Sea polygons with
-holes — islets inside a parcel's sea — lose the holes. Either emit the islets as their own
+holes (islets inside a parcel's sea) lose the holes. Either emit the islets as their own
 land parcels at the finer level, or accept the gap.
 
 ## Still unknown

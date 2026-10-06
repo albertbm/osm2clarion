@@ -7,6 +7,8 @@ declare format version `X08-03-00` and the structures below hold on both, though
 differ. Every figure is from the 2017 card unless the line says otherwise. The `.cmp`/`.ind`
 container is dfj's, from his gist "Clarion Maps structure + decompressor of CMP files"; for
 what is inside a tile see [GEOMETRY.md](GEOMETRY.md), as this file stops at the tile header.
+The earlier QY7 is a different platform, SH-4 with a monolithic map and no `MAPAL001` grid,
+and its data is not this format.
 
 ## Card layout
 
@@ -41,8 +43,8 @@ prefix:
 reaches address lookup and postcodes only. Nothing in the build chain needs the
 decompressor: `tools/decompress_fast.py` is here to read a base card's address half when a
 question about one comes up, and that is all. dfj's original slices the remaining buffer once
-per block, which is quadratic and never finishes on a 300 MB file of about 4,600 blocks; this
-one slices to the next offset and writes one output file per input.
+per block. That is quadratic, and on a 300 MB file of about 4,600 blocks it never finishes.
+This one slices to the next offset and writes one output file per input.
 
 ## The map surface
 

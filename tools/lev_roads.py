@@ -2,7 +2,7 @@
 """Coarse roads in LEV3456R.DAT: levels 3 and 4.
 
 Two jobs. First the section-2 level-4 and level-5 road directories are moved west, as the
-backgrounds were -- their box still said 904..992 after lev_coarse ran. Then road-shape
+backgrounds were: their box still said 904..992 after lev_coarse ran. Then road-shape
 records (kind 0x00fa, the even pair next to the background record) go into the level-4 and
 level-3 parcels. No graph records: both levels draw without them, and a graph is routing
 data that nothing on this card reads at those levels.
@@ -97,7 +97,7 @@ def shape_words_l3(pts, cls):
 
 
 def fa_record(level, code, shapes, tail):
-    """A road-shape record with its shapes in layer 6 -- where every shipped coarse record
+    """A road-shape record with its shapes in layer 6, where every shipped coarse record
     of classes 3 to 6 keeps them. Layer 5 is empty throughout the shipped data."""
     unit = [0xffff, 0x0000] * 11
     unit[12], unit[13] = 11, len(shapes)          # layer 6, data at dword 11

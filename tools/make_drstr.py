@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate DRSTR001.DAT — the directory index of a Clarion map database.
+"""Generate DRSTR001.DAT, the directory index of a Clarion map database.
 
 The head unit reads this rather than scanning the card, so a database with new
 tiles needs a matching one or the tiles are invisible.
@@ -11,8 +11,8 @@ that file byte for byte:
     directory records, 0x28 bytes each, from offset 0, one per directory
         0x00  char[20]   name, NUL-padded
         0x14  uint16 LE  own id, 1-based, in record order
-        0x16  uint16 LE  PARENT id — this is the tree linkage, not a type.
-                         The root's parent is itself.
+        0x16  uint16 LE  PARENT id. Tree linkage, not a type. The root's
+                         parent is itself.
         0x18  uint16 LE  child count
         0x1a  10 bytes   zero
         0x24  uint32 LE  absolute offset of this directory's child block
@@ -23,10 +23,10 @@ that file byte for byte:
         0x16  uint16 LE  2 = directory, 0 = file
         0x18  uint32 LE  zero
         0x1c  uint32 LE  size in bytes. For a directory this is the sum of its
-                         children, TRUNCATED TO 32 BITS — MAPAL001 really holds
+                         children, TRUNCATED TO 32 BITS. MAPAL001 really holds
                          5,162,906,624 bytes and the field reads 867,939,328.
 
-Ordering is the on-disk FAT directory order, not alphabetical — OBJCT001 lists
+Ordering is the on-disk FAT directory order, not alphabetical. OBJCT001 lists
 OBJCTIDX.DAT before its subdirectories, exactly as readdir returns it. The one
 exception is VER_INFO, which is hoisted to the front of its parent.
 
@@ -68,8 +68,8 @@ def listing(path):
             out.append((e.name, True, tree_size(Path(e.path))))
         else:
             out.append((e.name, False, e.stat().st_size))
-    # FAT order as mastered, except VER_INFO which the card hoists to the
-    # front — the unit presumably wants the version before anything else.
+    # FAT order as mastered, except VER_INFO, which the card hoists to the front;
+    # the unit presumably wants the version before anything else.
     out.sort(key=lambda r: r[0] != "VER_INFO")
     return out
 
@@ -96,7 +96,7 @@ def scan(root):
 
 
 def tree_size(path):
-    """Sum of what the index LISTS, not of what is on disk — so a compressed
+    """Sum of what the index LISTS, not of what is on disk, so a compressed
     file contributes its uncompressed size. REFER001 reads 1,251,633,152 this
     way against 3,953,262,803 of actual .cmp/.ind bytes."""
     return sum(size for _, _, size in listing(path))
@@ -130,7 +130,7 @@ def main():
     dest = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("DRSTR001.DAT")
     data = build(root)
     dest.write_bytes(data)
-    print(f"wrote {dest} — {len(data)} bytes")
+    print(f"wrote {dest}, {len(data)} bytes")
 
 
 if __name__ == "__main__":

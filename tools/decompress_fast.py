@@ -2,8 +2,9 @@
 """Unpack the .cmp/.ind pairs of a card's address half.
 
 Nothing in the build chain needs this: `MAPAL001` holds no .cmp or .ind at all, so the map
-surface is never compressed. It is here to read what the rest of the card carries -- the
-address and postcode database the unit searches -- when a question about a base card comes up.
+surface is never compressed. It is here to read what the rest of the card carries
+(the address and postcode database the unit searches) when a question about a base card
+comes up.
 
 The container is dfj's, from the gist "Clarion Maps structure + decompressor of CMP files":
 a block table in the .ind and zlib blocks in the .cmp. His script slices comp_data[block:]
@@ -15,7 +16,7 @@ instead of reopening it per block.
 
     ./decompress_fast.py <map dir> <out dir> [name filter]
 
-The filter is a substring — `./decompress_fast.py <card> <out dir> ZCODE`
+The filter is a substring. `./decompress_fast.py <card> <out dir> ZCODE`
 unpacks only the postcode files.
 """
 

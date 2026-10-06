@@ -13,7 +13,7 @@ CLASS = 0x0898
 def class_word(cls):
     """The link class word: class in the high byte, then 0x90 | class. Measured over the 2014
     card's south-west Norway tile, where the common words are 0x898 (class 8, 102,045 links),
-    0x595, 0x999, 0x494, 0x393, 0x797 -- the two constants this file used are that rule at
+    0x595, 0x999, 0x494, 0x393, 0x797. The two constants this file used are that rule at
     classes 8 and 7. Classes above 9 ship as 0x80 | class instead (0xa8a, 0xc8c)."""
     return cls << 8 | (0x90 if cls <= 9 else 0x80) | cls
 

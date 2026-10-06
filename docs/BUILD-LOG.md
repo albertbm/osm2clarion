@@ -151,6 +151,22 @@ grid pair at 0x5d4 stays (11, 11), so its byte order never mattered. Level 5 (th
 level 4 still have to be rebuilt for the new cells even where shipped parcels exist, because the
 shipped ones are sea only. `lev_coarse.py` replaces them.
 
+That replacement is untested over a populated cell. Only four cells have ever been built, the
+four over Iceland, and they were the easy case: their level-4 and level-5 parcels shipped
+empty or sea-only, so there was nothing to preserve. `lev_coarse.py` replaces a coarse parcel
+outright, and nothing has checked what that does where the shipped parcel already holds a
+populated European cell. Expect to lose whatever was there. The level-3 and tile levels are
+built fresh per cell and should be fine.
+
+## The shipment bound
+
+A unit only accepts positions inside the shipment area baked into its firmware, which for a European
+unit is longitude -20 to 68. Build a map outside that and the unit draws it correctly, then refuses
+every position in silence: the coastline is right, the roads are right, the vehicle never appears,
+and nothing logs an error. Nothing on the card changes this. The card's own declared bounds have no
+bearing on it, which is worth knowing before spending a day patching them. Iceland sits west of -20,
+so all four cells built here are outside the area.
+
 ## What draws and what does not
 
 The shipped map shows skerries only when zoomed in, so small islands are dropped per level.

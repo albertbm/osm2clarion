@@ -5,7 +5,7 @@ map area, not a tile. Levels 4 and 5 are the two that get drawn at the wide zoom
 below was read out of two shipped databases, the 2014 and the 2017 vintage, and matches what
 `tools/lev_coarse.py` and `tools/lev5_roads.py` write.
 
-## Which level serves which view
+## Which level draws which view
 
 The zoom ladder runs 10 km, 16 km, 64 km, 160 km, 320 km, 640 km. 16 km draws section 1 level 4,
 pair 0 of each column, the road record. **64 km draws section 1 level 5, the road block inside the
@@ -141,9 +141,9 @@ trunk route into 1,683 ways, and one shape per way gave 2,998 shapes.
 ## There is no level-5 rendering defect on stock data
 
 At 64 km this unit draws the coarse road layer with a wide red casing and a yellow core, far too heavy
-for the scale. A factory 2017 card does the same over Scotland and Norway, so an older note calling
-that garbage geometry was wrong. Compared record by record, a westward widen altered no European
-record at any coarse level:
+for the scale. A factory 2017 card does the same over Scotland and Norway. An older note calling that
+garbage geometry was wrong. Compared record by record, a westward widen altered no European record at
+any coarse level:
 
 - sec1 level 5: 121 records both sides, 108 byte-identical, 2 deliberately replaced, 11 dropped on the
   east, 11 new on the west.
@@ -175,11 +175,11 @@ it moves to w9/w10 before the road block goes in.
 The per-level box table at 0x2ac. `lev_coarse.py` used to rewrite a bound only when it already equalled
 the matching global bound at 0x184, so inner edges never moved under `--shift`. On a shifted 2017 card
 that left sec1 lvl4 lonmax at 2760 (should be 2280), sec1 lvl3 lonmax at 2700 (2220), and sec2 lvl4 at
--1080..2760 (should be -1560..2280). Drawing is unaffected: a box describing the unshifted grid can
-only make the unit miss data west of its lonmin, never misplace data inside it. The live consequence
-is on section 2 level 4, whose lonmin stays at -1080 arcminutes, so the router's coarse graph has
-nothing west of 18 W. Every bound now moves by the same delta, and the six are 12 bytes in the header
-if a built card needs a direct patch.
+-1080..2760 (should be -1560..2280). Drawing is unaffected. A box describing the unshifted grid
+can only make the unit miss data west of its lonmin, never misplace data inside it. The live
+consequence is on section 2 level 4, whose lonmin stays at -1080 arcminutes, so the router's
+coarse graph has nothing west of 18 W. Every bound now moves by the same delta, and the six are
+12 bytes in the header if a built card needs a direct patch.
 
 Picking the geometry slot from w2. `clarion_bg.parse_record` used `gi = 7 if w[2] == 0xfa else 9`.
 w2 is 0x00fa both on a level-4 road-only record, whose geometry is at w7/w8, and on a level-5 background
@@ -187,9 +187,9 @@ record, whose geometry is at w9/w10. The rule now reads the slot off the pointer
 hands it to `build_record` so a round trip keeps it. Parse-then-build over every section-1 level 5, 4
 and 3 record of both databases: level 5 went from 110 byte-exact / 132 mismatched to 158 / 84, level 4
 unchanged at 1,708 / 1,043, level 3 unchanged at 18,808 / 13,194. The 84 that still differ are the 42
-road-carrying records in each database, whose road block
-`clarion_bg` does not model. The new rule tests `w[9] == 0xffff` only, so it still reads a misplaced
-record of the 2014 kind (`w9/w10 = 0000/0000`) as a background there; `lev5_roads.bg_slot` covers both.
+road-carrying records in each database, whose road block `clarion_bg` does not model. The new rule
+tests `w[9] == 0xffff` only, so it still reads a misplaced record of the 2014 kind
+(`w9/w10 = 0000/0000`) as a background there; `lev5_roads.bg_slot` covers both.
 
 ## Not known
 

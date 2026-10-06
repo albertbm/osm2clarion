@@ -4,8 +4,8 @@
 make_drstr.py builds the index from a directory tree in readdir order, which reproduces
 the shipped file. This one differs in what it reads and in what it substitutes, which is
 why it is a separate script: every directory keeps the order the card's own
-DRSTR001.DAT lists it in -- that is the mastering tool's order and it is not readdir's on
-either card -- and MAPAL001 is replaced by a given folder of tiles plus the card's own
+DRSTR001.DAT lists it in (the mastering tool's order, which is not readdir's on either
+card), and MAPAL001 is replaced by a given folder of tiles plus the card's own
 LEV3456R.DAT. Runs against the mounted card read-only. macOS metadata is skipped.
 
     ./make_drstr_card.py <mounted card> <folder of new tiles> DRSTR001.DAT
