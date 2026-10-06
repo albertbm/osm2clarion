@@ -8,7 +8,7 @@ was established. For the card around the tiles, see [FORMAT.md](FORMAT.md).
 The payload is not a varint stream, which an earlier reading of it assumed. It is a directory
 tree of zlib records.
 
-## Scorecard
+## Measured against OSM
 
 | check | result |
 |---|---|
