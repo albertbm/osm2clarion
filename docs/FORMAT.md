@@ -3,10 +3,8 @@
 What a Clarion QY8x map card holds, and in what layout. Every figure here was read off a
 2017-vintage European base card, database `GEURX-30-100-100`, whose tiles declare format
 version `X08-03-00` and data version `17/09/01/01`. The `.cmp`/`.ind` container is dfj's
-work, from his gist "Clarion Maps structure + decompressor of CMP files".
-
-For what is inside a tile, see [GEOMETRY.md](GEOMETRY.md). This file stops at the tile
-header.
+work, from his gist "Clarion Maps structure + decompressor of CMP files". For what is
+inside a tile, see [GEOMETRY.md](GEOMETRY.md); this file stops at the tile header.
 
 ## Card layout
 
@@ -24,8 +22,7 @@ measured:
 
 Also present, none of them needed to draw a map: `BICON001`, `DFRMR001`, `HOUSE001`,
 `MMAIN001.DAT`, `OBJCT001`, `OPNG`, `RDSTM001`, `SPEECH`, `TFTBL001`, `TMC`, `XPICT001`.
-
-Nothing is encrypted. Measured entropy on a map tile is about 3.99 bits of a possible 8,
+Nothing is encrypted: measured entropy on a map tile is about 3.99 bits of a possible 8,
 which is structured data in the clear, not a cipher and not deflate.
 
 ## The two halves do not share a format
@@ -40,13 +37,11 @@ listed. By prefix:
 ```
 
 `MAPAL001` contains no `.cmp` or `.ind` at all. The map surface ships unwrapped, so the
-compression container reaches address lookup and postcodes only.
-
-Nothing in the build chain needs the decompressor. `tools/decompress_fast.py` is here to
-read a base card's address half when a question about one comes up, and that is all it is
-for. dfj's original script slices the remaining buffer once per block, which is quadratic
-and never finishes on a 300 MB file of about 4,600 blocks; the version in this repo slices
-to the next offset instead and writes one output file per input.
+container reaches address lookup and postcodes only. Nothing in the build chain needs the
+decompressor: `tools/decompress_fast.py` is here to read a base card's address half when a
+question about one comes up, and that is all. dfj's original slices the remaining buffer
+once per block, which is quadratic and never finishes on a 300 MB file of about 4,600
+blocks; this one slices to the next offset and writes one output file per input.
 
 ## The map surface
 
@@ -74,9 +69,8 @@ B68: 048 050 058
 
 ### The grid is hexadecimal
 
-The odd 2/8 alternation in those numbers is an artefact of reading hex as decimal.
-`28 30 38 40 48` are `0x28 0x30 0x38 0x40 0x48` = 40, 48, 56, 64, 72, which is plain steps
-of 8.
+The odd 2/8 alternation is an artefact of reading hex as decimal. `28 30 38 40 48` are
+`0x28 0x30 0x38 0x40 0x48` = 40, 48, 56, 64, 72, plain steps of 8.
 
 ```
 lat_min = B_hex * 2/3 degrees     cell height 5.333 deg  (320 arc-minutes)
@@ -84,9 +78,9 @@ lon_max = (108 - R_hex) degrees   cell width  8 deg      (480 arc-minutes)
 ```
 
 Longitude decreases as R increases. Each tile declares its own bounding box in its header,
-and on all 52 grid tiles that box lies inside the cell this formula predicts. A tile that
-is mostly sea declares a box clipped to where it has data, so the declared box is often
-smaller than the cell; the cell is what the name encodes. `tools/tile_grid.py` runs the
+and on all 52 grid tiles that box lies inside the cell the formula predicts. A tile that is
+mostly sea declares a box clipped to where it has data, so the declared box is often
+smaller than the cell. The cell is what the name encodes. `tools/tile_grid.py` runs the
 check.
 
 | tile | cell | declared box | size |
@@ -97,12 +91,11 @@ check.
 | `B28R070R` | 26.7-32.0N, -12 to -4W | 29.9-32.0N, -12 to -9.6W | 0.9 MB, Atlantic off Morocco |
 
 `LEV3456R.DAT` sits outside the grid; the B in `BLEV...` listings is the grid prefix, not
-part of its name. The name suggests zoom levels 3 to 6, which is still a guess.
+part of its name. The name suggests zoom levels 3 to 6, still a guess.
 
 ### Working out which cells a region needs
 
-Take Iceland, roughly 63.4 to 66.6N and -24.5 to -13.5W. Inverting the formula gives four
-cells:
+Take Iceland, roughly 63.4 to 66.6N and -24.5 to -13.5W. The formula gives four cells:
 
 | filename | cell | covers |
 |---|---|---|
@@ -111,10 +104,10 @@ cells:
 | `B60R078R.DAT` | 64.0-69.33N, -20 to -12W | north-east |
 | `B60R080R.DAT` | 64.0-69.33N, -28 to -20W | north-west |
 
-None of the four exists on the 2017 card. Its grid stops at `R078`, and `R080` appears
-nowhere, so the whole -20 to -28W column is absent from the product. Any region outside
-Europe's coverage comes out the same way: run the formula, get the cell names, and the card
-either has them or it does not.
+None of the four exists on the 2017 card. Its grid stops at `R078` and `R080` appears
+nowhere, so the whole -20 to -28W column is absent from the product. Any region works the
+same way: run the formula, get the cell names, and the card either has them or it does
+not.
 
 ### Tile header
 
@@ -141,19 +134,17 @@ uint16  section count
     entries...
 ```
 
-Level table entries are `level, type, uint16 count`, with levels descending 06 to 01. The
-counts track tile density: `B30R038R` at 261 KB has 1, `B58R060R` has 60. They are
-per-level sub-block counts, not offsets.
-
-Bounding-box entries are `level, 00, int16 lat_max, int16 lat_min, int16 lon_min,
-int16 lon_max`, all in arc-minutes.
+Level table entries are `level, type, uint16 count`, levels descending 06 to 01. The counts
+track tile density: `B30R038R` at 261 KB has 1, `B58R060R` has 60. They are per-level
+sub-block counts, not offsets. Bounding-box entries are `level, 00, int16 lat_max,
+int16 lat_min, int16 lon_min, int16 lon_max`, all in arc-minutes.
 
 ## The compression container
 
 Only for reading the address half. `CMP.LST` is a NUL-separated list of paths in Windows
 form with a `\SystemSD\` prefix to strip. A single entry means a directory, and `.ind`/`.cmp`
-are then paired by basename; with no `CMP.LST` at all, `REFER001/` is the fallback. The
-2017 card spells out all 199, so the multi-entry path runs.
+are then paired by basename; with no `CMP.LST`, `REFER001/` is the fallback. The 2017 card
+spells out all 199.
 
 Each `.ind` is the index for its `.cmp`:
 
@@ -165,18 +156,16 @@ Each `.ind` is the index for its `.cmp`:
 0x10  uint32 LE[] one offset per zlib block, running to the end of the file
 ```
 
-Every offset points at the start of a zlib stream inside the `.cmp`. Decompress each and
-concatenate to rebuild the original. A block ends where the next one starts, and
-the last ends at the end of the file. The byte at `0x08` matches the number of offsets on
-small files, but it cannot hold the roughly 4,600 blocks of a 300 MB file, so the block
-count comes from the length of the offset table.
-
+Every offset points at the start of a zlib stream inside the `.cmp`. A block ends where the
+next starts, the last at the end of the file; decompress each and concatenate. The byte at
+`0x08` matches the number of offsets on small files, but it cannot hold the roughly 4,600
+blocks of a 300 MB file, so the block count comes from the length of the offset table.
 Checked on `REFER001/ADDRE001.DAT`: 29 blocks, each 64 KiB uncompressed, rebuilding to
-1,870,080 bytes, which is exactly the size in the header. Across all of `REFER001`,
-3.37 GiB compressed becomes 8.85 GiB.
+1,870,080 bytes, exactly the size in the header. Across all of `REFER001`, 3.37 GiB
+compressed becomes 8.85 GiB.
 
-A decompressed file opens with the same `CLARION` magic as a raw tile, so the compression
-is a wrapper and nothing more. The header carries the provenance, all UTF-16BE: `CLARION`,
+A decompressed file opens with the same `CLARION` magic as a raw tile, so the compression is
+a wrapper and nothing more. Its header carries the provenance, all UTF-16BE: `CLARION`,
 `ZENRIN`, `CLA-NAVI06-01`, `FORMAT VERSION X08-03-00`, `DATA VERSION 17/09/01/01`,
 `V06.00.00`, `NAVTEQ 17Q2`. The underlying map is NAVTEQ 2017 Q2, now HERE, packaged by
 Zenrin for Clarion. It is a licensed commercial database.
@@ -188,7 +177,7 @@ pair (`INTER`), POI by administrative area (`POINT`), motorway junctions (`FRWAY
 postcodes (`ZCODE`), plus one `COORD` and one `ZIPFR` file.
 
 Each decompressed file ends with a schema block of length-prefixed ASCII names, uint16
-length first, so the reference data describes its own fields:
+length first, so the data describes its own fields:
 
 ```
 06 00 "STREET"        table
@@ -226,32 +215,29 @@ child blocks follow the record array in record order, 0x20 bytes each
 dfj's notes read `0x16` of a directory record as a type. It is the parent's id: the `00` to
 `16` directories carry 7, which is `OBJCT001`; `MKR_OPNG` carries 8, which is `OPNG`; the
 nested `02` carries 32, which is `MKR_OPNG`. The 2017 card has 33 directory records, so the
-array runs `0x000`-`0x527` and the first child block starts at `0x528`. dfj's example has
-it at `0x578`. The offset varies by database, so read it rather than hardcoding it.
+array runs `0x000`-`0x527` and the first child block starts at `0x528`. dfj's example has it
+at `0x578`. The offset varies by database, so read it rather than hardcoding it.
 
 Three rules are not guessable from a hex dump. Each was found by failing to reproduce the
 file.
 
-Compressed files are listed logically. The card holds `ADDRE001.DAT.cmp` and
-`ADDRE001.DAT.ind`, and the index carries one `ADDRE001.DAT` entry whose size is the
-uncompressed 1,870,080, read from the `.ind` header. The `.ind` files are not listed. So
-`REFER001` shows 200 children against 399 files on disk.
-
-Directory sizes sum what is listed, not what is on disk, and then truncate to 32 bits.
-`REFER001` reads 1,251,633,152 against 3,953,262,803 actual bytes. `MAPAL001` reads
-867,939,328 for a directory really holding 5,162,906,624.
-
-Order is on-disk FAT order, not alphabetical. `OBJCT001` lists `OBJCTIDX.DAT` before its
-subdirectories, exactly as readdir returns it. The one exception is `VER_INFO`, hoisted to
-the front of its parent.
+- Compressed files are listed logically. The card holds `ADDRE001.DAT.cmp` and
+  `ADDRE001.DAT.ind`, and the index carries one `ADDRE001.DAT` entry whose size is the
+  uncompressed 1,870,080, read from the `.ind` header. The `.ind` files are not listed, so
+  `REFER001` shows 200 children against 399 files on disk.
+- Directory sizes sum what is listed, not what is on disk, then truncate to 32 bits.
+  `REFER001` reads 1,251,633,152 against 3,953,262,803 actual bytes; `MAPAL001` reads
+  867,939,328 for a directory really holding 5,162,906,624.
+- Order is on-disk FAT order, not alphabetical. `OBJCT001` lists `OBJCTIDX.DAT` before its
+  subdirectories, exactly as readdir returns it. The one exception is `VER_INFO`, hoisted
+  to the front of its parent.
 
 `SPEECH` and `DRSTR001.DAT` are absent from the index, and have to be. `SPEECH` holds
 33-character filenames that will not fit the 20-byte name field, and a file cannot record
 its own size, because writing the size would change it.
 
-Both scripts share this code. `make_drstr.py` takes the order from readdir, which is what
-reproduces a shipped file. `make_drstr_card.py` takes it from an existing index instead,
-for rebuilding a card whose `MAPAL001` has been replaced.
+`make_drstr_card.py` shares this code but takes the order from an existing index instead of
+from readdir, for rebuilding a card whose `MAPAL001` has been replaced.
 
 ## Not established
 
