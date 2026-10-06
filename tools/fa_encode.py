@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""The road-shape record (kind 0x00fa) that sits in the even pair of a level-1 background
+directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
+(w17, w18) = a 5-dword tail table, w19 0x8104, w20 0x017c. Geometry unit: u16 count, twelve
+(u16 offset in dwords from the unit start, u16 shape count) layer pairs, a pad word, then the
+shapes. Roads sit in the layer their class belongs to -- layer 7 for classes 1-2, 6 for 3-6,
+5 for 8, 4 for 9, 0 for ferries -- and the class is the top nibble of shape word 2. A shape:
+u16 length in words (itself included), 0x8000 | point count, class << 12, 0x0004, 0x000c,
+0x8004, 0, then for each link of the chain (val, link id) and its points as (x | flags,
+y | flags), the chain's start point first.
+"""
+import os, struct, sys, zlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_bg
+
+STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry
+
+# OSM highway -> (level-1 layer, level-1 class), level-2 class, level-3 class. Read off the
+# 2014 card: class follows road standard, not route prefix, so Iceland's Route 1 and
+# Reykjanesbraut are trunk and draw as through-roads.
+CLASSES = {
+    'motorway':       ((7, 1), 1, 3),
+    'motorway_link':  ((7, 1), 1, 3),
+    'trunk':          ((6, 4), 3, 4),
+    'trunk_link':     ((6, 4), 3, 4),
+    'primary':        ((6, 5), 4, 5),
+    'primary_link':   ((6, 5), 4, 5),
+    'secondary':      ((6, 5), 5, 6),
+    'secondary_link': ((6, 5), 5, 6),
+    'tertiary':       ((5, 8), 7, 7),
+    'tertiary_link':  ((5, 8), 7, 7),
+    'unclassified':   ((5, 8), 7, 7),
+    'residential':    ((5, 8), 7, 7),
+    'living_street':  ((5, 8), 7, 7),
+    'service':        ((4, 9), 7, 7),
+    'track':          ((4, 9), 7, 7),
+}
+DEFAULT = ((5, 8), 7, 7)
+
+def layer_class(hw, level, layer=None):
+    """(layer, class) for one OSM highway value at level 1 or 2. layer overrides the layer,
+    for callers that still want everything in one band."""
+    (l1, c1), c2, _ = CLASSES.get(hw, DEFAULT)
+    lay, cls = (l1, c1) if level == 1 else (7 if c2 in (1, 2) else 6, c2)
+    return (layer if layer is not None else lay), cls
+
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
+    """chain: [(link id, from node, to node, [inner points])]. Written as the control tile
+    writes single-link shapes: start node (y | 0x2800), style, value, id, points with the
+    first flagged 0x7000 and the rest 0x1000, one trailer word. cls is the road class in the
+    top nibble of word 2; it is what the renderer widens by."""
+    if cls is None: cls = 8 if level == 1 else 7
+    if level == 1: out = [cls << 12, 0x0004, name_off, 0x8004, 0x0000]   # word 4: word offset of the name entry, 0xffff = none
+    else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
+    sx, sy = nodes[chain[0][1]]
+    out += [(0x0800 if level == 2 else 0) | sx, 0x2800 | sy]   # shipped starts carry 0x0800; level 1 works without
+    npts = 1
+    for n, (lid, a, b, inner) in enumerate(chain):
+        if level == 1: out += [STYLE, 0x0100, lid] if n == 0 else [0x0100, lid]
+        else: out += [0x101e, lid]
+        pts = list(inner) + [nodes[b]]
+        for k, (x, y) in enumerate(pts):
+            first = k == 0; last = k == len(pts) - 1
+            xf = (0x7000 if level == 1 else 0x5000) if (first and n == 0) else 0x5000 if first else 0x1000
+            if last and n < len(chain) - 1: xf = 0x0000; y |= 0x0c00
+            out += [xf | x, y]; npts += 1
+    if level == 1: out += [0x0000]
+    body = [0x8000 | npts] + out
+    return [len(body) + 1] + body
+
+def item_words(shape, level=1, name_off=0xffff):
+    """Names sub-table item for a shape: 0x8000 | 2*(points-2), then constants. Level 2
+    items end with (1, k, name offset), k = 1 named, 0 unnamed."""
+    npts = shape[1] & 0x3fff   # word 1 is 0x8000 | points
+    if level == 1: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, 0x017c, 0xe, 8, 0xd]
+    named = name_off != 0xffff
+    return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, 0x00fa, 1, 1 if named else 0, name_off if named else 0]
+
+def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None):
+    """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
+    OSM highway value, which picks the layer and class. Level 1 has twelve layer pairs and a
+    pad word, so its data starts at dword 13; level 2 has eleven pairs and starts at 11.
+    Shapes are grouped by layer and each layer's pair gives (offset in dwords, count)."""
+    if hws is None: hws = [None] * len(chains)
+    lc = [layer_class(hw, level, layer) for hw in hws]
+    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1]) for i, c in enumerate(chains)]
+    if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
+    else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
+    order = []
+    for lay in sorted({l for l, _ in lc}):
+        grp = [i for i, (l, _) in enumerate(lc) if l == lay]
+        unit[first + 2 * lay] = len(unit) // 2       # offset in dwords from the unit start
+        unit[first + 1 + 2 * lay] = len(grp)
+        for i in grp: unit += shapes[i]
+        if len(unit) % 2: unit.append(0)   # a group of odd word count is padded, as shipped units are
+        order += grp
+    if len(unit) % 2: unit.append(0)
+    per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
+    code = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
+    nlinks = sum(len(c) for c in chains)
+    tail = [0x0004, 0x0001, 0xffff, 0x0000, 0xffff, 0x0000, 0xffff, 0x0000, ((len(shapes) + nlinks) & 0xff) << 8 | 1, 0x0000]
+    if level == 1:
+        w = [code[0], code[1], 0x00fa, 0x347a, 0x2aef, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
+             11 + len(unit) // 2, 5, 0x8104, 0x017c, 0]
+        plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>10H', *tail)
+    else:
+        w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
+             0xffff, 0, 0, 0x00fa, 0]
+        plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
+    c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(plain) + c.flush()
+    if len(comp) % 2: comp += b'\0'
+    build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off)) for i in order]
+    return plain, comp
+
+def names_section(labels, items):
+    """Names section holding road-label entries (in order) and one sub-table item per shape.
+    A label is the shipped `1=NAME;2=REF` form, either part on its own if the other is
+    missing. Returns (bytes, {label: word offset})."""
+    import struct as _s
+    body = b''; offs = {}
+    for name in labels:
+        text = name.encode('utf-8')
+        if len(text) % 2: text += b'\0'
+        offs[name] = (24 + len(body)) // 2
+        body += _s.pack('>HHHHH', 0x00ff, 0x2000, 0, 0, len(text)) + text
+    while len(body) % 4: body += b'\0'
+    sub = _s.pack('>HH', 8, len(items)) + b'\xff\xff\x00\x00' * 3 + b''.join(_s.pack('>9H', *it) for it in items)
+    while len(sub) % 4: sub += b'\0'
+    hdr = _s.pack('>HH', 6, len(labels)) + b'\xff\xff\x00\x00' + _s.pack('>HH', (24 + len(body)) // 4, len(items)) + b'\xff\xff\x00\x00' * 3
+    return hdr + body + sub, offs
+
+def chains_from_links(links, way_of, chain=False):
+    """One shape per link unless chain: then consecutive links of one way form a chain.
+    links [(i, j, length)] with ids 1.., way_of[lid] the way id."""
+    chains = []
+    for lid, (i, j, _) in enumerate(links, start=1):
+        if chain and chains and way_of.get(lid) == way_of.get(lid - 1) and chains[-1][-1][2] == i:
+            chains[-1].append((lid, i, j, []))
+        else:
+            chains.append([(lid, i, j, [])])
+    return chains

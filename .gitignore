@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+
+# Build inputs and outputs. The repo ships tools, not maps.
+build/
+out/
+work/
+*.DAT
+*.img
+*.osm.pbf
+*.geojson
+
+# Port scaffolding, not part of the repository's history.
+NOTES-PORT.md
