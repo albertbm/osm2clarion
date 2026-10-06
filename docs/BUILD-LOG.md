@@ -207,13 +207,13 @@ Country labels are points in layer 25 of the level-6 record, and the point type 
 be had for a country outside the table. The label text is in no card file, searched; it comes from
 the unit's firmware. Probes of `0x8080` to `0x8095` and `0x80be` to `0x8130` drew nothing.
 
-## The two database vintages
+## The two database versions
 
-The 2014 and 2017 vintages have the same coarse-file structure. Same bounds (4800, 1280, -1200,
+The 2014 and 2017 databases have the same coarse-file structure. Same bounds (4800, 1280, -1200,
 4080), same grid pair (11, 11), level-6 directory at 0x1300 kind 0x000a, level 5 at 0x0200 11x11,
 level 4 at 0x3cde 44x44, 52 level-3 cells at 0x0826 16x16, and the level-3 group last in the section
 table with room before 0x1300. The same 52 grid cells. Every assertion in `lev_append.py`,
-`lev_coarse.py` and `lev_l6.py` holds on both, so the whole chain ports between vintages with only
+`lev_coarse.py` and `lev_l6.py` holds on both, so the whole chain ports between the two with only
 the tile header template swapped. Rebuilt on the 2014 base, the four new tiles come out
 byte-identical to the 2017 build past the 0x1000 header, with 6 header bytes differing: the data
 version string. The 2014 base's own tiles pass the same checks as the 2017 ones, byte-identical rebuild,

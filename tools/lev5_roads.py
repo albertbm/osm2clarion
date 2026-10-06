@@ -11,7 +11,7 @@ The block is the eleven-pair layout `lev_roads.fa_record` writes, pairs being
 (offset in 4-byte units, shape count), with the shapes in layer 6, where every
 shipped level-5 record of classes 3 to 6 keeps them.
 
-Works on both card vintages. The 2017 card keeps the background at w9/w10; the 2014 card was
+Works on both cards. The 2017 card keeps the background at w9/w10; the 2014 card was
 built with a `clarion_bg` that picked the slot from w2, so its rebuilt records have it at
 w7/w8 instead. Either way the background ends up at w9/w10 and the roads at w7/w8.
 

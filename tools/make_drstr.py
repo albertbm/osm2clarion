@@ -4,7 +4,7 @@
 The head unit reads this rather than scanning the card, so a database with new
 tiles needs a matching one or the tiles are invisible.
 
-Format, worked out 22 Sep 2026 against a 2017-vintage European card (volume
+Format, worked out 22 Sep 2026 against the 2017 European card (volume
 GEURX-30-105-100, database 17-33, index 466,952 bytes) and verified by regenerating
 that file byte for byte:
 

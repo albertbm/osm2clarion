@@ -2,7 +2,7 @@
 
 `LEV3456R.DAT` holds whole-database directories for levels 3 to 6: one grid per level over the whole
 map area, not a tile. Levels 4 and 5 are the two that get drawn at the wide zoom steps. Everything
-below was read out of two shipped databases, the 2014 and the 2017 vintage, and matches what
+below was read out of both shipped databases, the 2014 and the 2017, and matches what
 `tools/lev_coarse.py` and `tools/lev5_roads.py` write.
 
 ## Which level draws which view
@@ -73,7 +73,7 @@ a80f c805 00fa ffff ffff 0000 0000 000b 1e52 1e5d 268a 44e7 00f0 ffff 0000 ffff 
 The parcel code is absolute, so moving the grid west does not invalidate it: stock row 7 col 0
 decodes `w0=0xac0f w1=0xc405` to mesh (88, 904), lat 58.67 / lon -20, and after a one-column shift
 it sits at col 1, whose origin is the same mesh 904. A record with no road block has
-`w7/w8 = ffff/0000`; 42 of the 121 records carry one, on each vintage.
+`w7/w8 = ffff/0000`; 42 of the 121 records carry one, on each card.
 
 ## The layer table is (offset, shape count)
 
@@ -156,7 +156,7 @@ records drew normally at 16 km. `lev5_roads.py` adds the block without rebuildin
 takes the record apart at its own offsets, puts the road block in front of the background and
 renumbers w7 to w12, so background and names come through byte for byte.
 
-## Vintage difference: which slot holds the background
+## Which slot holds the background
 
 On the 2017 database all 121 section-1 level-5 records keep the background at w9/w10, shipped and
 rebuilt alike. A rebuild on the 2014 database put it at w7/w8 with `w9/w10 = 0000/0000`, because that

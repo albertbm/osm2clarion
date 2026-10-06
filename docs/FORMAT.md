@@ -1,8 +1,8 @@
 # The card and its files
 
 What a Clarion QY8x map card holds, and in what layout. Figures come from two European base
-cards: the 2014 vintage, volume `GEURX-30-100-100`, database `14-38`, tiles at data version
-`14/11/17/01`; and the 2017 vintage, `GEURX-30-105-100`, `17-33`, `17/09/01/01`. Tiles of both
+cards: the 2014 database, volume `GEURX-30-100-100`, database `14-38`, tiles at data version
+`14/11/17/01`; and the 2017 database, `GEURX-30-105-100`, `17-33`, `17/09/01/01`. Tiles of both
 declare format version `X08-03-00` and the structures below hold on both, though the sizes
 differ. Every figure is from the 2017 card unless the line says otherwise. The `.cmp`/`.ind`
 container is dfj's, from his gist "Clarion Maps structure + decompressor of CMP files"; for

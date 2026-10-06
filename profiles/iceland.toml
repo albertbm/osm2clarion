@@ -58,9 +58,9 @@ sea = "ATLANTSHAF"
 coarse = ""
 
 [targets]
-# Database vintages this profile builds for. Tiles are built in the 2017 template; the
+# Database versions this profile builds for. Tiles are built in the 2017 template; the
 # 2014 twin is the same bytes with six header bytes substituted, which tile_retarget.py
-# does. Measured on all four tiles of both cards: the two vintages' tiles are identical
+# does. Measured on all four tiles of both cards: the two databases' tiles are identical
 # apart from those six bytes, the UTF-16BE "DATA VERSION" string and the NAVTEQ quarter.
 # Control: run on the 2017 card's own four tiles it reproduces the 2014 card's byte for
 # byte.

@@ -3,7 +3,7 @@
 The renderer takes a road's drawn width, colour and casing from one number: the class, in the
 top nibble of shape word 2. The layer of the geometry unit and the style word follow from it
 too. Get it wrong and every road draws as a 1 px line. Measured on factory tiles of the 2014
-and 2017 database vintages, which differ in six header-string bytes, so one holds for both.
+and 2017 databases, which differ in six header-string bytes, so one holds for both.
 
 ## Where the class sits
 
@@ -109,7 +109,7 @@ class, and they were all trunk and primary roads.
 ## service and track
 
 `service` belongs at level 1 and nowhere else. Layer and class tally over 52 factory tiles of
-the 2014 vintage, 713,293 level-1 and 76,992 level-2 road-shape records, 12.4 M level-1 and
+the 2014 card, 713,293 level-1 and 76,992 level-2 road-shape records, 12.4 M level-1 and
 2.36 M level-2 shapes:
 
 ```
@@ -154,7 +154,7 @@ after   ffff 0000 ... ffff 0000 ffff 0000 000b 0001 ...
 ```
 
 Compared record by record over the whole file, 18,427 to 18,758 records depending on the
-vintage, the key sets match and exactly 17 records differ, all section-1 level 4; layer 6 rises
+database, the key sets match and exactly 17 records differ, all section-1 level 4; layer 6 rises
 by 4,434 and layer 5 drops to 0.
 
 ## Style word, names and the graph class word

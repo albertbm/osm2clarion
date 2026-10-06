@@ -38,7 +38,7 @@ python3 build.py --profile iceland --base /path/to/card --out out
 --list           the step names      extract      the .pbf into coastline and roads
 --from roads     resume part-way     coarse       levels 3 to 6 of LEV3456R.DAT
 --only coarse    one step            background   one tile per cell, sea and land
---target v2014   the 2014 vintage    roads        levels 1 and 2 into those tiles
+--target v2014   the 2014 database   roads        levels 1 and 2 into those tiles
                                      master       MMAIN001.DAT
                                      index        DRSTR001.DAT
 ```
@@ -62,7 +62,7 @@ built. `python3 tools/clarion_profile.py iceland` dumps what the tools will see.
 | `[roads]` | simplify tolerance, classes to skip, classes at level 2, level-2 graphs |
 | `[land]` | smallest island kept, and simplify tolerance, per level |
 | `[labels]` | the sea label, and text labels for the coarse levels |
-| `[targets]` | which database vintages to build for |
+| `[targets]` | which database versions to build for |
 
 Only the cells, the box and the shift are region-specific. The rest are general, with
 defaults the measurements in `docs/` support. A region west of 20° W or east of 68° E falls
