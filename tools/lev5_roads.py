@@ -11,9 +11,9 @@ The block is the eleven-pair layout `lev_roads.fa_record` writes, pairs being
 (offset in 4-byte units, shape count), with the shapes in layer 6 -- which is where every
 shipped level-5 record of classes 3 to 6 keeps them.
 
-Works on both card vintages. The 2017 ZE1 card keeps the background at w9/w10; the 2014 DKL
-card was built with a `clarion_bg` that picked the slot from w2, so its rebuilt records have
-it at w7/w8 instead. Either way the background ends up at w9/w10 and the roads at w7/w8.
+Works on both card vintages. The 2017 card keeps the background at w9/w10; the 2014 card was
+built with a `clarion_bg` that picked the slot from w2, so its rebuilt records have it at
+w7/w8 instead. Either way the background ends up at w9/w10 and the roads at w7/w8.
 
     ./lev5_roads.py --profile iceland IN.DAT OUT.DAT [roads.json]
     --classes trunk,primary   which OSM classes reach 64 km
@@ -96,9 +96,9 @@ def road_block(shapes):
 
 
 def bg_slot(w):
-    """Which pointer pair holds the background. w9/w10 is where it belongs and where the ZE1
-    card keeps it; the 2014 DKL card was built with a `clarion_bg` that chose the slot from w2,
-    so its rebuilt records have it at w7/w8 with w9/w10 zero. Either way the road block goes to
+    """Which pointer pair holds the background. w9/w10 is where it belongs and where the 2017
+    card keeps it; the 2014 card was built with a `clarion_bg` that chose the slot from w2, so
+    its rebuilt records have it at w7/w8 with w9/w10 zero. Either way the road block goes to
     w7/w8 and the background moves to w9/w10."""
     if w[9] not in (0, 0xffff) and w[10]:
         assert w[7] == 0xffff, 'record already has a road block at w7/w8'
