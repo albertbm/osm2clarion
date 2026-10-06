@@ -1,0 +1,32 @@
+{
+  "note": [
+    "Expected digests for the byte-for-byte reproduction checks in tests/test_reproduce.py.",
+    "Only hashes, byte counts and the strings a card states about itself are kept here.",
+    "No map data is committed to this repository, so the digests cannot be shipped filled",
+    "in: they have to be taken off a card once, by whoever has one. docs/BUILD-LOG.md",
+    "records the reproduction as prose and does not quote any digest, so there was nothing",
+    "to copy. Record them with:",
+    "    python3 tests/test_reproduce.py --record /path/to/card",
+    "and commit the result. Files left out of 'files' are not checked against a digest;",
+    "the rebuild checks in test_reproduce.py run either way."
+  ],
+  "algorithm": "sha256",
+  "databases": {
+    "2014": {
+      "data_version": "14/11/17/01",
+      "volume": "GEURX-30-100-100",
+      "database": "14-38",
+      "navteq": "14Q2",
+      "drstr_bytes": 469320,
+      "files": {}
+    },
+    "2017": {
+      "data_version": "17/09/01/01",
+      "volume": "GEURX-30-105-100",
+      "database": "17-33",
+      "navteq": "17Q2",
+      "drstr_bytes": 466952,
+      "files": {}
+    }
+  }
+}
