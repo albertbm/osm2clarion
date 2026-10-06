@@ -1,0 +1,69 @@
+# Iceland, built on top of a European base card.
+#
+# Iceland sits west of the shipped database's -20 deg edge, so this profile moves the
+# whole grid 8 deg west rather than widening it: every directory keeps the number of
+# columns it ships with, and the 8 deg dropped off the eastern end held no level-4
+# records and eleven level-5 sea parcels over Kazakhstan. A region already inside the
+# shipped bounds needs no shift and should leave the [shift] section out.
+
+name = "iceland"
+description = "Iceland on a 2017 or 2014 European database"
+
+[source]
+# The OSM extract and what is derived from it. Not shipped with the tools.
+osm = "build/iceland-latest.osm.pbf"
+roads = "build/roads_iceland.json"
+coastline = "build/coast_iceland.json"
+
+[grid]
+# Cells the region occupies, as the card names them: B<lat*1.5>R<1024-lon-924> in hex,
+# 8 meshes to a cell. This is also the set the build replaces.
+cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
+
+# The database box after the shift: lat_max, lat_min, lon_min, lon_max in arc-minutes.
+# lon runs -28 to 60 instead of the shipped -20 to 68. Leave it out for a region inside
+# the shipped box and the tools will not touch the header bounds.
+bounds = [4800, 1280, -1680, 3600]
+
+# Informational: the region's own extent, which the cells above cover.
+bbox = { lon_min = -24.6, lon_max = -13.4, lat_min = 63.3, lat_max = 66.6 }
+
+[shift]
+# Only for a region outside the shipped bounds. Moves the grid west instead of growing
+# it, so every directory keeps its shipped column count. The unit assumes 44 level-4 and
+# 11 level-5 columns and never reads the count, so a widened directory is refused.
+enabled = true
+west_meshes = 8          # 8 meshes = 8 deg = one level-5 column, four level-4 columns
+
+[roads]
+simplify_metres = 2        # Douglas-Peucker; the quantisation floor is 0.74 m x 1.13 m at 64N
+skip = []                  # ["service"] drops 31% of the Reykjavik area's road length
+l2_classes = "wide"        # the factory carries ordinary streets at level 2 as class 7
+l2_graph = false           # routing data only, and no router runs at level 2 on this card
+coarse_classes = ["motorway", "trunk", "primary", "motorway_link", "trunk_link", "primary_link"]
+coarse_simplify_metres = 20
+
+[land]
+# Smallest island kept and simplify tolerance per level, in square degrees and degrees.
+# The shipped map shows skerries only close in, so the coarse levels drop them.
+level_6 = { min_area = 0.001,   simplify = 0.02  }
+level_5 = { min_area = 0.001,   simplify = 0.01  }
+level_4 = { min_area = 0.0002,  simplify = 0.003 }
+level_3 = { min_area = 0.00003, simplify = 0.001 }
+
+[labels]
+sea = "ATLANTSHAF"
+# Text labels for the coarse levels, as TYPE:FLAGS:lon,lat:TEXT[:ID] separated by ';'.
+# Both cards carry none; the 0x8068 town form draws and 0x4068 did not.
+coarse = ""
+
+[targets]
+# Database vintages this profile builds for. Tiles are built in the 2017 template; the
+# 2014 twin is the same bytes with six header bytes substituted, which tile_retarget.py
+# does. Measured on all four tiles of both cards: the two vintages' tiles are identical
+# apart from those six bytes, the UTF-16BE "DATA VERSION" string and the NAVTEQ quarter.
+# Control: run on the 2017 card's own four tiles it reproduces the 2014 card's byte for
+# byte.
+default = "v2017"
+v2017 = { label = "2017 European database", volume = "GEURX-30-105-100" }
+v2014 = { label = "2014 European database", volume = "GEURX-30-100-100", retarget = "2014" }
