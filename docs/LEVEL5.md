@@ -195,8 +195,11 @@ unchanged at 1,708 / 1,043, level 3 unchanged at 18,808 / 13,194. The 84 that st
 road-carrying records in each database, whose road block `clarion_bg` does not model.
 
 That replacement rule tested `w[9] == 0xffff` alone, so it read a record of the 2014 rebuilt kind
-(`w9/w10 = 0000/0000`) at w9/w10 and raised on a layer table taken from offset 0: all 13 such records
-in a 2014 rebuild failed, level 5 coming out 66 byte-exact / 42 mismatched / 13 errors. The rule is now
+(`w9/w10 = 0000/0000`) at w9/w10. `gi` came out 9, `geo_off` came out 0, the layer table was read from
+the record header, and `assert nlayers == len(table)` tripped. So all 13 such records in a 2014 rebuild
+raised, level 5 coming out 66 byte-exact / 42 mismatched / 13 errors. Worth being exact about: the old
+rule failed loudly on these records rather than misreading them quietly, and no record came back wrong.
+The rule is now
 `clarion_bg.bg_slot`, which counts both `ffff/0000` and `0000/0000` as an empty pair, and which
 `lev5_roads.bg_slot` calls so the two cannot drift. Those 13 records now round-trip byte for byte at
 w7/w8, for 79 / 42 / 0, and the shipped-byte counts above are unchanged.
