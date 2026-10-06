@@ -2,8 +2,8 @@
 
 A measured record of adding one region to a shipped European database and getting a Clarion QY8x
 head unit to draw it. Every result below came off a real unit, most of them a 2017 one, over ten
-builds between 23 and 26 September 2026. The failures pinned down more of the container's rules
-than the successes did, so they are here too.
+builds between 23 and 26 September 2026. The failures pinned down more of the container's rules than
+the successes did, so they are here too.
 
 The region was four cells of the `MAPAL001` grid plus the matching parcels at levels 3 to 6 in
 `LEV3456R.DAT`, built from an OSM coastline extract by `tools/extract_coast.py` and
@@ -29,11 +29,9 @@ to east.
 Keep each list in its own order rather than making them agree. Both shipped orders were reproduced
 and the unit draws. A cell that is not in the level-3 group has no position, so its tile is never
 opened, and a name inserted ahead of existing ones shifts every later tile onto the wrong file. That
-is the black map in row one above.
-
-For a build: append the new cells to the level-3 group with `tools/lev_append.py`, sort the index
-with `tools/make_drstr.py` (`--append` is the Europe-preserving control), and keep the
-`MMAIN001.DAT` totals in step.
+is the black map in row one above. For a build: append the new cells to the level-3 group with
+`tools/lev_append.py`, sort the index with `tools/make_drstr_card.py` (its `--append` keeps the
+base's own order instead, as a control), and keep the `MMAIN001.DAT` totals in step.
 
 `MMAIN001.DAT` is the database master: 4 KiB, the tile header block, the database bounds at 0x184
 and 0x5d0, and a level table at 0x1ac whose counts are the sums of every tile's level table plus
@@ -47,11 +45,9 @@ the bounds constant: `MMAIN001.DAT`, `LEV3456R.DAT`, `REFER002/*`, `TFTBL001/TFC
 
 The first build shipped tiles only: `LEV3456R.DAT` original, section 2 empty, `MMAIN001.DAT` still
 the Europe one, so the declared map edge was still -20 degrees. The unit booted and drew black at
-every zoom. Two things were wrong at once.
-
-First, the coarse levels. The default view wants level 3 or coarser and only `LEV3456R.DAT` provides
-those, so a card with new tiles and an untouched coarse file has nothing to draw at the zoom it
-opens at. The third build added level 3. Still black.
+every zoom. Two things were wrong at once. First, the coarse levels: the default view wants level 3
+or coarser and only `LEV3456R.DAT` provides those, so a card with new tiles and an untouched coarse
+file has nothing to draw at the zoom it opens at. The third build added level 3. Still black.
 
 Second, the parcel codes. Comparing a shipped open-sea record with a built one byte for byte found
 it: the built records carried the parcel code of the directory-local row and column (`000c 000c`)
@@ -61,14 +57,14 @@ encoder passed it the wrong numbers and the round trip never checked codes.
 `bg_encode.build_parcel_record` now takes the directory mesh, and both the round trip and the tile
 build verify every record's code. Two corrections went in alongside: sea polygons are forced
 clockwise, which every shipped sea polygon is, and every parcel inside coverage gets a record. The
-first build skipped parcels that were entirely land, where the shipped data gives them a
-header-only record with an empty name section.
+first build skipped parcels that were entirely land, where the shipped data gives them a header-only
+record with an empty name section.
 
-The useful diagnostic is the 640 km view. The Europe base paints grey west of -20 and draws
-Norway; the broken card painted the whole screen in the land colour and drew nothing at all, not
-even Europe's untouched levels 4 to 6. That is a global failure, not a tile one: the unit read the
-new bounds, then rendered no polygon from any file. At 25 m over a city a plain beige screen is
-also what correct data gives, when the build has no roads and no buildings.
+The useful diagnostic is the 640 km view. The Europe base paints grey west of -20 and draws Norway;
+the broken card painted the whole screen in the land colour and drew nothing at all, not even
+Europe's untouched levels 4 to 6. That is a global failure, not a tile one: the unit read the new
+bounds, then rendered no polygon from any file. At 25 m over a city a plain beige screen is also
+what correct data gives, when the build has no roads and no buildings.
 
 ## Level 3 in LEV3456R.DAT
 
@@ -86,11 +82,9 @@ w1 = ((col3>>2)&0xff)<<8 | (col3&2)<<6 | (col3&1)<<4 | 0x3
 `lev_append.py` appends the new level-3 directories and their blocks at the end of the shipped file,
 extends the level-3 group of the section table (it is last in the table and fits before the first
 directory at 0x1300), bumps the level-3 count and sets the bounds. Every original byte stays as
-shipped. The appended coastline decodes back at a median 2 m from OSM.
-
-Shipped level-3 records with no labels omit the name section (`w11 = ffff`), so the encoder does
-the same at every level. Levels 4 to 6 are single whole-database directories with slot bodies of
-704, 176 and 16 bytes.
+shipped. The appended coastline decodes back at a median 2 m from OSM. Shipped level-3 records with
+no labels omit the name section (`w11 = ffff`), so the encoder does the same at every level. Levels
+4 to 6 are single whole-database directories with slot bodies of 704, 176 and 16 bytes.
 
 ## What the container refuses
 
@@ -120,8 +114,8 @@ France. Which byte is columns was never proven, because the build that works lea
 
 The goal was reaching -28 degrees instead of -20, and the first approach widened the coarse
 directories westward. `lev_coarse.py` grew the level-4 and level-5 directories by whole 8-mesh
-blocks, filled the new columns from OSM, relocated the directories and every row block to the end
-of the file, then updated the section-table boxes, the bounds and the per-level box table at 0x2ac.
+blocks, filled the new columns from OSM, relocated the directories and every row block to the end of
+the file, then updated the section-table boxes, the bounds and the per-level box table at 0x2ac.
 `lev_l6.py` widened the level-6 box, rescaled every shape of its single raw record into the wider
 box, added a sea polygon for the new strip with the region cut out, and fixed the directory header,
 slot and box.
@@ -137,8 +131,7 @@ Europe tiles drew fine from 4 km down on all five. Above that:
 | 5 | all levels consistent at -28, level 6 widened too | 640 to 160 km fine, whole region drawn; 64 km to 8 km blank; 4 km and below fine, region included |
 
 The widened level-4 directory (48 columns) and level-5 directory (12 columns) are what the unit
-refuses, under either header version. It assumes 44 and 11 columns and never reads the count.
-
+refuses, under either header version: it assumes 44 and 11 columns and never reads the count.
 Reading the widened file back also forced `clarion_bg.parse_group` to handle layers with several
 sub-groups: header `nsub, header-words`, then per sub-group a kind byte, a count byte and, for all
 but the last, the word offset where it ends. The plain `0001 0003` header is the one-sub-group case.
@@ -162,13 +155,8 @@ shipped ones are sea only. `lev_coarse.py` replaces them.
 
 The shipped map shows skerries only when zoomed in, so small islands are dropped per level.
 `bg_tiles.clean_land` drops islands below an area floor and draws the coast from the remaining
-outline; `lev_append.py` (level 3), `lev_coarse.py` and `lev_l6.py` use the same function.
-
-| level | island area floor |
-|---|---|
-| 6 and 5 | 0.001 deg<sup>2</sup> |
-| 4 | 0.0002 |
-| 3 | 0.00003 |
+outline; `lev_append.py` (level 3), `lev_coarse.py` and `lev_l6.py` use the same function. The
+floors are 0.001 deg<sup>2</sup> at levels 6 and 5, 0.0002 at level 4, 0.00003 at level 3.
 
 The level-6 sheet is plain degrees and the unit draws it as such, so a northern region looks about
 twice too wide at 640 to 160 km. Norway does the same on the shipped map. Nothing to fix in the
@@ -199,30 +187,28 @@ Country labels are points in layer 25 of the level-6 record, and the point type 
 | 0x80b6 | SVK | 0x80b7 | SVN | 0x80b8 | CZE | 0x80b9 | TUR |
 | 0x80ba | UKR | 0x80bb | HUN | 0x80bc | BLR | 0x80bd | RUS |
 
-`0x8040` to `0x807f` are POI icons: parking, airport, hotel, dealer and so on.
-
-There is no badge to be had for a country outside that table. The label text is not in any card
-file, searched; it comes from the unit's firmware. Probes of `0x8080` to `0x8095` and `0x80be` to
-`0x8130` drew nothing.
+`0x8040` to `0x807f` are POI icons: parking, airport, hotel, dealer and so on. There is no badge to
+be had for a country outside the table. The label text is in no card file, searched; it comes from
+the unit's firmware. Probes of `0x8080` to `0x8095` and `0x80be` to `0x8130` drew nothing.
 
 ## The two database vintages
 
 The 2014 and 2017 vintages have the same coarse-file structure. Same bounds (4800, 1280, -1200,
 4080), same grid pair (11, 11), level-6 directory at 0x1300 kind 0x000a, level 5 at 0x0200 11x11,
 level 4 at 0x3cde 44x44, 52 level-3 cells at 0x0826 16x16, and the level-3 group last in the section
-table with room before 0x1300. The same 52 grid cells.
-
-Every assertion in `lev_append.py`, `lev_coarse.py` and `lev_l6.py` holds on both, so the whole
-chain ports between vintages with only the tile header template swapped. Rebuilt on the 2014 base,
-the four new tiles come out byte-identical to the 2017 build past the 0x1000 header, with 6 header
-bytes differing: the data version string. The 2014 base's own tiles pass the same checks as the
-2017 ones, byte-identical rebuild, 2,635 records byte-exact and every parcel code correct, and its
-tile header differs from the 2017 one only in the version strings.
+table with room before 0x1300. The same 52 grid cells. Every assertion in `lev_append.py`,
+`lev_coarse.py` and `lev_l6.py` holds on both, so the whole chain ports between vintages with only
+the tile header template swapped. Rebuilt on the 2014 base, the four new tiles come out
+byte-identical to the 2017 build past the 0x1000 header, with 6 header bytes differing: the data
+version string. The 2014 base's own tiles pass the same checks as the 2017 ones, byte-identical rebuild,
+2,635 records byte-exact and every parcel code correct, and its tile header differs from the 2017
+one only in the version strings.
 
 The index differs in one respect: the 2014 base does not hoist `VER_INFO` to the front of its
-directory, the 2017 base does, and neither matches readdir order. `make_drstr.py` keeps each
-directory in the order the base's own index uses. Given `-` as the tile folder it reproduces the
-base index byte for byte, the control for any index change.
+directory, the 2017 base does, and neither matches readdir order. So `make_drstr_card.py` takes
+the order from the base's own index rather than deriving it: given `-` as the tile folder it
+reproduces that index byte for byte, which is the control for any index change. `make_drstr.py`
+builds from readdir order instead and carries the `VER_INFO` hoist.
 
 ## Rules that held across every build
 
@@ -239,5 +225,4 @@ base index byte for byte, the control for any index change.
 - Verify every record's parcel code against its directory mesh, not against local row and column.
 - Leave every byte you did not have to change exactly as shipped.
 
-Related: `docs/FORMAT.md` for the container, `docs/GEOMETRY.md` for coordinate packing,
-`docs/LEVEL5.md` for the coarse directories, `docs/ROAD-CLASSES.md` for road styling.
+Related: `docs/FORMAT.md`, `docs/GEOMETRY.md`, `docs/LEVEL5.md`, `docs/ROAD-CLASSES.md`.
