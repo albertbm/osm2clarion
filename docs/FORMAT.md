@@ -146,8 +146,11 @@ administrative hierarchy. The records between header and schema are packed binar
 
 The unit reads this instead of scanning the card, so a database with new tiles needs a
 matching index or the tiles are invisible. `tools/make_drstr.py` regenerates it from a
-directory tree, and against a mounted base card the output is byte-identical to that card's
-own `DRSTR001.DAT`: all 466,952 bytes of the 2017 one, all 469,320 of the 2014 one.
+directory tree. Against the 2017 base card the output is byte-identical to that card's own
+`DRSTR001.DAT`, all 466,952 bytes, and so it is against a second 2017 card (`GEURX-30-105-100`,
+`17-31`). The 2014 base card is 469,192 bytes and does not come out identical: its `VER_INFO`
+sits in a different place, as the ordering note below sets out, so 11,167 bytes differ.
+`make_drstr_card.py` reproduces it instead.
 
 ```
 directory records, 0x28 bytes each, from offset 0, one per directory
@@ -182,8 +185,28 @@ Three rules are not guessable from a hex dump. Each was found by failing to repr
   `REFER001` reads 1,251,633,152 against 3,953,262,803 actual bytes; `MAPAL001` reads
   867,939,328 for a directory really holding 5,162,906,624.
 - Order is on-disk FAT order, not alphabetical. `OBJCT001` lists `OBJCTIDX.DAT` before its
-  subdirectories, exactly as readdir returns it. The one exception is `VER_INFO`, hoisted
-  to the front of its parent.
+  subdirectories, exactly as readdir returns it. Compared directory by directory against
+  five card images, the index order is readdir order in every directory of all five.
+
+The one entry that does not line up is `VER_INFO` in the root, and that is a fact about the
+cards, not about the format. Its directory entry was deleted and written again after the
+index was made, so its slot today is not the slot the index was built from. The entries that
+were deleted carry the dates: the 2017 card's index was written 2017-10-23 14:46, when
+`VER_INFO` was the first root entry, and it moved to the last on 2017-10-30. Hoisting it back
+to the front reproduces that card. The 2014 card's index was written 2014-12-19 11:52, when
+`VER_INFO` sat one slot ahead of `TFTBL001`; putting it back there reproduces all 469,192
+bytes, and hoisting it to the front does not. A third card, `GEURX-30-105-100` / `17-31`,
+never moved its `VER_INFO` and needs no exception at all.
+
+Two independent dumps of the same 2017 card, with different sha256, give the same answer, so
+this is not a difference between an original card and a clone. It is a difference between a
+directory that has been written to since mastering and one that has not.
+
+On the one North American card measured (`GNAMX-20-107-100`, `18-02`, 88,984 bytes) the order
+matches in all 19 directories, and 34 bytes differ, all inside the `SXM` subtree: the size
+fields of `SXM` and `SXM/AL` read 46,448 and 0 against sums of 3,730,375 and 3,683,927, five
+20-character `.psv` names are cut to 19 characters with a zero size, and one entry the index
+spells `ltntbl.dat` has only an 8.3 `LTNTBL.DAT` on disk.
 
 `SPEECH` and `DRSTR001.DAT` are absent from the index, and have to be: `SPEECH` holds
 33-character filenames that will not fit the 20-byte name field, and a file cannot record its own

@@ -5,9 +5,15 @@
 make_drstr.py builds the index from a directory tree in readdir order, which reproduces
 the shipped file. This one differs in what it reads and in what it substitutes, which is
 why it is a separate script: every directory keeps the order the card's own
-DRSTR001.DAT lists it in (the mastering tool's order, which is not readdir's on either
-card), and MAPAL001 is replaced by a given folder of tiles plus the card's own
-LEV3456R.DAT. Runs against the mounted card read-only. macOS metadata is skipped.
+DRSTR001.DAT lists it in, and MAPAL001 is replaced by a given folder of tiles plus the
+card's own LEV3456R.DAT. Runs against the mounted card read-only. macOS metadata is skipped.
+
+Reading the order out of the index is the safe way round, not a different theory of the
+format. The two orders agree: compared directory by directory against five card images,
+the index order is readdir order in every directory of all five. What they disagree about
+is VER_INFO in the root, whose entry both European cards rewrote after the index was
+mastered, to a different place on each. make_drstr.py has to guess which; this script
+reads it.
 
     ./make_drstr_card.py <mounted card> <folder of new tiles> DRSTR001.DAT
     ./make_drstr_card.py CARD - OUT         # control: must reproduce CARD/DRSTR001.DAT

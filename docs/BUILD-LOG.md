@@ -220,11 +220,14 @@ version string. The 2014 base's own tiles pass the same checks as the 2017 ones,
 2,635 records byte-exact and every parcel code correct, and its tile header differs from the 2017
 one only in the version strings.
 
-The index differs in one respect: the 2014 base does not hoist `VER_INFO` to the front of its
-directory, the 2017 base does, and neither matches readdir order. So `make_drstr_card.py` takes
-the order from the base's own index rather than deriving it: given `-` as the tile folder it
-reproduces that index byte for byte, which is the control for any index change. `make_drstr.py`
-builds from readdir order instead and carries the `VER_INFO` hoist.
+The index differs in one respect: the 2014 base lists `VER_INFO` one slot ahead of `TFTBL001`,
+the 2017 base lists it first. Everything else in both indexes is readdir order, in every
+directory, so the difference is `VER_INFO` alone, whose entry each card rewrote after its index
+was written. `docs/FORMAT.md` has the dates. `make_drstr_card.py` takes the order from the
+base's own index rather than deriving it, which settles the question either way: given `-` as
+the tile folder it reproduces that index byte for byte, the control for any index change.
+`make_drstr.py` builds from readdir order instead and carries a `VER_INFO` hoist that suits the
+2017 base and not the 2014 one.
 
 ## Rules that held across every build
 

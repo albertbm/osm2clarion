@@ -28,8 +28,22 @@ that file byte for byte:
                          5,162,906,624 bytes and the field reads 867,939,328.
 
 Ordering is the on-disk FAT directory order, not alphabetical. OBJCT001 lists
-OBJCTIDX.DAT before its subdirectories, exactly as readdir returns it. The one
-exception is VER_INFO, which is hoisted to the front of its parent.
+OBJCTIDX.DAT before its subdirectories, exactly as readdir returns it. Compared
+directory by directory against five card images, the index order is readdir order
+in every directory of all five.
+
+VER_INFO in the root is the one entry that does not line up, and that is a fact
+about the cards rather than about the format. Its directory entry was deleted and
+written again after the index was made, so the slot it sits in now is not the slot
+the index was built from. The 2017 card's index was written 2017-10-23 14:46, when
+VER_INFO was the first root entry; it moved to the last on 2017-10-30. So the hoist
+below reproduces that card, and all 466,952 bytes of a second 2017 card besides,
+whose VER_INFO was never moved. It gets the 2014 card (GEURX-30-100-100, 14-38,
+469,192 bytes) wrong: that one wants VER_INFO one slot earlier instead, ahead of
+TFTBL001, and hoisting it to the front changes 11,167 bytes.
+
+For any card whose own index you can read, make_drstr_card.py takes the order from
+there and does not have to guess.
 
     ./make_drstr.py <map root> [output file]
 """
@@ -69,8 +83,8 @@ def listing(path):
             out.append((e.name, True, tree_size(Path(e.path))))
         else:
             out.append((e.name, False, e.stat().st_size))
-    # FAT order as mastered, except VER_INFO, which the card hoists to the front;
-    # the unit presumably wants the version before anything else.
+    # Readdir order, except VER_INFO, whose entry both European cards rewrote after
+    # mastering. Front is where the 2017 card's index wants it; see the module docstring.
     out.sort(key=lambda r: r[0] != "VER_INFO")
     return out
 
