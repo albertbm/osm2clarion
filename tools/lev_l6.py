@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Widen the level-6 background of LEV3456R.DAT to the west.
 
 Level 6 is one raw record for the whole database (box 904..992 x 32..120 meshes,

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Read a build profile.
 
 Everything specific to a region lives in a TOML profile, so the tools stay general:

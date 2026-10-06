@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Walk a map tile without loading it.
 
 `clarion_tile.read_tile` builds the whole container as objects so it can be edited

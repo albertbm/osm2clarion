@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Generate DRSTR001.DAT, the directory index of a Clarion map database.
 
 The head unit reads this rather than scanning the card, so a database with new

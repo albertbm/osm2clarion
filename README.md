@@ -111,4 +111,7 @@ Several tools check themselves against real data; the table in
 
 ## Licence
 
-Not chosen yet.
+The tools here are GPL-3.0-or-later; the text is in [LICENSE](LICENSE). A map built from
+OpenStreetMap is ODbL 1.0 instead, and the shipped navigation database on a factory card is
+licensed commercial data that nothing here covers. [LICENSES.md](LICENSES.md) sets out all
+three, and [CONTRIBUTING.md](CONTRIBUTING.md) covers the tests and what must not be committed.

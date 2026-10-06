@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Every natural=coastline way of an OSM extract as GeoJSON, for the background builders.
 
 Needs pyosmium, which nothing else in the chain does.

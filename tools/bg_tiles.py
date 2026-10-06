@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Background tiles for a region's cells, from an OSM coastline. Sea and land only.
 
 One .DAT per cell, levels 2 and 1, written from a template tile taken off the base card.

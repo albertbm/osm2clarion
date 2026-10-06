@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Clarion X08-03-00 map tile: read the container into objects and write it back.
 
 Layout: 0x1000-byte header (strings, level table at 0x1ac, bbox table at 0x2ac,

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) that sits in the even pair of a level-1 background
 directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
 (w17, w18) = a 5-dword tail table, w19 0x8104, w20 0x017c. Geometry unit: u16 count, twelve

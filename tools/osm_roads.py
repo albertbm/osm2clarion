@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Every highway way of an OSM extract as JSON for rd_build.py and lev_roads.py.
 
     ./osm_roads.py iceland-latest.osm.pbf roads_iceland.json

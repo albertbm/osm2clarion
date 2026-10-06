@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Append level-3 directories for new cells to LEV3456R.DAT.
 
 LEV3456R.DAT holds levels 3-6 for the whole database. Level 3 is one directory

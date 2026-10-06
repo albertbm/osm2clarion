@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Whole-database coarse directories (levels 4 and 5) in LEV3456R.DAT: widen them to the
 west and fill new columns with parcels built from OSM.
 

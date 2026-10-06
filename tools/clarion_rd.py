@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Section 2 (road) records: node lists with per-node link entries.
 
 Record: words 0-1 parcel code, 2 zero dwords, five (u32 offset, u32 length) unit pairs in

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Background (section 1) record: parse to a dict and build back to bytes.
 
 Record layout (all big-endian, sizes in 16-bit words unless noted; "unit" = 4 bytes):

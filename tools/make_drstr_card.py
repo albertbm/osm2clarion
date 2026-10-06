@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """DRSTR001.DAT for a card whose MAPAL001 has been replaced.
 
 make_drstr.py builds the index from a directory tree in readdir order, which reproduces

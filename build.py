@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Run the whole chain for one profile.
 
     ./build.py --profile iceland --base CARD --out DIR [--target v2014] [--from STEP]

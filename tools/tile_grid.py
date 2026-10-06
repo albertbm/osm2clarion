@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Check the grid formula against a directory of tiles.
 
 A tile's name encodes its south-west corner in hexadecimal: lat_min = B * 2/3 degrees

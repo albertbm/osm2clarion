@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Encode land polygons and coastline ways into Clarion background records and a tile.
 
 Parcel grids (all within a tile cell of 8x8 first-level meshes; a mesh is 1 deg x 40'):

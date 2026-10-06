@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Give a section-1 level-5 record the road block the unit draws at 64 km.
 
 A level-5 record carries two geometry blocks: the road block at w7/w8 and the background

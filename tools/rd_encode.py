@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Encode a section-2 (road) level-1 record and directory from a node/link graph.
 
 Graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. Follows the shipped layout

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Rewrite a tile's header for another database version.
 
 The 2017 and 2014 European tiles are byte-identical apart from six header bytes: the

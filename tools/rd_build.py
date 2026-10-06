@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Section-2 level-1 records for every parcel of a tile cell, from OSM ways.
 
     ./rd_build.py --profile iceland TILE_IN TILE_OUT CELL [roads.json]

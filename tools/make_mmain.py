@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """MMAIN001.DAT for a rebuilt database.
 
 MMAIN001.DAT is the 4 KiB master file: the tile header block with the database

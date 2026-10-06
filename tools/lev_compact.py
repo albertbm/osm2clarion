@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Rewrite LEV3456R.DAT with only the referenced pieces: header, section tables, directories
 and their record blocks, in that order per section. Every edit tool appends, so the file
 grows; this puts it back to size.

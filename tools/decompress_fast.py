@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unpack the .cmp/.ind pairs of a card's address half.
 
 Nothing in the build chain needs this: `MAPAL001` holds no .cmp or .ind at all, so the map

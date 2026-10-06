@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Coarse roads in LEV3456R.DAT: levels 3 and 4.
 
 Two jobs. First the section-2 level-4 and level-5 road directories are moved west, as the

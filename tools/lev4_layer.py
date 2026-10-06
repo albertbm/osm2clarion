@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Move Iceland's level-4 road shapes from layer 5 to layer 6 in a built LEV3456R.DAT.
 
 `lev_roads` used to write the layer pair at unit[10]/unit[11], which is layer 5. No shipped
