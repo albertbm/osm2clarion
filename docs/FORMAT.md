@@ -12,8 +12,8 @@ Tiles of both declare format version `X08-03-00`, both hold the same 52 grid cel
 are structurally the same wherever this file compares them. Most of what is below was worked
 out on the 2014 card; where a figure belongs to one vintage and not the other, it says so. The
 `.cmp`/`.ind` container is dfj's, from his gist "Clarion Maps structure + decompressor of CMP
-files". For what is inside a tile see [GEOMETRY.md](GEOMETRY.md); this
-file stops at the tile header.
+files". For what is inside a tile see [GEOMETRY.md](GEOMETRY.md); this file stops at the tile
+header.
 
 ## Card layout
 
