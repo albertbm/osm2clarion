@@ -8,6 +8,7 @@
     --l2-classes wide|narrow|a,b,c which roads reach level 2
     --no-l2-graph                  leave out the section-2 level-2 directories
     --no-l2-names                  level-2 shapes without names
+    --no-chain                     a graph node at every point, two points per shape
 
 roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut at parcel
 edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
@@ -16,7 +17,7 @@ shape's layer and class come from the OSM highway value through `fa_encode.CLASS
 what the renderer takes its road width from. One graph class group (0x0898) for every road.
 Directories are added per mesh, the level table and the box table updated.
 """
-import json, math, os, struct, sys, zlib
+import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
@@ -79,22 +80,47 @@ def dist(a, b):
     m = math.radians((a[1] + b[1]) / 2)
     return math.hypot((b[0] - a[0]) * 111320 * math.cos(m), (b[1] - a[1]) * 111320)
 
-def build_graphs(ways, cell, level=1):
+MAX_INNER = 40    # interior points a link may carry; a longer run gets a graph node here
+MAX_POINTS = 64   # points per shape; a chain breaks at a link boundary before exceeding it
+
+def build_graphs(ways, cell, level=1, chain=True):
+    """Per parcel: nodes {key: ...} and links [(from key, to key, length, way id, name, hw,
+    ref, inner points, chain id)]. With chain, a point is a graph node only where ways meet
+    or end and the bends between nodes ride inside the link as its inner points, which is
+    how the factory writes them. Without, every point is a node and every link two points,
+    so the matcher sees a junction at every bend."""
     yb, xb = tile_cell(cell)
     parcels = {}
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
             y, x, row, col = pc
             if not (yb <= y < yb + 8 and xb <= x < xb + 8): continue
-            P = parcels.setdefault(pc, dict(nodes={}, links=[]))
-            def nid(p):
+            P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter()))
+            q = []
+            for p in run:
                 key = quant(p, pc, level)
-                if key not in P['nodes']: P['nodes'][key] = dict(geo=p, edge=None)
-                return key
-            for a, b in zip(run, run[1:]):
-                ka, kb = nid(a), nid(b)
-                if ka == kb: continue
-                P['links'].append((ka, kb, max(1.0, dist(a, b)), wy['id'], wy.get('name'), wy['hw'], wy.get('ref')))
+                if not q or q[-1][0] != key: q.append((key, p))
+            if len(q) < 2: continue
+            P['runs'].append((q, wy))
+            P['touch'][q[0][0]] += 2; P['touch'][q[-1][0]] += 2   # a run end is always a node
+            for key, _ in q[1:-1]: P['touch'][key] += 1
+    for pc, P in parcels.items():
+        touch = P['touch']
+        for rid, (q, wy) in enumerate(P['runs']):
+            start = 0
+            for i in range(1, len(q)):
+                if chain and touch[q[i][0]] < 2 and i - start <= MAX_INNER: continue
+                seg = q[start:i + 1]; start = i
+                # a run that closes on itself is split in two, so no link joins a node to itself
+                parts = [seg[:len(seg) // 2 + 1], seg[len(seg) // 2:]] if seg[0][0] == seg[-1][0] and len(seg) > 2 else [seg]
+                for part in parts:
+                    if part[0][0] == part[-1][0]: continue
+                    for key, p in (part[0], part[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
+                    length = sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
+                    P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
+                                       wy['hw'], wy.get('ref'), [k for k, _ in part[1:-1]], rid))
+        del P['runs'], P['touch']
+        if chain: P['links'] = chain_links(P['links'])
     # edge nodes: coordinate on a parcel border; find the twin in the neighbour
     for pc, P in parcels.items():
         y, x, row, col = pc
@@ -106,6 +132,38 @@ def build_graphs(ways, cell, level=1):
         keys = sorted(P['nodes'], key=lambda k: (k[0], k[1]))
         P['order'] = keys; P['index'] = {k: i for i, k in enumerate(keys)}
     return parcels
+
+def chain_links(links):
+    """Reorder links so the ones drawn as one shape are consecutive, and renumber their chain
+    ids. A way's run through the parcel is one chain, junctions included, as the factory's
+    are. Where a chain ends at a node that exactly one other chain of the same class, name
+    and ref also ends at, the two are joined, so an OSM way split at an attribute change
+    draws on as one road. A chain never closes on itself."""
+    chains = {}
+    for l in links: chains.setdefault(l[8], []).append(l)
+    def key(c): return (c[0][5], c[0][4], c[0][6])
+    def flip(c): return [(l[1], l[0]) + l[2:7] + (l[7][::-1], l[8]) for l in reversed(c)]
+    ends = collections.defaultdict(list)                     # node -> [(chain id, 'a' start | 'b' end)]
+    for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
+    for node in sorted(ends):
+        bykey = collections.defaultdict(list)
+        for c, s in ends[node]: bykey[key(chains[c])].append((c, s))
+        pairs = [p for p in bykey.values() if len(p) == 2 and p[0][0] != p[1][0]]
+        if len(pairs) != 1: continue                         # one road, two ends, nothing ambiguous
+        (ca, sa), (cb, sb) = pairs[0]
+        A, B = chains[ca], chains[cb]
+        if sa == 'a': A = flip(A)                            # A must end at the node
+        if sb == 'b': B = flip(B)                            # B must start there
+        if A[0][0] == B[-1][1]: continue                     # joining would close the loop
+        chains[ca] = A + B; del chains[cb]
+        ends[A[0][0]] = [(ca, 'a') if c in (ca, cb) else (c, s) for c, s in ends[A[0][0]]]
+        ends[B[-1][1]] = [(ca, 'b') if c in (ca, cb) else (c, s) for c, s in ends[B[-1][1]]]
+    out = []; cid = 0
+    for c in chains.values():
+        # a closed way (roundabout, turning circle) is two shapes, as the factory draws them
+        for part in ([c[:len(c) // 2], c[len(c) // 2:]] if c[0][0] == c[-1][1] and len(c) > 1 else [c]):
+            out += [l[:8] + (cid,) for l in part]; cid += 1
+    return out
 
 def neighbour(pc, side):
     y, x, row, col = pc
@@ -122,12 +180,24 @@ def label(name, ref):
     parts = ([f'1={name}'] if name else []) + ([f'2={ref}'] if ref else [])
     return ';'.join(parts)
 
-def encode_parcels(parcels, level=1, no_names=False):
+def chains_of(links, idx, chain=True):
+    """Shapes as [(link id, from index, to index, inner points)] chains: consecutive links of
+    one way run, broken where the next link would take the shape past MAX_POINTS."""
+    chains = []; npts = 0
+    for lid, l in enumerate(links, start=1):
+        item = (lid, idx[l[0]], idx[l[1]], l[7]); n = len(l[7]) + 1
+        if chain and chains and links[lid - 2][8] == l[8] and npts + n <= MAX_POINTS:
+            chains[-1].append(item); npts += n
+        else:
+            chains.append([item]); npts = n + 1
+    return chains
+
+def encode_parcels(parcels, level=1, no_names=False, chain=True):
     out = {}
     for pc, P in parcels.items():
         keys = P['order']; idx = P['index']
         nodes = list(keys)
-        links = [(idx[a], idx[b], ln) for a, b, ln, _, _, _, _ in P['links']]
+        links = [(idx[a], idx[b], ln) for a, b, ln, *_ in P['links']]
         edges = {}
         for key, nd in P['nodes'].items():
             if not nd['edge']: continue
@@ -141,12 +211,10 @@ def encode_parcels(parcels, level=1, no_names=False):
                     twin = min(cands)[1] if cands else None
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges, classes=[l[5] for l in P['links']])
-        # drawn geometry: one shape per link, each pointing at its street's label entry
-        way_of = {lid: l[3] for lid, l in enumerate(P['links'], start=1)}
-        hw_of = {lid: l[5] for lid, l in enumerate(P['links'], start=1)}
-        label_of = {lid: label(l[4], l[6]) for lid, l in enumerate(P['links'], start=1)}
-        chains = fa_encode.chains_from_links(links, way_of)
-        hws = [hw_of.get(c[0][0]) for c in chains]
+        # drawn geometry: one shape per chain of links, each pointing at its street's label entry
+        chains = chains_of(P['links'], idx, chain)
+        hws = [P['links'][c[0][0] - 1][5] for c in chains]
+        label_of = {c[0][0]: label(P['links'][c[0][0] - 1][4], P['links'][c[0][0] - 1][6]) for c in chains}
         labels = []
         for c in chains:
             n = label_of.get(c[0][0])
@@ -205,6 +273,8 @@ def main():
     if '--no-l2-graph' in argv: argv.remove('--no-l2-graph'); no_l2_graph = True
     if '--l2-graph' in argv: argv.remove('--l2-graph'); no_l2_graph = False
     if '--no-l2-names' in argv: argv.remove('--no-l2-names'); no_l2_names = True
+    no_chain = '--no-chain' in argv
+    if no_chain: argv.remove('--no-chain')
     if '--l2-classes' in argv:
         i = argv.index('--l2-classes'); l2 = clarion_profile.l2_classes(argv[i + 1]); del argv[i:i + 2]
     src, dest, cell = argv[:3]
@@ -218,8 +288,12 @@ def main():
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
     boxes = {}; report = []
     for level, subset in ((1, ways), (2, [w for w in ways if w['hw'] in l2])):
-        parcels = build_graphs(subset, cell, level)
-        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names))
+        # level 2 keeps one two-point shape per link: the matcher reads level 1 only, and the
+        # factory's chained level-2 form has a header this file has not decoded
+        chain = level == 1 and not no_chain
+        parcels = build_graphs(subset, cell, level, chain)
+        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain)
+        shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
         for (y, x, row, col), (plain, comp, fplain, fcomp, _) in recs.items():
@@ -238,6 +312,12 @@ def main():
         report.append(f'level {level}: {len(recs)} parcels in {len(lv["dirs"])} dirs, '
                       f'{sum(len(Q["nodes"]) for Q in parcels.values())} nodes, shapes placed {placed}, '
                       f'nodes/parcel median {counts[len(counts)//2]} max {counts[-1]}')
+        if shapes:   # how far the chaining got: two points and one link per shape is none of it
+            pts = sorted(1 + sum(len(inner) + 1 for _, _, _, inner in c) for c in shapes)
+            multi = sum(1 for c in shapes if len(c) > 1)
+            report.append(f'  shapes {len(shapes)}: points/shape median {pts[len(pts)//2]} '
+                          f'mean {sum(pts)/len(pts):.2f} max {pts[-1]}, '
+                          f'multi-link {100 * multi / len(shapes):.1f}%')
     nw, _, _ = clarion_tile.table_words(sec2); sec2['count'] = -(-2 * nw // 256)
     hdr = bytearray(t['header'])
     p = 0x1ac + 2; groups = hdr[p - 2] << 8 | hdr[p - 1]

@@ -46,24 +46,45 @@ def layer_class(hw, level, layer=None):
     return (layer if layer is not None else lay), cls
 
 def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
-    """chain: [(link id, from node, to node, [inner points])]. Written as the control tile
-    writes single-link shapes: start node (y | 0x2800), style, value, id, points with the
-    first flagged 0x7000 and the rest 0x1000, one trailer word. cls is the road class in the
-    top nibble of word 2; it is what the renderer widens by."""
+    """chain: [(link id, from node, to node, [inner points])]. The start node as
+    (x | 0x0800, y | 0x2800), then each link's header and its points, and one trailer word
+    at level 1. cls is the road class in the top nibble of word 2, which is what the
+    renderer widens by.
+
+    Level-1 x flags, counted over the factory tiles (docs/GEOMETRY.md):
+
+        0x4000  first point of a link
+        0x2000  in the first link
+        0x1000  the link goes on past this point
+        0x0800  this point does not end a link
+
+    A link end inside the chain clears 0x1000 and carries 0x0800 on its y instead; the
+    shape's last point keeps 0x1000 and a plain y. The firmware reads a clear 0x0800 as
+    "the link ends here" and takes the two words after it for a link header, so a build
+    that left it clear on inner points ended every link at its first point and drew a fan
+    of crossing lines. Tromso sets it on all 30,690 points that do not end a link and
+    clears it on all 13,338 that do, over 7,520 shapes, with no exceptions. 0x0c00 on a
+    link end's y is an earlier reading of the same mark: bit 10 belongs to the coordinate,
+    so that form drew the shape off the parcel. Level 2 is single-link only here."""
     if cls is None: cls = 8 if level == 1 else 7
     if level == 1: out = [cls << 12, 0x0004, name_off, 0x8004, 0x0000]   # word 4: word offset of the name entry, 0xffff = none
     else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
-    out += [(0x0800 if level == 2 else 0) | sx, 0x2800 | sy]   # shipped starts carry 0x0800; level 1 works without
+    out += [0x0800 | sx, 0x2800 | sy]
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
         if level == 1: out += [STYLE, 0x0100, lid] if n == 0 else [0x0100, lid]
         else: out += [0x101e, lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
-            first = k == 0; last = k == len(pts) - 1
-            xf = (0x7000 if level == 1 else 0x5000) if (first and n == 0) else 0x5000 if first else 0x1000
-            if last and n < len(chain) - 1: xf = 0x0000; y |= 0x0c00
+            first = k == 0; link_end = k == len(pts) - 1; chain_end = n == len(chain) - 1
+            if level == 1:
+                xf = ((0x4000 if first else 0) | (0x2000 if first and n == 0 else 0)
+                      | (0 if link_end and not chain_end else 0x1000)
+                      | (0 if link_end else 0x0800))
+                if link_end and not chain_end: y |= 0x0800
+            else:
+                xf = 0x5000 if first else 0x1000
             out += [xf | x, y]; npts += 1
     if level == 1: out += [0x0000]
     body = [0x8000 | npts] + out

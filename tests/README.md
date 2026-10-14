@@ -24,6 +24,7 @@ It checks that decode(encode(x)) gives x back, and that the bytes in between mat
 | longitude and latitude through a tile and back | within a parcel unit |
 | road graphs: `rd_encode` then `clarion_rd` | nodes, links from both ends, class words, parcel edges |
 | road shape records from `fa_encode` | GEOMETRY.md; nothing in `tools/` reads them back |
+| the point flags, bit by bit, and the chains `rd_build` makes of links | the four-flag table in GEOMETRY.md |
 | the OSM class mapping | the table in ROAD-CLASSES.md |
 | `DRSTR001.DAT` from a tree of empty files | FORMAT.md |
 | profiles | `profiles/iceland.toml` |

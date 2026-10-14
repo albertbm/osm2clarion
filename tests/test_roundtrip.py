@@ -30,6 +30,7 @@ import clarion_rd
 import clarion_tile
 import fa_encode
 import make_drstr
+import rd_build
 import rd_encode
 import tile_grid
 import tile_retarget
@@ -650,6 +651,7 @@ class TestRoadShapes(unittest.TestCase):
     so these check the bytes against the layout in GEOMETRY.md."""
 
     NODES = [(100, 200), (900, 240), (1500, 1800)]
+    CHAIN = [(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])]
 
     def chains(self, chain=False):
         return fa_encode.chains_from_links([(0, 1, 850), (1, 2, 1600)], {1: 10, 2: 11}, chain=chain)
@@ -657,6 +659,23 @@ class TestRoadShapes(unittest.TestCase):
     def unit_words(self, plain):
         w = struct.unpack_from('>22H', plain, 0)
         return w, struct.unpack_from('>%dH' % (2 * w[8]), plain, 4 * w[7])
+
+    def shape_points(self, shape, chain):
+        """Walk a level-1 shape's words beside the chain that produced it: (role, x word,
+        y word) per point, in the roles the factory census counts."""
+        p = 7                                       # the length word, 0x8000 | points, five header words
+        out = [('start', shape[p], shape[p + 1])]; p += 2
+        for n, (_, _, _, inner) in enumerate(chain):
+            p += 3 if n == 0 else 2                 # the link header
+            npts = len(inner) + 1
+            for k in range(npts):
+                if k < npts - 1: role = 'first-of-link' if k == 0 else 'inner'
+                else: role = 'last' if n == len(chain) - 1 else 'linkend'
+                out.append((role, shape[p], shape[p + 1])); p += 2
+        self.assertEqual(shape[p], 0x0000, 'the trailer word ends the shape')
+        self.assertEqual((shape[0], len(shape)), (p + 1, p + 1), 'the length word counts itself')
+        self.assertEqual(shape[1] & 0x3fff, len(out))
+        return out
 
     def test_level1_header(self):
         plain, comp = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains(),
@@ -730,6 +749,50 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual(len(same_way), 1, 'consecutive links of one way form a chain')
         self.assertEqual([lid for lid, _, _, _ in same_way[0]], [1, 2])
 
+    def test_a_point_that_does_not_end_a_link_carries_0x0800(self):
+        """The firmware reads a clear bit 11 as "this link ends here" and takes the two words
+        after it for a link header. Leaving it clear on inner and first-of-link points cost a
+        card: every link ended at its first point and the shapes drew as crossing lines.
+        Factory Tromso sets it on all 30,690 points that do not end a link and clears it on
+        all 13,338 that do."""
+        for role, x, _ in self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN):
+            want = 0 if role in ('linkend', 'last') else 0x0800
+            self.assertEqual(x & 0x0800, want, 'a %s point' % role)
+
+    def test_flags_stay_out_of_the_coordinate(self):
+        """A coordinate is the low 11 bits, so bit 10 is not free for a flag. An earlier
+        link-end mark of 0x0c00 on y moved the point 1,024 units and drew off the parcel."""
+        pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN)
+        want = ([self.NODES[0]] + self.CHAIN[0][3] + [self.NODES[1]]
+                + self.CHAIN[1][3] + [self.NODES[2]])
+        self.assertEqual([(x & 0x07ff, y & 0x07ff) for _, x, y in pts], want)
+
+    def test_a_link_end_inside_the_chain_marks_itself_on_y(self):
+        pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN)
+        _, x, y = next(p for p in pts if p[0] == 'linkend')
+        self.assertEqual(x & 0x1000, 0, 'a link header follows this point')
+        self.assertEqual(y & 0xf800, 0x0800)
+        _, x, y = pts[-1]
+        self.assertEqual(x & 0x1000, 0x1000, 'nothing follows the shape')
+        self.assertEqual(y & 0xf800, 0, 'the last point has a plain y')
+
+    def test_the_start_node_and_the_first_link(self):
+        pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN)
+        self.assertEqual(pts[0][1] & 0xf800, 0x0800, 'the start x')
+        self.assertEqual(pts[0][2] & 0xf800, 0x2800, 'the start y')
+        self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x4000], [1, 4],
+                         '0x4000 on the first point of each link')
+        self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x2000], [1],
+                         '0x2000 only in the first link')
+
+    def test_a_two_point_shape_keeps_the_form_that_drew(self):
+        """One link and no inner points: start, header, end point flagged 0x7000 with a plain
+        y, trailer. The atomised build wrote only this form, and 20,854 of its shapes were
+        bit-identical to the factory's two-point shapes."""
+        shape = fa_encode.shape_words([(1, 0, 1, [])], self.NODES)
+        self.assertEqual(shape[7:9], [0x0800 | 100, 0x2800 | 200])
+        self.assertEqual(shape[12:14], [0x7000 | 900, 240])
+
     def test_names_section(self):
         labels = ['1=Hringvegur;2=R1', '1=Reykjanesbraut']
         items = [fa_encode.item_words([0, 0x8000 | 5], 1, 12)]
@@ -762,6 +825,57 @@ class TestRoadShapes(unittest.TestCase):
         with self.assertRaises(IndexError):
             fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains()[:1],
                                    hws=['motorway', 'residential'])
+
+
+class TestRoadChains(unittest.TestCase):
+    """rd_build turns ways into links that carry their own bends. A graph node at every bend
+    instead gives the matcher one two-point fragment per bend to project onto."""
+
+    CELL = 'B60R080R'
+    POINTS = [(-21.900 + 0.002 * i, 64.130 + 0.0004 * i) for i in range(5)]   # one parcel
+    WAY = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, nodes=POINTS)
+
+    def parcel(self, ways, chain=True):
+        parcels = rd_build.build_graphs(ways, self.CELL, 1, chain)
+        self.assertEqual(len(parcels), 1, 'the ways here sit in one parcel')
+        return next(iter(parcels.values()))
+
+    def test_a_bend_is_not_a_graph_node(self):
+        P = self.parcel([self.WAY])
+        self.assertEqual(len(P['links']), 1, 'one way run, one link')
+        self.assertEqual(len(P['links'][0][7]), 3, 'the three bends ride inside the link')
+        self.assertEqual(len(P['nodes']), 2, 'only the two ends are nodes')
+
+    def test_no_chain_puts_a_node_at_every_point(self):
+        P = self.parcel([self.WAY], chain=False)
+        self.assertEqual(len(P['links']), 4)
+        self.assertEqual([len(l[7]) for l in P['links']], [0, 0, 0, 0])
+        self.assertEqual(len(P['nodes']), 5)
+
+    def test_a_junction_splits_the_link_and_not_the_shape(self):
+        """A way meeting a bend makes that point a node, so the run becomes two links. The
+        two still draw as one shape, because the factory chains through junctions."""
+        side = dict(id=2, hw='service', name=None, ref=None,
+                    nodes=[self.POINTS[2], (-21.896, 64.127)])
+        P = self.parcel([self.WAY, side])
+        mine = [l for l in P['links'] if l[3] == self.WAY['id']]
+        self.assertEqual(len(mine), 2, 'the junction splits the run')
+        self.assertEqual(len({l[8] for l in mine}), 1, 'both links keep one chain id')
+        chains = [c for c in rd_build.chains_of(P['links'], P['index']) if len(c) == 2]
+        self.assertEqual(len(chains), 1, 'one shape of two links')
+        npts = 1 + sum(len(inner) + 1 for _, _, _, inner in chains[0])
+        self.assertEqual(npts, 5, 'all five points of the way, in one shape')
+
+    def test_a_chain_draws_with_the_link_flags_right(self):
+        P = self.parcel([self.WAY])
+        chain = rd_build.chains_of(P['links'], P['index'])[0]
+        nodes = list(P['order'])
+        shape = fa_encode.shape_words(chain, nodes)
+        self.assertEqual(shape[1] & 0x3fff, 5)
+        xs = [shape[i] for i in (7, 12, 14, 16, 18)]   # start, then the link's four points
+        self.assertEqual([x & 0x0800 for x in xs[:-1]], [0x0800] * 4,
+                         'the start and every point the link goes on past')
+        self.assertEqual(xs[-1] & 0x0800, 0, 'the last point ends the link')
 
 
 class TestRoadClasses(unittest.TestCase):

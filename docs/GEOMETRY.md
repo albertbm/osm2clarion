@@ -187,14 +187,40 @@ geometry unit: u16 (unknown count), twelve `(offset in dwords from the unit star
 count)` layer pairs, a pad word, the shapes. Layer 5 holds roads, layer 0 ferries. A shape
 is a chain of consecutive link ids along one way: `u16 length in words (itself included)`,
 `0x8000 | points` (sometimes with 0x4000), `0x8000`, `0004 000c 8004` (or `0144 ffff 8004`),
-`0`, the start node `(x, 0x2800 | y)`, then per link `style, value, link id` (style 0x1031
-roads, 0x001e ferry; value unknown; from the second link only `value, id`), the link's points
-`(0x1000 | x, y)` with the first point of a link flagged 0x7000 (first link) or 0x5000, the
-link's end node with `0x0c00 | y` unless it ends the shape, and one trailer word. Points are
-absolute parcel coordinates. Curves are the shape points; the graph only has the ends.
+`0`, the start node `(0x0800 | x, 0x2800 | y)`, then per link `style, value, link id` (style
+0x1031 roads, 0x001e ferry; value unknown; from the second link only `value, id`), the link's
+points `(0x1000 | x, y)` with the first point of a link flagged 0x7000 (first link) or 0x5000,
+the link's end node with `0x0800 | y` unless it ends the shape, and one trailer word. Points
+are absolute parcel coordinates. Curves are the shape points; the graph only has the ends.
 On a unit (24 Sep 2026): one street drew from 200 m to 50 m with one shape per link in the
 single-link form (start node, `1031 0100 id`, end point flagged 0x7000, trailer 0). A chained
 form that put first-point and link-end flags on the same point drew lines off the parcel.
+
+The x word carries four flags, not three:
+
+| bit | meaning |
+|---|---|
+| `0x4000` | first point of a link |
+| `0x2000` | in the first link |
+| `0x1000` | the link goes on past this point |
+| `0x0800` | this point does not end a link |
+
+A link end inside the chain clears `0x1000` and carries `0x0800` on its y instead; the
+shape's last point keeps `0x1000` and a plain y. Counted over every level-1 shape of the
+Tromso tile `B68R058R.DAT`, 7,520 shapes, `0x0800` is set on 7,520 start, 7,373 first-of-link
+and 15,797 inner points, and clear on 5,818 link ends and 7,520 last points, with no
+exceptions. The German tile `B48R060R.DAT`, 1,344,744 shapes, agrees to within 0.1%, and
+every exception is in a shape with extra header words that the walker does not fully decode.
+
+`0x0800` is easy to miss. The other three flags are the top nibble, `x >> 12`, and a census
+taken at that shift never sees bit 11. The firmware reads a clear bit as "this link ends
+here", not as "the link continues", so a build that left it clear on inner and first-of-link
+points ended every link at its first point and had the two words after it read as a link
+header. That card drew a fan of crossing lines below 500 m and the matcher stopped finding
+the road. `0x0c00` on a link end's y was an earlier reading of the same mark; bit 10 belongs
+to the coordinate, so that form moved the point 1,024 units and drew off the parcel.
+Two-point single-link shapes carry neither bit, which is why one shape per link always drew.
+
 Level 2, read off a dense city tile: graph records ship raw in two parts with
 class `0x0797` and header tail `0x00fa`; part b is a connection table `nodes, 0xa100`, per
 node `2000 k 0 k` then per entry `(other, side flags, other)` (0x00c0 left, 0xc000 bottom
@@ -234,8 +260,14 @@ zoom: level-4 shapes written as class 0xa drew blue (border style) at 16 and 10 
 at 4 and 2 km; level-2 class-7 shapes draw from 1 km down only. Unnamed level-4 shapes have
 word 3 `0x3000` and 0x4000 on their y words; named ones word 3 `0` and 0x0800/0.
 The street name shows in the status bar once the name entry has its 10-byte header and the
-shapes point at it. `rd_build.py` builds a whole cell with graphs, shapes and names. House
-numbers and address search are still open.
+shapes point at it. `rd_build.py` builds a whole cell with graphs, shapes and names. A point
+becomes a graph node only where ways meet or end; the bends between nodes ride inside the
+link, and a chain runs along a way and across OSM way boundaries wherever class, name and ref
+agree, as the factory's chains do. `--no-chain` goes back to a node at every point and two
+points per shape, which gives the matcher one disconnected fragment per bend. Measured against
+the position a car reports in its own probe data, that form held a median +0.25 m from the
+road centreline over 2,817 samples where chained shapes held +0.08 m over 209. House numbers
+and address search are still open.
 
 Road names sit in the background record's names section as `00ff 2000 0000 0000 len
 "1=NAME;2=REF"` entries (10-byte header, no id word; the text is padded to an even length
