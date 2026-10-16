@@ -1481,5 +1481,5 @@ class IcodeTree(unittest.TestCase):
         import icode_io
         b = icode_io.iso_slots(['COUNTRY', 'REGION', 'SETTLEMENT'])
         self.assertEqual(len(b), icode_io.NSLOT * icode_io.SLOT)
-        self.assertEqual(b[4:13], b'2=COUNTRY')
+        self.assertEqual(b[:9], b'2=COUNTRY')
         self.assertEqual(b[3 * icode_io.SLOT:], b'\x00' * (4 * icode_io.SLOT))

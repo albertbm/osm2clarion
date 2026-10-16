@@ -149,7 +149,11 @@ class Addre:
                 continue
             fo = 0x1100 + c[0] * 2
             n = c[1] * 2 // self.cr - 1
-            own = d[fo + n * self.cr + 8 + self.cr - 9]
+            # the node tail is a child record with an all-ones key: its count field is
+            # the node's own record count and is as wide as a child record's, not one
+            # byte. Denmark's ADDRE and POINT both carry owns past 255.
+            own = int.from_bytes(d[fo + n * self.cr + 8 + self.kw:
+                                   fo + (n + 1) * self.cr], 'big')
             if own:
                 keys.append((k, u32(d, fo + n * self.cr) // SREC_W, own))
             for i in range(n):
@@ -213,7 +217,7 @@ def build_trie(keys, cr, kw, recw=SREC_W):
         struct.pack_into('>II', buf, o, n.first * recw, parent_off)
         pad = bytearray(cr - 8)
         pad[:kw] = b'\xff' * kw
-        pad[-1] = n.own
+        pad[kw:] = n.own.to_bytes(cr - 8 - kw, 'big')
         buf[o + 8:o + 8 + cr - 8] = pad
 
     def emit(n, parent_off):
@@ -231,7 +235,7 @@ def build_trie(keys, cr, kw, recw=SREC_W):
     struct.pack_into('>II', buf, len(ks) * cr, 0, 0xffffffff)
     pad = bytearray(cr - 8)
     pad[:kw] = b'\xff' * kw
-    pad[-1] = root.own
+    pad[kw:] = root.own.to_bytes(cr - 8 - kw, 'big')
     buf[len(ks) * cr + 8:len(ks) * cr + 8 + cr - 8] = pad
     for u in ks:
         if root.kids[u].kids:
