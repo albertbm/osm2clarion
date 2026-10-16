@@ -6,6 +6,7 @@ name-block chunk sizes in the tail table, which is what made the block look like
 unknown codec. The name blocks are zlib with a 4 KiB window.
 """
 import struct
+import unicodedata
 import zlib
 
 ALIGN = 0x100
@@ -13,6 +14,7 @@ DF_LEN = 0x100
 NAMES_PER_BLOCK = 500
 SREC = 22
 SREC_W = 11
+SREC_PRE = 0x0a        # the street records start this far into their 256-byte block
 
 
 def u16(d, o): return struct.unpack_from('>H', d, o)[0]
@@ -23,6 +25,48 @@ def addr(off):
     """KIWI 1.2.7 sector address: 2 KiB sector in the high bits, 256-byte block in the low 3."""
     assert off % ALIGN == 0, off
     return (off // 0x800) << 8 | (off % 0x800) // ALIGN
+
+
+def unaddr(a):
+    """The byte offset a sector address points at."""
+    return (a >> 8) * 0x800 + (a & 0xff) * ALIGN
+
+
+# The trie key is not the display name. Measured on 13 factory ADDRE files - Andorra,
+# Belgium, Croatia, Czechia, Denmark, Germany, Hungary, Norway, Poland, Portugal,
+# Serbia, Slovenia, Spain, Turkey - the key is the name with every diacritic stripped
+# to its base Latin letter, hyphens turned into spaces and full stops dropped, while
+# the name record keeps its accents. Á -> A and Ć -> C fall out of Unicode
+# decomposition; these four letters have none, so the files give them a base letter
+# outright: Ø -> O 1,858 times, Ł -> L 1,285, Æ -> A 1,011, Đ -> D 147.
+#
+# Greek and Cyrillic keys are not folded - Greece's root keys are Α and Β, Belarus's
+# are А, Б, В - so this strips diacritics within a script rather than transliterating
+# between them. Þ, Ð and ß occur in no factory name, so they have no convention here
+# and a caller that needs them passes `extra`.
+KEY_FOLD = {'Æ': 'A', 'æ': 'a', 'Ø': 'O', 'ø': 'o',
+            'Đ': 'D', 'đ': 'd', 'Ł': 'L', 'ł': 'l'}
+
+
+def fold_key(s, extra=None):
+    """The search key the factory stores for a display name. `extra` adds mappings.
+
+    Caller's job to check the result is ASCII: a key the on-screen keyboard cannot
+    produce is an unreachable record, not an error this function can see.
+    """
+    table = dict(KEY_FOLD, **(extra or {}))
+    out = []
+    for ch in s:
+        if ch in table:
+            out.append(table[ch])
+        elif ch == '-':
+            out.append(' ')
+        elif ch == '.':
+            continue
+        else:
+            out.append(''.join(c for c in unicodedata.normalize('NFD', ch)
+                               if unicodedata.category(c) != 'Mn'))
+    return ''.join(out)
 
 
 def inflate_block(d, off, cw):
@@ -45,8 +89,12 @@ class Addre:
         self.nodew = u32(d, 0x1006)
         self.node_end = 0x1100 + self.nodew * 2
         self.nsrec = u32(d, 0x1016) // SREC_W
-        self.srec_off = d.find(b'\x7f\x7f', self.node_end)
-        self.srec_pre = d[(self.srec_off // ALIGN) * ALIGN:self.srec_off]
+        # 0x1012 is the street-record block's own sector address, exact on all seven
+        # factory files, and the records sit 10 bytes into it. Searching for the first
+        # 7f7f instead lands two records late on Denmark and Norway, whose leading
+        # records carry a real street ID in place of the 7f7f relation.
+        self.srec_off = unaddr(u32(d, 0x1012)) + SREC_PRE
+        self.srec_pre = d[self.srec_off - SREC_PRE:self.srec_off]
         self.srec_end = self.srec_off + self.nsrec * SREC
         self.nb = (self.srec_end + DF_LEN + ALIGN - 1) // ALIGN * ALIGN
         self.df = d[self.nb - DF_LEN:self.nb]
@@ -257,3 +305,63 @@ def assemble(prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
     # that held by coincidence on small files and breaks on Germany
     struct.pack_into('>I', out, 0x824 + 6, addr(nb - ALIGN))                  # slot 7
     return bytes(out), blocks
+
+
+SIDE_ODD = 0x54        # 'T' in the factory's own side byte
+SIDE_EVEN = 0x58       # 'X'
+
+
+def house_item(lo, hi, side=SIDE_ODD):
+    """One house-number range. The factory writes them as plain text, ':13:;:5:'.
+
+    KIWI 11.A.2.4.4.4 packs a range as a binary (st_adrs, ed_adrs) pair under 'STAD';
+    Clarion writes the decimal text instead, so this follows the file. `side` is KIWI's
+    Street Address Flag: bits 3-2 the left side and bits 1-0 the right, 1 odd, 2 even,
+    3 both. The factory uses 0x54 and 0x58, left-odd and left-even.
+    """
+    s = (':%d:;:%d:' % (lo, hi)).encode('ascii')
+    s += b'\0' * (len(s) % 2)
+    return bytes([(4 + len(s)) // 2, side, 0, 0]) + s
+
+
+def name_record(name, lat, lon, levels, items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
+                flags=0x18):
+    """One ADDRE name record.
+
+    `levels` is the whole area ladder, country first, as long as the country's ISO entry
+    has tier labels. All but the last go in as little-endian halfwords behind the name
+    length; the last rides in a byte of its own. Measured: Andorra's three labels give
+    (name words, country, parish) and a settlement byte, Italy's five give three more
+    halfwords. A level the data does not know is set to the parent's child count, which
+    is the factory's own out-of-range marker - 208 of Andorra's 905 records use it.
+    """
+    nm = name.encode('utf-8') if isinstance(name, str) else name
+    nm += b'\0' * (len(nm) % 2)
+    ref = b''.join(struct.pack('>BBH', *r) for r in refs)
+    body = (bytes([(4 + len(ref)) // 2, len(items) // 2])
+            + struct.pack('>HH', lat, lon) + ref + items
+            + (bytes([len(levels)])
+               + struct.pack('<%dH' % len(levels), len(nm) // 2, *levels[:-1])
+               + bytes([levels[-1]]) + nm if levels else b'\0\0'))
+    total = 2 + len(body)
+    assert total % 2 == 0 and total // 2 < 0x800, (name, total)
+    return struct.pack('>H', flags << 11 | total // 2) + body
+
+
+def street_record(flags, name_idx, levels, rel=0x7f7f, sid=0xffffffff):
+    """One 22-byte ADDRE street record: the trie's leaf, pointing at a name record.
+
+    Unlike the name record, every level is a halfword here and 0xff pads the rest.
+    Measured on the Vatican, Andorra, Belarus, Greece and Italy, whose five levels fill
+    the record exactly.
+
+    `rel` and `sid` are KIWI's 'BFRL'/'NFRL' neighbour displacements and 'STID' street
+    ID. All 97 Vatican records and 1,527 of Andorra's 3,472 carry 0x7f7f and a null ID,
+    which is what lights the keyboard; the rest, and most of Greece's, carry 0x0000 and
+    a real ID instead. What the ID groups is not settled, so the defaults are the form
+    that is known to work.
+    """
+    out = (struct.pack('>HH', rel, flags) + struct.pack('>I', sid)
+           + struct.pack('>I', name_idx) + struct.pack('>%dH' % len(levels), *levels))
+    assert len(out) <= SREC, levels
+    return out + b'\xff' * (SREC - len(out))

@@ -1228,12 +1228,49 @@ class AddreTrie(unittest.TestCase):
 
     def test_zcode_digits(self):
         from zcode_io import assemble
+        codes = ['101', '113', '200', '800']
+        levels = {'101': (12, 20, 0), '113': (12, 20, 0),
+                  '200': (12, 20, 1), '800': (12, 22, 0)}
         prefix = bytearray(0x1100)
         prefix[0x1032], prefix[0x1033] = 6, 1
-        out = assemble(bytes(prefix), ['101', '113', '200', '800'], 12)
+        out = assemble(bytes(prefix), codes, levels)
         self.assertEqual(len(out) % 0x100, 0)
         self.assertEqual(int.from_bytes(out[0x1016:0x101a], 'big'), 4 * 8)
         self.assertEqual(int.from_bytes(out[0x101a:0x101c], 'big'), 8)
+
+    def test_zcode_writes_its_own_record_block_address(self):
+        """0x1012 is the record block's sector address, exact on all 36 factory ZCODE
+        files. A donor prefix carries the donor's value, which on a smaller file points
+        past the end - what crashed the postcode screen on DKL-IS-addr3."""
+        from addre_io import addr, unaddr
+        from zcode_io import assemble
+        codes = ['101', '113', '200', '800']
+        levels = {c: (12, 20, 0) for c in codes}
+        prefix = bytearray(0x1100)
+        prefix[0x1032], prefix[0x1033] = 6, 1
+        struct.pack_into('>I', prefix, 0x1012, 10498)       # Italy's own value
+        out = assemble(bytes(prefix), codes, levels)
+        nodew = int.from_bytes(out[0x1006:0x100a], 'big')
+        srb = (0x1100 + nodew * 2 + 0xff) // 0x100 * 0x100
+        self.assertEqual(struct.unpack_from('>I', out, 0x1012)[0], addr(srb))
+        self.assertLess(unaddr(struct.unpack_from('>I', out, 0x1012)[0]), len(out))
+
+    def test_zcode_record_carries_each_code_own_area(self):
+        """A postcode record is the (country, region, town) ladder, 0xff for the rest,
+        and two zero bytes - the shape ZCODE002 and ZCODE013 both have."""
+        from zcode_io import ZREC, assemble
+        codes = ['101', '800']
+        levels = {'101': (12, 20, 0), '800': (12, 22, 0)}
+        prefix = bytearray(0x1100)
+        prefix[0x1032], prefix[0x1033] = 6, 1
+        out = assemble(bytes(prefix), codes, levels)
+        nodew = int.from_bytes(out[0x1006:0x100a], 'big')
+        srb = (0x1100 + nodew * 2 + 0xff) // 0x100 * 0x100
+        for i, c in enumerate(codes):
+            r = out[srb + i * ZREC:srb + (i + 1) * ZREC]
+            self.assertEqual(struct.unpack_from('>3H', r, 0), levels[c])
+            self.assertEqual(r[6:14], b'\xff' * 8)
+            self.assertEqual(r[14:], b'\x00\x00')
 
     def test_assemble_fills_its_own_header_fields(self):
         """assemble() must return a complete file by itself - the gap that let the
@@ -1265,6 +1302,54 @@ class AddreTrie(unittest.TestCase):
         self.assertEqual(a.df[0x49], 2 + 1)   # 2 + ntier, overwritten despite the sentinel
         self.assertEqual(a.ntier, 1)
 
+    def test_street_records_found_without_a_7f7f_relation(self):
+        """Denmark and Norway lead with records carrying a street ID where the others
+        carry 7f7f, so a search for the first 7f7f lands two records late. 0x1012
+        gives the block outright."""
+        from addre_io import Addre, assemble
+        keys = self.keys(1, ['BERG', 'DALUR'])
+        srecs = [b'\x00\x00\x40\x00' + b'\xff' * 18,          # no 7f7f on the first two
+                 b'\x00\x00\x40\x00' + b'\xff' * 18,
+                 b'\x7f\x7f\x00\x00' + b'\xff' * 18]
+        names = [b'BERG\x00\x00', b'DALUR\x00']
+        prefix = bytearray(0x1100)
+        srec_pre = struct.pack('>H', 7) + b'\x00' * 8
+        out, _ = assemble(prefix, keys, srecs, names, bytes(bytearray(0x100)),
+                           srec_pre, 12, 1, area=7, ntier=1)
+        a = Addre(out)
+        self.assertEqual(a.srec(0), srecs[0])
+        self.assertEqual(a.srec(2), srecs[2])
+        self.assertEqual(a.srec_pre, srec_pre)
+
+    def test_fold_key_strips_the_diacritic_and_keeps_the_letter(self):
+        """Every pair here was read off a factory ADDRE file: the key beside the display
+        name it belongs to. One letter for one letter, never an expansion."""
+        from addre_io import fold_key
+        for name, key in [('FRANÇOIS', 'FRANCOIS'),        # Andorra
+                          ('CAMÍ DE CANÒLICH', 'CAMI DE CANOLICH'),
+                          ('TVÆRVEJ', 'TVARVEJ'),          # Denmark: AE -> A
+                          ('AGERSØ', 'AGERSO'),
+                          ('AARSÆTHERVEGEN', 'AARSATHERVEGEN'),   # Norway
+                          ('MÜNCHNER', 'MUNCHNER'),        # Germany
+                          ('KAČIĆ', 'KACIC'),              # Croatia
+                          ('ĐAKOVO', 'DAKOVO'),            # Croatia: D-stroke -> D
+                          ('DŰLŐ', 'DULO'),                # Hungary
+                          ('ŁĄKOWA', 'LAKOWA'),            # Poland
+                          ('MUÑOZ', 'MUNOZ'),              # Spain
+                          ('AĞAÇ', 'AGAC'),                # Turkey
+                          ('AGGER-THYBORØN', 'AGGER THYBORON'),
+                          ('AA. LOUIS', 'AA LOUIS')]:
+            self.assertEqual(fold_key(name), key, name)
+
+    def test_fold_key_takes_extra_mappings(self):
+        """Þ and Ð are in no factory name, so the convention for them is the caller's."""
+        from addre_io import fold_key
+        extra = {'Þ': 'TH', 'Ð': 'D'}
+        self.assertEqual(fold_key('ÞORLÁKSGEISLI', extra), 'THORLAKSGEISLI')
+        self.assertEqual(fold_key('SAFNATRÖÐ', extra), 'SAFNATROD')
+        self.assertEqual(fold_key('SÆVARHÖFÐI', extra), 'SAVARHOFDI')
+        self.assertTrue(fold_key('ÞORLÁKSGEISLI', extra).isascii())
+
     def test_assemble_leaves_unresolved_fields_unless_given(self):
         """D (df+0x32) and the name-width hint (df+0x63) have no known formula
         (REPORT-addre-fields.md section 5) - assemble() must not guess at them."""
@@ -1289,3 +1374,112 @@ class AddreTrie(unittest.TestCase):
         a2 = Addre(out2)
         self.assertEqual(struct.unpack_from('>H', a2.df, 0x32)[0], 99)
         self.assertEqual(a2.df[0x63], 50)
+
+
+class AddreRecords(unittest.TestCase):
+    """The ADDRE name and street records, and the area ladder they carry.
+
+    The expected bytes are the first records of ADDRE002 (Andorra), copied out of the
+    factory file. Andorra is the file with house numbers and the three-level ladder
+    COUNTRY / PARROQUIA / SETTLEMENT, which is the shape Iceland uses.
+    """
+
+    ANDORRA_NAME_0 = bytes.fromhex(
+        'c02106 0c 9feccecd 02402 13b 03402143'.replace(' ', '')
+        + '065400003a31333a3b3a353a'
+        + '065800003a31303a3b3a323a'
+        + '0309000100030000'
+        + '4156494e475544412043 41524c454d414e59'.replace(' ', ''))
+    ANDORRA_SREC_0 = bytes.fromhex('7f7f4000ffffffff000001c8000100020000ffffffff')
+
+    def test_name_record_matches_andorra(self):
+        from addre_io import SIDE_EVEN, SIDE_ODD, house_item, name_record
+        items = house_item(13, 5, SIDE_ODD) + house_item(10, 2, SIDE_EVEN)
+        r = name_record('AVINGUDA CARLEMANY', 0x9fec, 0xcecd, (1, 3, 0), items,
+                        refs=((2, 0x40, 0x213b), (3, 0x40, 0x2143)))
+        self.assertEqual(r, self.ANDORRA_NAME_0)
+
+    def test_continuation_record_has_no_ladder(self):
+        from addre_io import SIDE_EVEN, SIDE_ODD, house_item, name_record
+        items = house_item(19, 15, SIDE_ODD) + house_item(16, 12, SIDE_EVEN)
+        r = name_record('', 0x9fec, 0xcecd, (), items,
+                        refs=((2, 0x00, 0x2137), (3, 0x40, 0x213b)), flags=0x19)
+        self.assertEqual(r, bytes.fromhex(
+            'c817060e9feccecd020021370340213b'
+            '075400003a31393a3b3a31353a00075800003a31363a3b3a31323a000000'))
+
+    def test_street_record_matches_andorra(self):
+        from addre_io import street_record
+        self.assertEqual(street_record(0x4000, 456, (1, 2, 0)), self.ANDORRA_SREC_0)
+
+    def test_street_record_takes_the_factory_id_form(self):
+        from addre_io import street_record
+        self.assertEqual(street_record(0x4000, 646, (1, 2, 1), rel=0, sid=0x00010005),
+                         bytes.fromhex('00004000000100050000028600010002 0001ffffffff'
+                                       .replace(' ', '')))
+
+    def test_five_levels_fill_the_record(self):
+        """Italy declares five tier labels and its street record has no padding left."""
+        from addre_io import SREC, street_record
+        r = street_record(0x4000, 0x236747, (12, 7, 3, 0x23, 2))
+        self.assertEqual(len(r), SREC)
+        self.assertEqual(r[-2:], b'\x00\x02')
+
+    def test_house_item_pads_to_a_word(self):
+        from addre_io import SIDE_ODD, house_item
+        self.assertEqual(house_item(13, 5, SIDE_ODD),
+                         bytes([6, SIDE_ODD, 0, 0]) + b':13:;:5:')
+        self.assertEqual(house_item(19, 15, SIDE_ODD),
+                         bytes([7, SIDE_ODD, 0, 0]) + b':19:;:15:\x00')
+
+
+class IcodeTree(unittest.TestCase):
+    """The ICODE area-name chain: rows, terminators and the size field."""
+
+    def rows_of(self, blob, off=0):
+        import icode_io
+        return icode_io.read_list(blob, off)
+
+    def test_chain_round_trips(self):
+        import icode_io
+        rows = [icode_io.pack_row('REYKJAVIK', 100, 44, 0),
+                icode_io.pack_row('KOPAVOGUR', 150, 22, 1)]
+        blob = icode_io.pack_list(rows, 7)
+        back = self.rows_of(blob)
+        self.assertEqual([r.name for r in back], [b'REYKJAVIK', b'KOPAVOGUR'])
+        self.assertEqual([r.roff for r in back], [100, 150])
+        self.assertEqual([r.idx for r in back], [0, 1])
+        self.assertEqual(blob[-4:], (7).to_bytes(4, 'big'))
+
+    def test_leaf_rows_carry_the_no_sub_bit(self):
+        import icode_io
+        blob = icode_io.pack_list([icode_io.pack_row('AKRANES', 0, 0, 0, leaf=True)], 3)
+        r = self.rows_of(blob)[0]
+        self.assertTrue(r.nosub)
+        self.assertEqual(r.roff, 0xffffffff)
+        self.assertEqual(r.cnt, 0)
+
+    def test_deepest_chain_takes_two_terminators(self):
+        import icode_io
+        rows = [icode_io.pack_row('AKRANES', 0, 0, 0, leaf=True)]
+        short = icode_io.pack_list(rows, 3)
+        deep = icode_io.pack_list(rows, 3, deepest=True)
+        self.assertEqual(len(deep) - len(short), icode_io.TERM * 2)
+        self.assertEqual(deep[len(short) - 12 + 8:len(short) - 12 + 12],
+                         (1).to_bytes(4, 'big'))        # the row count
+
+    def test_name_field_width_is_kept_on_a_rename(self):
+        """A rename into a factory row must not change the row size, so the shorter
+        name is padded out - PANTELLERIA's twelve-byte field holding REYKJAVIK."""
+        import icode_io
+        r = icode_io.pack_row('REYKJAVIK', 5, 6, 13, width=6)
+        self.assertEqual(len(r), 12 + 12)
+        self.assertEqual(self.rows_of(r + b'\x00\x06\x00\x00' + b'\xff' * 8)[0].name,
+                         b'REYKJAVIK')
+
+    def test_iso_slots_zero_the_unused_ladder(self):
+        import icode_io
+        b = icode_io.iso_slots(['COUNTRY', 'REGION', 'SETTLEMENT'])
+        self.assertEqual(len(b), icode_io.NSLOT * icode_io.SLOT)
+        self.assertEqual(b[4:13], b'2=COUNTRY')
+        self.assertEqual(b[3 * icode_io.SLOT:], b'\x00' * (4 * icode_io.SLOT))
