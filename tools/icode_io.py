@@ -111,10 +111,14 @@ def iso_entry(d, ordinal):
 
 
 def pack_slot(label):
-    """One tier-label slot. The factory writes a '2=' prefix on every one."""
+    """One tier-label slot: a '2=' prefix, the label in UTF-8, then NUL padding.
+
+    Round-trips all 42 factory entries. The label is UTF-8 and the factory writes the
+    tier's local-language word, so Hungary's JARAS is stored `4a c3 81 52 c3 81 53`.
+    """
     if label is None:
         return b'\0' * SLOT
-    b = b'\0' * 4 + b'2=' + label.encode('utf-8')
+    b = b'2=' + label.encode('utf-8')
     assert len(b) <= SLOT, label
     return b + b'\0' * (SLOT - len(b))
 
