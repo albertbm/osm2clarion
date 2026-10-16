@@ -1160,3 +1160,132 @@ class TestAgainstBgEncode(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class AddreTrie(unittest.TestCase):
+    """The ADDRE letter trie and the ZCODE digit trie, built from code."""
+
+    def keys(self, kw, words):
+        out = []
+        for i, w in enumerate(sorted(words)):
+            k = b''.join((c.encode('utf-8') + b'\0' * kw)[:kw] for c in w)
+            out.append((k, i, 1))
+        return out
+
+    def walk(self, blob, cr, kw, recw):
+        """Read the keys back out of a built node region."""
+        def crec(o):
+            off = int.from_bytes(blob[o:o + 4], 'big')
+            size = int.from_bytes(blob[o + 4:o + 6], 'big')
+            return off, size, blob[o + 8:o + 8 + kw], \
+                int.from_bytes(blob[o + 8 + kw:o + cr], 'big')
+        o, root = 0, []
+        while int.from_bytes(blob[o:o + 4], 'big'):
+            root.append(crec(o)); o += cr
+        out, stack = [], [(c, b'') for c in root]
+        while stack:
+            c, pfx = stack.pop()
+            k = pfx + c[2]
+            if c[1] == 0:
+                out.append((k, c[0] // recw, c[3])); continue
+            fo = c[0] * 2
+            n = c[1] * 2 // cr - 1
+            own = blob[fo + n * cr + 8 + cr - 9]
+            if own:
+                out.append((k, int.from_bytes(blob[fo + n * cr:fo + n * cr + 4], 'big') // recw, own))
+            for i in range(n):
+                stack.append((crec(fo + i * cr), k))
+        return sorted(out)
+
+    def test_latin_one_byte_keys(self):
+        from addre_io import build_trie
+        keys = self.keys(1, ['AZEGLIO', 'BATTISTI', 'BELLO', 'PIAZZA SAN PIETRO', 'PIAZZALE'])
+        blob, first, nroot = build_trie(keys, 12, 1)
+        self.assertEqual(len(blob) % 4, 0)
+        self.assertEqual(self.walk(blob, 12, 1, 11), keys)
+
+    def test_two_byte_keys_hold_non_ascii(self):
+        from addre_io import build_trie
+        keys = self.keys(2, ['ÞORLÁKSGEISLI', 'ÞÓRSGATA', 'HÖFÐABAKKI', 'AUSTURSTRÆTI'])
+        blob, first, nroot = build_trie(keys, 14, 2)
+        self.assertEqual(self.walk(blob, 14, 2, 11), keys)
+        self.assertEqual(nroot, 3)                      # A, H and Thorn
+
+    def test_prefix_key_gets_an_own_count(self):
+        """A key that is a prefix of another lives in the node's own-count byte."""
+        from addre_io import build_trie
+        keys = self.keys(1, ['BERG', 'BERGSTADIR'])
+        blob, _, _ = build_trie(keys, 12, 1)
+        self.assertEqual(self.walk(blob, 12, 1, 11), keys)
+
+    def test_name_block_codec(self):
+        """The 58 85 block is zlib with a 4 KiB window and memLevel 6."""
+        from addre_io import deflate_block, inflate_block
+        plain = b'PIAZZA SAN PIETRO\x00' * 40
+        c = deflate_block(plain)
+        self.assertEqual(c[:2], b'\x58\x85')
+        self.assertEqual(inflate_block(c, 0, (len(c) + 1) // 2), plain)
+
+    def test_zcode_digits(self):
+        from zcode_io import assemble
+        prefix = bytearray(0x1100)
+        prefix[0x1032], prefix[0x1033] = 6, 1
+        out = assemble(bytes(prefix), ['101', '113', '200', '800'], 12)
+        self.assertEqual(len(out) % 0x100, 0)
+        self.assertEqual(int.from_bytes(out[0x1016:0x101a], 'big'), 4 * 8)
+        self.assertEqual(int.from_bytes(out[0x101a:0x101c], 'big'), 8)
+
+    def test_assemble_fills_its_own_header_fields(self):
+        """assemble() must return a complete file by itself - the gap that let the
+        addr()/header-write logic live in build_iceland.py instead of here. Checks
+        the fields REPORT-addre-fields.md verified exact on all seven factory files:
+        0x1012, A, B, C, P, Q and the slot-7 address at 0x82a."""
+        from addre_io import Addre, addr, assemble
+        keys = self.keys(1, ['AZEGLIO', 'BATTISTI', 'BELLO'])
+        srecs = [b'\x7f\x7f\x00\x00' + b'\xff' * 18 for _ in range(5)]
+        names = [b'AZEGLIO\x00', b'BATTISTI', b'BELLOX\x00']
+        prefix = bytearray(0x1100)
+        srec_pre = struct.pack('>H', 7) + b'\x00' * 8
+        df = bytearray(0x100)
+        df[0x49] = 0xaa                       # a sentinel: must survive untouched
+        out, blocks = assemble(prefix, keys, srecs, names, bytes(df), srec_pre,
+                                12, 1, area=7, ntier=1)
+
+        a = Addre(out)
+        srb = a.node_end + (-a.node_end) % 0x100
+        cmpw = sum(cw for _, cw, _ in blocks)
+        self.assertEqual(struct.unpack_from('>I', out, 0x1012)[0], addr(srb))
+        self.assertEqual(struct.unpack_from('>I', a.df, 0x24)[0], addr(a.nb))           # A
+        self.assertEqual(struct.unpack_from('>I', a.df, 0x28)[0], cmpw)                 # B
+        self.assertEqual(struct.unpack_from('>H', a.df, 0x30)[0],
+                          max(len(n) for n in names) // 2)                              # C
+        self.assertEqual(struct.unpack_from('>I', a.df, 0x7a)[0], addr(a.tail_off))     # P
+        self.assertEqual(struct.unpack_from('>I', a.df, 0x7e)[0], (4 + 12 * len(blocks)) // 2)
+        self.assertEqual(struct.unpack_from('>I', out, 0x824 + 6)[0], addr(a.nb - 0x100))
+        self.assertEqual(a.df[0x49], 2 + 1)   # 2 + ntier, overwritten despite the sentinel
+        self.assertEqual(a.ntier, 1)
+
+    def test_assemble_leaves_unresolved_fields_unless_given(self):
+        """D (df+0x32) and the name-width hint (df+0x63) have no known formula
+        (REPORT-addre-fields.md section 5) - assemble() must not guess at them."""
+        from addre_io import assemble
+        keys = self.keys(1, ['BERG'])
+        srecs = [b'\x7f\x7f\x00\x00' + b'\xff' * 18]
+        names = [b'BERG\x00\x00']
+        prefix = bytearray(0x1100)
+        srec_pre = struct.pack('>H', 7) + b'\x00' * 8
+        df = bytearray(0x100)
+        df[0x32:0x34] = b'\x12\x34'            # D: a donor value that must pass through
+        df[0x63] = 0x56                        # name-width hint: same
+        out, _ = assemble(prefix, keys, srecs, names, bytes(df), srec_pre, 12, 1,
+                           area=7, ntier=0)
+        from addre_io import Addre
+        a = Addre(out)
+        self.assertEqual(a.df[0x32:0x34], b'\x12\x34')
+        self.assertEqual(a.df[0x63], 0x56)
+
+        out2, _ = assemble(prefix, keys, srecs, names, bytes(df), srec_pre, 12, 1,
+                            area=7, ntier=0, maxkey_hint=99, namewidth_hint=50)
+        a2 = Addre(out2)
+        self.assertEqual(struct.unpack_from('>H', a2.df, 0x32)[0], 99)
+        self.assertEqual(a2.df[0x63], 50)
