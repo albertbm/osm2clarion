@@ -2,12 +2,16 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Background tiles for a region's cells, from an OSM coastline. Sea and land only.
 
-One .DAT per cell, levels 2 and 1, written from a template tile taken off the base card.
-Roads go in afterwards with rd_build.py. The coarse levels 3 to 6 live in LEV3456R.DAT
+One .DAT per cell, levels 2 and 1. The header comes from a template tile taken off the
+base card or, with --data-version, is written from nothing by tile_header.py, so no
+existing tile is read. Roads go in afterwards with rd_build.py. The coarse levels 3 to 6 live in LEV3456R.DAT
 and are handled by the lev_* tools, which import this module for load_land, clean_land
 and encode_level_fast.
 
     ./bg_tiles.py --profile iceland TEMPLATE.DAT OUTDIR [CELL...]
+    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] OUTDIR [CELL...]
+
+--no-road-section writes section 1 alone, with no empty section 2 declared.
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -132,7 +136,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
     return out
 
 
-def build_cell(name, land, coast, tree, template, bounds=None):
+def build_cell(name, land, coast, tree, template, bounds=None, data_version=None, road_section=True):
     pland = prep(land)
     yb, xb = tile_cell(name)
     cell = box(mesh_to_lon(xb), mesh_to_lat(yb), mesh_to_lon(xb + 8), mesh_to_lat(yb + 8))
@@ -151,7 +155,7 @@ def build_cell(name, land, coast, tree, template, bounds=None):
                 dirs[level].append(D)
         parcels = sum(len(c) for D in dirs[level] for c in D['_recs'].values())
         print(f'  {name} level {level}: {len(dirs[level])} dirs, {parcels} parcels, {time.time()-t0:.0f}s')
-    return bg_encode.assemble_tile(name, template, dirs, bounds or BOUNDS)
+    return bg_encode.assemble_tile(name, template, dirs, bounds or BOUNDS, data_version, road_section)
 
 
 def main():
@@ -161,17 +165,26 @@ def main():
     coast_path = P.coastline
     if '--coastline' in argv:
         i = argv.index('--coastline'); coast_path = argv[i + 1]; del argv[i:i + 2]
-    template, outdir = argv[0], argv[1]
-    cells = argv[2:] or P.cells
+    version = None
+    if '--data-version' in argv:
+        i = argv.index('--data-version'); version = argv[i + 1]; del argv[i:i + 2]
+    road_section = '--no-road-section' not in argv
+    if not road_section:
+        argv.remove('--no-road-section')
+    if version is None:
+        template, outdir, cells = argv[0], argv[1], argv[2:]
+    else:
+        template, outdir, cells = None, argv[0], argv[1:]
+    cells = cells or P.cells
     if not cells:
         raise SystemExit('no cells: give them on the command line or in a profile')
     if not coast_path:
         raise SystemExit('no coastline: set source.coastline in the profile')
     land, coast, tree = load_land(coast_path)
-    tmpl = open(template, 'rb').read()
+    tmpl = open(template, 'rb').read() if template else None
     os.makedirs(outdir, exist_ok=True)
     for name in cells:
-        tile = build_cell(name, land, coast, tree, tmpl, P.bounds)
+        tile = build_cell(name, land, coast, tree, tmpl, P.bounds, version, road_section)
         open(f'{outdir}/{name}.DAT', 'wb').write(tile)
         print(name, len(tile), 'bytes')
 
