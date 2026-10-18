@@ -10,6 +10,10 @@
     --no-l2-names                  level-2 shapes without names
     --no-chain                     a graph node at every point, two points per shape
     --turn-restrictions turns.json turn prohibitions from osm_turns.py; none unless given
+    --upper-names                  street names in upper case, as every factory label is;
+                                   address records name streets the same way
+    --shape-index OUT.json         where each level-1 drawn shape and point sits, checked
+                                   against the written tile (shape_index.py)
 
 roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut at parcel
 edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
@@ -20,7 +24,7 @@ Directories are added per mesh, the level table and the box table updated.
 """
 import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode
+import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 
 PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # parcel size in degrees per level
@@ -176,8 +180,11 @@ def neighbour(pc, side):
     if col > 31: col, x = 0, x + 1
     return (y, x, row, col)
 
+UPPER_NAMES = False   # --upper-names: factory labels are upper case, accents kept (1=ÅRHUSVEJ)
+
 def label(name, ref):
     """The shipped label text: `1=NAME;2=REF`, either part alone when the other is missing."""
+    if name and UPPER_NAMES: name = name.upper()
     parts = ([f'1={name}'] if name else []) + ([f'2={ref}'] if ref else [])
     return ';'.join(parts)
 
@@ -223,7 +230,7 @@ def chains_of(links, idx, chain=True):
     return chains
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
-    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = 0
+    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = 0; encode_parcels.index = {}
     for pc, P in parcels.items():
         keys = P['order']; idx = P['index']
         nodes = list(keys)
@@ -258,9 +265,29 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(label_of.get(c[0][0]), 0xffff) for c in chains]
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws)
+        encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, chains, P['links'],
+                                                      label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
         out[pc] = out[pc] + fa + (None if no_names else section,)
     return out
+
+def shape_index_record(level, pc, ix, chains, links, label_of, no_names):
+    """One record of the shape index (shape_index.py): where each chain's points landed."""
+    lon0, lat0, w, h = parcel_geo(level, *pc)
+    def geo(k): return [round(lon0 + k[0] / 2048 * w, 7), round(lat0 + k[1] / 2048 * h, 7)]
+    shapes = []
+    for S in ix['shapes']:
+        c = chains[S['chain']]
+        keys = [links[c[0][0] - 1][0]] + [k for lid, *_ in c for k in links[lid - 1][8] + [links[lid - 1][1]]]
+        assert len(keys) == len(S['points'])
+        lab = '' if no_names else (label_of.get(c[0][0]) or '')
+        shapes.append(dict(name=links[c[0][0] - 1][4], label=lab, layer=S['layer'], at=S['at'],
+                           links=[dict(id=lid, way=links[lid - 1][3]) for lid, *_ in c],
+                           points=[dict(word=wd, link=lid, role=role, lon=g[0], lat=g[1])
+                                   for (wd, lid, role), g in zip(S['points'], map(geo, keys))]))
+    y, x, row, col = pc
+    return dict(code=list(ix['code']), unit=ix['unit'], mesh=[y, x], row=row, col=col,
+                box=[lon0, lat0, w, h], shapes=shapes)
 
 def simplify(pts, tol):
     """Douglas-Peucker in metres, endpoints kept."""
@@ -312,6 +339,11 @@ def main():
     if no_chain: argv.remove('--no-chain')
     if '--l2-classes' in argv:
         i = argv.index('--l2-classes'); l2 = clarion_profile.l2_classes(argv[i + 1]); del argv[i:i + 2]
+    global UPPER_NAMES
+    if '--upper-names' in argv: argv.remove('--upper-names'); UPPER_NAMES = True
+    index_path = None
+    if '--shape-index' in argv:
+        i = argv.index('--shape-index'); index_path = argv[i + 1]; del argv[i:i + 2]
     turns = []
     if '--turn-restrictions' in argv:
         i = argv.index('--turn-restrictions'); turns = json.load(open(argv[i + 1])); del argv[i:i + 2]
@@ -332,6 +364,7 @@ def main():
         parcels = build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs)
+        if level == 1: index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
@@ -382,6 +415,15 @@ def main():
     out = clarion_tile.write_tile(t, clarion_tile.default_order(t)); open(dest, 'wb').write(out)
     print(f'wrote {dest} {len(out)} bytes; ways used {len(ways)}')
     for r in report: print('  ' + r)
+    if index_path:
+        side = dict(cell=cell, level=1, records=index)
+        bad = shape_index.verify(side, out)   # read back off the written tile, not the encoder
+        with open(index_path, 'w') as f: json.dump(side, f, ensure_ascii=False, indent=1)
+        print(f'  shape index {index_path}: {len(index)} records, '
+              f'{sum(len(R["shapes"]) for R in index)} shapes, checked against the tile: '
+              + ('ok' if not bad else f'{len(bad)} PROBLEMS'))
+        for b in bad[:20]: print('    ' + b)
+        if bad: sys.exit(1)
 
 
 def place_shapes(recs, bydir):
