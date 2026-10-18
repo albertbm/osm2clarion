@@ -37,12 +37,14 @@ SIDES = {'top': 0x8000, 'right': 0xa000, 'bottom': 0xc000, 'left': 0xe000}
 # so this is what keeps level-2 directories on the grid the card already uses.
 ORIGIN = (32, 904)
 COUNTRY = None     # ISO 3166 numeric code for every section-2 record, from the profile
+SPEED_UNIT = 'km/h'   # the unit the country's signs are posted in, from the profile
 
 
 def use_profile(P):
-    global ORIGIN, COUNTRY
+    global ORIGIN, COUNTRY, SPEED_UNIT
     ORIGIN = P.mesh_origin
     COUNTRY = P.country
+    SPEED_UNIT = P.speed_unit
 
 
 def parcel_of(lon, lat, level=1):
@@ -268,7 +270,11 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         # offsets first (the section layout only depends on the labels and the item count)
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(label_of.get(c[0][0]), 0xffff) for c in chains]
-        fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws)
+        # the posted limit per link, from the way's own maxspeed only; no class default
+        styles = [[fa_encode.style_word(fa_encode.speed_limit(P['links'][lid - 1][7], SPEED_UNIT)) for lid, *_ in c]
+                  for c in chains]
+        fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
+                                    styles=styles)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, chains, P['links'],
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)

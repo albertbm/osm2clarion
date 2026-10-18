@@ -14,7 +14,33 @@ import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
 
-STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry
+STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
+
+def style_word(limit):
+    """Level-1 style word for a posted limit in the country's unit, or STYLE for none.
+    Bit 5 marks a limit and the low five bits n give (n + 1) * 5, so 5..160 in steps of 5.
+    Bits 6 and 12 are not understood; 0x1000 is kept as most factory words carry it."""
+    if not limit or limit % 5 or not 5 <= limit <= 160: return STYLE
+    return 0x1020 | (limit // 5 - 1)
+
+def limit_of(style):
+    """The posted limit a style word carries, or None."""
+    return ((style & 0x1f) + 1) * 5 if style & 0x20 else None
+
+def speed_limit(maxspeed, unit='km/h'):
+    """OSM maxspeed as a posted limit in unit ('km/h' or 'mph'), or None. A bare number is
+    km/h and '30 mph' is mph, as OSM tags them; a value in the other unit is converted and
+    kept only if it lands on a multiple of 5. Zone and keyword values ('IS:urban', 'none',
+    'walk', 'signals') give None, since no sign number is known for them."""
+    if not maxspeed: return None
+    parts = str(maxspeed).strip().lower().split(';')[0].split()
+    try: v = float(parts[0])
+    except (ValueError, IndexError): return None
+    src = 'mph' if len(parts) > 1 and parts[1] == 'mph' else 'km/h'
+    if src != unit: v = v / 1.609344 if unit == 'mph' else v * 1.609344
+    v = round(v)
+    if src != unit: v = 5 * round(v / 5)
+    return v if v % 5 == 0 and 5 <= v <= 160 else None
 
 # OSM highway -> (level-1 layer, level-1 class), level-2 class, level-3 class. Read off the
 # 2014 card: class follows road standard, not route prefix, so Iceland's Route 1 and
@@ -45,11 +71,22 @@ def layer_class(hw, level, layer=None):
     lay, cls = (l1, c1) if level == 1 else (7 if c2 in (1, 2) else 6, c2)
     return (layer if layer is not None else lay), cls
 
-def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
+def restyled(styles):
+    """Per link, whether its header carries a style word: the first link always, a later
+    one only where the word changes, as on every factory chain."""
+    return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
+
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
     """chain: [(link id, from node, to node, [inner points])]. The start node as
     (x | 0x0800, y | 0x2800), then each link's header and its points, and one trailer word
     at level 1. cls is the road class in the top nibble of word 2, which is what the
-    renderer widens by.
+    renderer widens by. styles: the level-1 style word per link (the posted limit), STYLE
+    for all when None.
+
+    The start y's 0x2000 means "a style word follows". Where the style changes along the
+    chain, the link end before the change carries 0x2000 on y too and the next link header
+    opens with the new word. Factory Norway and northern England do it this way on all
+    35,511 restyled links, and never repeat an unchanged word.
 
     Level-1 x flags, counted over the factory tiles (docs/GEOMETRY.md):
 
@@ -67,13 +104,15 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
     link end's y is an earlier reading of the same mark: bit 10 belongs to the coordinate,
     so that form drew the shape off the parcel. Level 2 is single-link only here."""
     if cls is None: cls = 8 if level == 1 else 7
+    if styles is None or level != 1: styles = [STYLE] * len(chain)
+    fresh = restyled(styles)
     if level == 1: out = [cls << 12, 0x0004, name_off, 0x8004, 0x0000]   # word 4: word offset of the name entry, 0xffff = none
     else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
     out += [0x0800 | sx, 0x2800 | sy]
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
-        if level == 1: out += [STYLE, 0x0100, lid] if n == 0 else [0x0100, lid]
+        if level == 1: out += [styles[n], 0x0100, lid] if fresh[n] else [0x0100, lid]
         else: out += [0x101e, lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
@@ -82,7 +121,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
                 xf = ((0x4000 if first else 0) | (0x2000 if first and n == 0 else 0)
                       | (0 if link_end and not chain_end else 0x1000)
                       | (0 if link_end else 0x0800))
-                if link_end and not chain_end: y |= 0x0800
+                if link_end and not chain_end: y |= 0x2800 if fresh[n + 1] else 0x0800
             else:
                 xf = 0x5000 if first else 0x1000
             out += [xf | x, y]; npts += 1
@@ -90,14 +129,15 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
     body = [0x8000 | npts] + out
     return [len(body) + 1] + body
 
-def point_words(chain, level=1):
+def point_words(chain, level=1, styles=None):
     """[(offset in the shape, link id, role)] for the x word of every point shape_words
     writes. role: 'start' (the shape's first point), 'end' (a link's last point) or
     'vertex' (inside a link). start and end are graph nodes."""
+    fresh = restyled(styles) if styles and level == 1 else [n == 0 and level == 1 for n in range(len(chain))]
     out = [(7, chain[0][0], 'start')]
     q = 9
     for n, (lid, a, b, inner) in enumerate(chain):
-        q += 3 if (level == 1 and n == 0) else 2
+        q += 3 if fresh[n] else 2
         for k in range(len(inner) + 1):
             out.append((q, lid, 'end' if k == len(inner) else 'vertex')); q += 2
     return out
@@ -110,14 +150,18 @@ def item_words(shape, level=1, name_off=0xffff):
     named = name_off != 0xffff
     return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, 0x00fa, 1, 1 if named else 0, name_off if named else 0]
 
-def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None):
+def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
+                 styles=None):
     """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
-    OSM highway value, which picks the layer and class. Level 1 has twelve layer pairs and a
+    OSM highway value, which picks the layer and class. styles: per chain, the level-1 style
+    word of each link (style_word), or None for no posted limit anywhere. Level 1 has twelve layer pairs and a
     pad word, so its data starts at dword 13; level 2 has eleven pairs and starts at 11.
     Shapes are grouped by layer and each layer's pair gives (offset in dwords, count)."""
     if hws is None: hws = [None] * len(chains)
     lc = [layer_class(hw, level, layer) for hw in hws]
-    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1]) for i, c in enumerate(chains)]
+    if styles is None: styles = [None] * len(chains)
+    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i])
+              for i, c in enumerate(chains)]
     if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
     order = []; at = {}
@@ -147,7 +191,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     # where each chain landed, in record words: the address files point at these
     build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
         dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], length=len(shapes[i]),
-             points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level)])
+             points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level, styles[i])])
         for i in sorted(at)])
     return plain, comp
 
@@ -156,7 +200,8 @@ def parse_record(plain):
     length word flags 0x2000 / 0x4000 add one / two header words to the base seven; a
     point y with 0x2000 is followed by a style word, one with 0x1000 by an extra word
     between val and id; an x with 0x1000 clear ends the link. Returns (code, unit start,
-    [dict(at, length, layer, name, points={x word: (role, link id)}, ok)])."""
+    [dict(at, length, layer, name, points={x word: (role, link id)}, links, styles, ok)]);
+    styles is the style word in force on each link."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     assert w[2] == 0x00fa, hex(w[2])
     g = 2 * w[7]
@@ -171,9 +216,10 @@ def parse_record(plain):
             h = 7 + (1 if w[p] & 0x2000 else 0) + (2 if w[p] & 0x4000 else 0)
             end = min(p + L - 1, len(w) - 1)
             pts = {p + h: ('start', None)}
-            q = p + h + 2; prev_y = w[p + h + 1]; links = []
+            q = p + h + 2; prev_y = w[p + h + 1]; links = []; styles = []; style = None
             while q + 2 < end:
-                if prev_y & 0x2000: q += 1
+                if prev_y & 0x2000: style = w[q]; q += 1
+                styles.append(style)
                 q += 1                                  # val
                 if prev_y & 0x1000: q += 1
                 lid = w[q]; q += 1; links.append(lid)
@@ -184,7 +230,7 @@ def parse_record(plain):
                     pts[q - 2] = ('end' if last else 'vertex', lid)
                     prev_y = y
                     if not x & 0x1000: break
-            shapes.append(dict(at=p, length=L, layer=li, name=w[p + 4], points=pts, links=links,
+            shapes.append(dict(at=p, length=L, layer=li, name=w[p + 4], points=pts, links=links, styles=styles,
                                ok=q == end and len(pts) == (w[p + 1] & 0xff)))
             p += L
     return (w[0], w[1]), g, shapes

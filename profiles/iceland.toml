@@ -43,6 +43,7 @@ l2_classes = "wide"        # the factory carries ordinary streets at level 2 as 
 l2_graph = false           # routing data only, and no router runs at level 2 on this card
 coarse_classes = ["motorway", "trunk", "primary", "motorway_link", "trunk_link", "primary_link"]
 coarse_simplify_metres = 20
+speed_unit = "km/h"        # posted limits come from OSM maxspeed in this unit; "mph" for the UK
 
 [land]
 # Smallest island kept and simplify tolerance per level, in square degrees and degrees.
