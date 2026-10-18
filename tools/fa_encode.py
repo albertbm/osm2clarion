@@ -90,6 +90,18 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None):
     body = [0x8000 | npts] + out
     return [len(body) + 1] + body
 
+def point_words(chain, level=1):
+    """[(offset in the shape, link id, role)] for the x word of every point shape_words
+    writes. role: 'start' (the shape's first point), 'end' (a link's last point) or
+    'vertex' (inside a link). start and end are graph nodes."""
+    out = [(7, chain[0][0], 'start')]
+    q = 9
+    for n, (lid, a, b, inner) in enumerate(chain):
+        q += 3 if (level == 1 and n == 0) else 2
+        for k in range(len(inner) + 1):
+            out.append((q, lid, 'end' if k == len(inner) else 'vertex')); q += 2
+    return out
+
 def item_words(shape, level=1, name_off=0xffff):
     """Names sub-table item for a shape: 0x8000 | 2*(points-2), then constants. Level 2
     items end with (1, k, name offset), k = 1 named, 0 unnamed."""
@@ -108,12 +120,12 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1]) for i, c in enumerate(chains)]
     if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
-    order = []
+    order = []; at = {}
     for lay in sorted({l for l, _ in lc}):
         grp = [i for i, (l, _) in enumerate(lc) if l == lay]
         unit[first + 2 * lay] = len(unit) // 2       # offset in dwords from the unit start
         unit[first + 1 + 2 * lay] = len(grp)
-        for i in grp: unit += shapes[i]
+        for i in grp: at[i] = len(unit); unit += shapes[i]
         if len(unit) % 2: unit.append(0)   # a group of odd word count is padded, as shipped units are
         order += grp
     if len(unit) % 2: unit.append(0)
@@ -132,7 +144,50 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(plain) + c.flush()
     if len(comp) % 2: comp += b'\0'
     build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off)) for i in order]
+    # where each chain landed, in record words: the address files point at these
+    build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
+        dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], length=len(shapes[i]),
+             points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level)])
+        for i in sorted(at)])
     return plain, comp
+
+def parse_record(plain):
+    """Shapes of a level-1 0x00fa record, read with the factory's grammar (REPORT-kanren):
+    length word flags 0x2000 / 0x4000 add one / two header words to the base seven; a
+    point y with 0x2000 is followed by a style word, one with 0x1000 by an extra word
+    between val and id; an x with 0x1000 clear ends the link. Returns (code, unit start,
+    [dict(at, length, layer, name, points={x word: (role, link id)}, ok)])."""
+    w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+    assert w[2] == 0x00fa, hex(w[2])
+    g = 2 * w[7]
+    shapes = []
+    for li in range(12):
+        off, cnt = w[g + 1 + 2 * li], w[g + 2 + 2 * li]
+        if off == 0xffff: continue
+        p = g + 2 * off
+        for _ in range(cnt):
+            if p >= len(w): break
+            L = w[p] & 0x1fff
+            h = 7 + (1 if w[p] & 0x2000 else 0) + (2 if w[p] & 0x4000 else 0)
+            end = min(p + L - 1, len(w) - 1)
+            pts = {p + h: ('start', None)}
+            q = p + h + 2; prev_y = w[p + h + 1]; links = []
+            while q + 2 < end:
+                if prev_y & 0x2000: q += 1
+                q += 1                                  # val
+                if prev_y & 0x1000: q += 1
+                lid = w[q]; q += 1; links.append(lid)
+                if pts[p + h][1] is None: pts[p + h] = ('start', lid)
+                while q + 1 <= end and q + 1 < len(w):
+                    x, y = w[q], w[q + 1]; q += 2
+                    last = not x & 0x1000 or q >= end
+                    pts[q - 2] = ('end' if last else 'vertex', lid)
+                    prev_y = y
+                    if not x & 0x1000: break
+            shapes.append(dict(at=p, length=L, layer=li, name=w[p + 4], points=pts, links=links,
+                               ok=q == end and len(pts) == (w[p + 1] & 0xff)))
+            p += L
+    return (w[0], w[1]), g, shapes
 
 def names_section(labels, items):
     """Names section holding road-label entries (in order) and one sub-table item per shape.

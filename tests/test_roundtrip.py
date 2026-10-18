@@ -647,8 +647,8 @@ class TestRoadGraph(unittest.TestCase):
 
 
 class TestRoadShapes(unittest.TestCase):
-    """fa_encode writes the record the renderer draws. Nothing in tools/ reads it back,
-    so these check the bytes against the layout in GEOMETRY.md."""
+    """fa_encode writes the record the renderer draws. These check the bytes against the
+    layout in GEOMETRY.md; TestShapeIndex reads them back with fa_encode.parse_record."""
 
     NODES = [(100, 200), (900, 240), (1500, 1800)]
     CHAIN = [(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])]
@@ -876,6 +876,37 @@ class TestRoadChains(unittest.TestCase):
         self.assertEqual([x & 0x0800 for x in xs[:-1]], [0x0800] * 4,
                          'the start and every point the link goes on past')
         self.assertEqual(xs[-1] & 0x0800, 0, 'the last point ends the link')
+
+
+class TestShapeIndex(unittest.TestCase):
+    """Address records point at x words inside a 0x00fa record (REPORT-kanren in
+    leaf-is-map); the index fa_encode keeps must name the words parse_record finds."""
+
+    NODES = [(100, 200), (900, 240), (1500, 1800), (1600, 1900)]
+    CHAINS = [[(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])], [(3, 2, 3, [])]]
+
+    def test_index_matches_parse(self):
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS, hws=['trunk', 'residential'])
+        ix = fa_encode.build_record.last_index
+        code, unit, shapes = fa_encode.parse_record(plain)
+        self.assertEqual((code, unit), (ix['code'], 22))
+        self.assertEqual(len(shapes), 2)
+        for S in ix['shapes']:
+            got = next(s for s in shapes if s['at'] == S['at'])
+            self.assertTrue(got['ok'])
+            self.assertEqual(got['points'], {w: (role, lid) for w, lid, role in S['points']})
+
+    def test_offsets_follow_kanren(self):
+        """K = shape start + 7 - 22 for a shape's first link, I - K = 2N + 1 for N points."""
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS[1:], hws=['residential'])
+        S = fa_encode.build_record.last_index['shapes'][0]
+        k, i = S['points'][0][0] - 22, S['points'][-1][0] - 22
+        self.assertEqual(k, S['at'] + 7 - 22)
+        self.assertEqual(i - k, 2 * 2 + 1)
+
+    def test_roles(self):
+        roles = [r for _, _, r in fa_encode.point_words(self.CHAINS[0])]
+        self.assertEqual(roles, ['start', 'vertex', 'vertex', 'end', 'vertex', 'end'])
 
 
 class TestRoadClasses(unittest.TestCase):
@@ -1431,6 +1462,32 @@ class AddreRecords(unittest.TestCase):
                          bytes([6, SIDE_ODD, 0, 0]) + b':13:;:5:')
         self.assertEqual(house_item(19, 15, SIDE_ODD),
                          bytes([7, SIDE_ODD, 0, 0]) + b':19:;:15:\x00')
+
+
+class AddreParcelWords(unittest.TestCase):
+    """A name record's lat and lon words are a level-1 parcel code (REPORT-kanren)."""
+
+    def test_known_codes(self):
+        from addre_io import parcel_words
+        self.assertEqual(parcel_words(64.1466, -21.9426), (0xb01f, 0xc30d), 'Reykjavik')
+        self.assertEqual(parcel_words(41.9022, 12.4533), (0x9f6f, 0xd43e), 'the Vatican record')
+
+    def test_inverse(self):
+        import addr_resolve
+        from addre_io import parcel_point
+        la, lo, y, x = parcel_point(64.1245, -21.7456)
+        row, col = addr_resolve.code_rc(la, lo)
+        self.assertEqual(clarion_bg.parcel_code(1, row, col), (la, lo))
+        self.assertTrue(0 <= y < 2048 and 0 <= x < 2048)
+
+    def test_refs_and_parse(self):
+        from addre_io import house_item, name_record, parse_name_record, street_refs
+        self.assertEqual(street_refs(80, 107), ((2, 0x40, 80), (3, 0x40, 107)))
+        self.assertEqual(street_refs(107, 80, i_node=False), ((4, 0x40, 107), (5, 0, 80)))
+        r = name_record('ÞORLÁKSGEISLI', 0xb01d, 0xc32c, (0, 0, 0), house_item(1, 51), refs=street_refs(80, 107))
+        got = parse_name_record(r)
+        self.assertEqual((got['name'], got['lat'], got['lon'], got['levels']), ('ÞORLÁKSGEISLI', 0xb01d, 0xc32c, (0, 0, 0)))
+        self.assertEqual(got['refs'], [(2, 0x40, 80), (3, 0x40, 107)])
 
 
 class IcodeTree(unittest.TestCase):

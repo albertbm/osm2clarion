@@ -5,9 +5,15 @@ Decompressed form. Offsets and sizes inside the trie are 16-bit words; so are th
 name-block chunk sizes in the tail table, which is what made the block look like an
 unknown codec. The name blocks are zlib with a 4 KiB window.
 """
+import math
+import os
 import struct
+import sys
 import unicodedata
 import zlib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_bg  # noqa: E402
 
 ALIGN = 0x100
 DF_LEN = 0x100
@@ -328,9 +334,34 @@ def house_item(lo, hi, side=SIDE_ODD):
     return bytes([(4 + len(s)) // 2, side, 0, 0]) + s
 
 
+def parcel_point(lat, lon):
+    """(LA, LO, y, x) for a position: the level-1 parcel code of the parcel holding it,
+    which is what a name record's lat and lon words carry (REPORT-kanren in leaf-is-map),
+    and the position inside that parcel in 11-bit units. The words are not a linear
+    coordinate: Reykjavik (64.1466, -21.9426) is b01f c30d."""
+    fy, fx = lat * 48, (lon + 924) * 32         # level-1 parcels: 1.25' rows, 1.875' columns
+    row, col = math.floor(fy), math.floor(fx)
+    la, lo = clarion_bg.parcel_code(1, row, col)
+    return la, lo, min(2047, int((fy - row) * 2048)), min(2047, int((fx - col) * 2048))
+
+
+def parcel_words(lat, lon):
+    return parcel_point(lat, lon)[:2]
+
+
+def street_refs(k, i, k_node=True, i_node=True):
+    """The two reference groups of a one-link range: K and I are word offsets from the
+    record's geometry unit to the x words of the range's two end points. Tags 2/3 when
+    the range runs with the digitising direction (K < I), 4/5 against it; flag 0x40
+    marks a graph node, 0x00 an interior vertex."""
+    a, b = (2, 3) if k < i else (4, 5)
+    return ((a, 0x40 if k_node else 0, k), (b, 0x40 if i_node else 0, i))
+
+
 def name_record(name, lat, lon, levels, items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
                 flags=0x18):
-    """One ADDRE name record.
+    """One ADDRE name record. `lat`, `lon` are the parcel code of the level-1 shape
+    record the references point into (parcel_words), not a linear coordinate.
 
     `levels` is the whole area ladder, country first, as long as the country's ISO entry
     has tier labels. All but the last go in as little-endian halfwords behind the name
@@ -350,6 +381,25 @@ def name_record(name, lat, lon, levels, items=b'', refs=((2, 0x40, 0), (3, 0x40,
     total = 2 + len(body)
     assert total % 2 == 0 and total // 2 < 0x800, (name, total)
     return struct.pack('>H', flags << 11 | total // 2) + body
+
+
+def parse_name_record(r):
+    """name_record read back: dict(flags, lat, lon, refs [(tag, flag, v)], items, levels,
+    name). A record with no ladder continues the previous street; name is None then."""
+    refw, itw = r[2], r[3]
+    lat, lon = struct.unpack_from('>HH', r, 4)
+    refb = r[8:8 + refw * 2 - 4]
+    refs = [struct.unpack_from('>BBH', refb, i) for i in range(0, len(refb) - 3, 4)]
+    p = 8 + len(refb)
+    items = r[p:p + itw * 2]; p += itw * 2
+    nl = r[p]
+    out = dict(flags=u16(r, 0) >> 11, lat=lat, lon=lon, refs=refs, items=items, levels=(), name=None)
+    if nl:
+        lv = struct.unpack_from('<%dH' % nl, r, p + 1)
+        q = p + 1 + 2 * nl
+        out['levels'] = lv[1:] + (r[q],)
+        out['name'] = r[q + 1:q + 1 + lv[0] * 2].rstrip(b'\0').decode('utf-8', 'replace')
+    return out
 
 
 def street_record(flags, name_idx, levels, rel=0x7f7f, sid=0xffffffff):
