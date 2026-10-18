@@ -11,7 +11,7 @@ import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shapely.geometry import box, LineString, MultiLineString, Polygon, MultiPolygon, GeometryCollection
 from shapely.ops import unary_union
-import clarion_bg, clarion_tile
+import clarion_bg, clarion_tile, tile_header
 
 from clarion_bg import MESH_W, MESH_H, UNITS, LEVELS, tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 ZWBITS = 13   # 8 KiB window, as in the shipped files
@@ -205,26 +205,37 @@ def build_tile(name, template, land, coast_lines, coverage, sea_name, db_bounds=
                 dirs[level].append(D)
     return assemble_tile(name, template, dirs, db_bounds)
 
-def assemble_tile(name, template, dirs, db_bounds=None):
+def assemble_tile(name, template, dirs, db_bounds=None, data_version=None, road_section=True):
     """Header tables, section tables and container for directories built by make_dir
-    (dirs = {2: [...], 1: [...]}, each dir carrying its '_recs')."""
+    (dirs = {2: [...], 1: [...]}, each dir carrying its '_recs').
+
+    With a template its 0x1000 header is reused. With template None the header is written
+    by tile_header from data_version, db_bounds and this tile's own tables, so no existing
+    tile is read. road_section False leaves section 2 out of the tile altogether."""
+    sec1 = dict(id=1, count=0, levels=[dict(level=l, typ=t, dirs=dirs.get(l, [])) for l, t in tile_header.LEVELS[1]])
+    sec2 = dict(id=2, count=0, levels=[dict(level=l, typ=t, dirs=[]) for l, t in tile_header.LEVELS[2]])
+    t = dict(sections=[sec1, sec2] if road_section else [sec1])
+    for sec in t['sections']:
+        nw, _, _ = clarion_tile.table_words(sec); sec['count'] = -(-2 * nw // 256)
+    boxes = [(l, 0, data_box_arcmin(l, dirs[l])) for l in (2, 1) if dirs.get(l)]
+    if template is None:
+        assert db_bounds and data_version, 'an authored header needs db_bounds and data_version'
+        rows = [(1, boxes)] + ([(2, [])] if road_section else [])
+        t['header'] = tile_header.author(tile_header.level_groups(t), rows, db_bounds, data_version)
+        return clarion_tile.write_tile(t)
     header = bytearray(template[:0x1000])
     # level table: section 1 counts, section 2 empty
     lv = struct.pack('>H', 2) + bytes([1, 6]) + b''.join(struct.pack('>BBH', l, t, c) for l, t, c in
          [(6, 0x80, 0), (5, 0x90, 0), (4, 0x91, 0), (3, 0x91, 0), (2, 0x91, len(dirs[2])), (1, 0x92, len(dirs[1]))]) \
          + bytes([2, 4]) + b''.join(struct.pack('>BBH', l, t, 0) for l, t in [(5, 0x81), (4, 0x81), (2, 0x81), (1, 0x90)])
     header[0x1ac:0x1ac + len(lv)] = lv
-    bb = struct.pack('>H', 2) + bytes([1, 2]) + b''.join(struct.pack('>BB4h', l, 0, *data_box_arcmin(l, dirs[l])) for l in (2, 1)) + bytes([2, 0])
+    bb = struct.pack('>H', 2) + bytes([1, 2]) + b''.join(struct.pack('>BB4h', *b[:2], *b[2]) for b in boxes) + bytes([2, 0])
     header[0x2ac:0x2ac + 0x30] = b'\xff' * 0x30
     header[0x2ac:0x2ac + len(bb)] = bb
     if db_bounds:
         struct.pack_into('>hhhh', header, 0x184, *db_bounds)
         struct.pack_into('>hh', header, 0x5d0, db_bounds[1], db_bounds[2])
-    sec1 = dict(id=1, count=0, levels=[dict(level=l, typ=t, dirs=dirs.get(l, [])) for l, t in [(6, 0x80), (5, 0x90), (4, 0x91), (3, 0x91), (2, 0x91), (1, 0x92)]])
-    sec2 = dict(id=2, count=0, levels=[dict(level=l, typ=t, dirs=[]) for l, t in [(5, 0x81), (4, 0x81), (2, 0x81), (1, 0x90)]])
-    t = dict(header=header, sections=[sec1, sec2])
-    for sec in t['sections']:
-        nw, _, _ = clarion_tile.table_words(sec); sec['count'] = -(-2 * nw // 256)
+    t['header'] = header
     return clarion_tile.write_tile(t)
 
 def load_geojson_lines(path):
