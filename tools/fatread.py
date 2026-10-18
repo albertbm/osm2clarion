@@ -199,3 +199,12 @@ class Fat32:
             if n >= size:
                 break
         return h.hexdigest()
+
+    def read(self, path):
+        """The bytes of one file, by its path in the walk ('/MAPAL001/B60R080R.DAT');
+        case-insensitive, as the unit's own lookup is."""
+        want = path.upper()
+        for p, sz, c, _ in self.walk():
+            if sz is not None and p.upper() == want:
+                return self.f.read_clusters(c, sz) if sz else b''
+        raise FileNotFoundError(path)

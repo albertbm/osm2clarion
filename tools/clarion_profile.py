@@ -44,6 +44,8 @@ class Profile:
         self.path = path
         self.name = data.get('name') or os.path.basename(path or '').removesuffix('.toml')
         self.description = data.get('description', '')
+        # ISO 3166 numeric, written into every section-2 record; None makes rd_build refuse
+        self.country = data.get('country')
 
         src = data.get('source', {})
         self.osm = self.resolve(src.get('osm'))
@@ -138,7 +140,7 @@ def take_arg(argv, flag='--profile'):
 if __name__ == '__main__':
     P = load(sys.argv[1] if len(sys.argv) > 1 else 'iceland')
     print(P)
-    for k in ('description', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
+    for k in ('description', 'country', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
               'west_meshes', 'sea', 'simplify_metres', 'skip', 'l2_classes', 'l2_graph',
               'coarse_classes', 'land', 'targets'):
         print('%-22s %s' % (k, getattr(P, k)))

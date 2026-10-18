@@ -297,6 +297,24 @@ class TestDirectoryIndex(CardCase):
             self.assertEqual(out.read_bytes(), src.read_bytes(), run.stdout)
 
 
+class TestRoadHeaders(CardCase):
+    """rd_check's header rule holds on the shipped section-2 records."""
+
+    def test_header_rule_on_shipped_records(self):
+        import rd_check
+        tiles = tiles_within_budget(self.root)
+        sound = checked = 0
+        for p in tiles:
+            tally, _, bad = rd_check.check_tile(str(p))
+            for lev in (1, 2):
+                ok, no = (tally[(lev, 'header where the body is sound', b)] for b in (True, False))
+                self.assertEqual(no, 0, '%s level %d: %s' % (p.name, lev, bad[:3]))
+                sound += ok
+                checked += tally[(lev, 'body', True)] + tally[(lev, 'body', False)]
+        self.assertGreater(sound, 0)
+        self.assertGreater(sound / checked, 0.99, 'too many records the reader cannot parse')
+
+
 class TestRetarget(CardCase):
     """The two databases differ in six header bytes: the data version and the NAVTEQ
     quarter. tile_retarget.py substitutes them."""
