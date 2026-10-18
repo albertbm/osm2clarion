@@ -6,7 +6,8 @@
                                                              a name such as B60R080R.DAT
     -v                                                       print every failing record
     --graph [SHAPES.json ...]                                connected pieces of the level-1
-                                                             graph, named from shape indexes
+                                                             graph, named from shape indexes,
+                                                             and edge entries left unanswered
 
 The header rule. Measured 18 Oct 2026 on 14 factory tiles off 214-062, 214-066 and 218-120,
 both levels, multi-class and border records included: 183,567 of 183,567 records whose body
@@ -149,6 +150,37 @@ def pieces(plains, level=1):
     for lk, n in links.items(): groups[find(n)][0].add(lk)
     return sorted(((g, n) for g, n in groups.values()), key=lambda c: -c[1])
 
+OPPOSITE = {0x8000: 0xc000, 0xc000: 0x8000, 0xa000: 0xe000, 0xe000: 0xa000}
+
+
+def edge_joins(plains, level=1):
+    """(edge entries read, [unanswered]) over a set of inflated records. An edge entry
+    names a side and the node it meets in the neighbour across it; that node must carry an
+    entry on the opposite side naming this one back. Each miss is (row, col, node, side,
+    far node, why). Held on five factory tiles off 214-062, about 224,000 level-1 edge
+    entries: every miss pointed into a parcel outside the tile."""
+    edges, parcels = {}, set()
+    for plain in plains:
+        rec = clarion_rd.parse_record(part_a(plain, level))
+        if 'nnodes' not in rec: continue
+        rc = rowcol(level, *rec['code']); parcels.add(rc)
+        for i, nd in enumerate(rec['nodes']):
+            edges[rc + (i,)] = [(e['cls'] & 0xe000, e['other'] & 0x3fff) for e in nd['entries'] if e['cls'] & 0x8000]
+    bad, n = [], 0
+    for (r, c, i), ents in edges.items():
+        for side, j in ents:
+            n += 1
+            dr, dc = SIDE[side]
+            far = edges.get((r + dr, c + dc, j))
+            if (r + dr, c + dc) not in parcels:
+                bad.append((r, c, i, side, j, 'neighbour parcel not read'))
+            elif far is None:
+                bad.append((r, c, i, side, j, 'no such node across the edge'))
+            elif (OPPOSITE[side], i) not in far:
+                bad.append((r, c, i, side, j, 'far node does not answer: %s' % far))
+    return n, bad
+
+
 def fmt(pairs):
     return ' '.join('u%d:%d/%d' % (4 + 2 * i, n, l) for i, (n, l) in enumerate(pairs) if n or l) or 'empty'
 
@@ -230,6 +262,17 @@ def main(argv):
             named = collections.Counter(names.get(l, '?') or 'unnamed' for l in lks) if names else None
             print('piece %d: %d nodes, %d links%s' % (k, nn, len(lks), (': ' + ', '.join(
                 '%s %d' % (n, c) for n, c in named.most_common())) if named else ''))
+        for lev in (1, 2):
+            def plains():
+                for tile in tiles:
+                    with TileScan(tile) as t:
+                        for r in t.records(section=2, level=lev): yield r.plain()
+            n, bad = edge_joins(plains(), lev)
+            out = sum(b[5] == 'neighbour parcel not read' for b in bad)
+            print('level %d edge entries %d, unanswered %d (%d into parcels not read)' % (lev, n, len(bad), out))
+            for b in bad[:5] if not verbose else bad:
+                print('   row %d col %d node %d side %#x far node %d: %s' % b)
+            failed |= len(bad) > out
     if F: F.close()
     return 1 if failed else 0
 

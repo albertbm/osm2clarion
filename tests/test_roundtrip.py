@@ -748,6 +748,18 @@ class TestRoadHeader(unittest.TestCase):
         self.assertEqual(sorted(n for _, n in got), [2, 4])
         self.assertEqual(sorted(len(l) for l, _ in got), [1, 2])
 
+    def test_edge_entries_answer_each_other(self):
+        """An edge entry and its partner across the edge name each other's node; a wrong far node is caught."""
+        nodes, links = [(100, 100), (2047, 100), (500, 900), (600, 900)], [(0, 1, 50), (2, 3, 10)]
+        west, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, nodes, links, {1: (0xa000, 0)}, country=352)
+        east, _ = rd_encode.build_record_edges(1, 96, 898, 7, 10, [(0, 100), (900, 100)], [(0, 1, 50)],
+                                               {0: (0xe000, 3)}, country=352)
+        self.assertEqual(rd_check.edge_joins([west, east]), (2, []))
+        wrong, _ = rd_encode.build_record_edges(1, 96, 898, 7, 10, [(0, 100), (900, 100)], [(0, 1, 50)],
+                                                {0: (0xe000, 1)}, country=352)
+        self.assertEqual(len(rd_check.edge_joins([west, wrong])[1]), 2)
+        self.assertEqual(rd_check.edge_joins([west])[1][0][5], 'neighbour parcel not read')
+
     def test_two_country_records(self):
         """A parcel a border runs through lists both codes and starts unit 0 a word later."""
         unit = rd_encode.unit_head([8, 8], [1, 1]) + [
