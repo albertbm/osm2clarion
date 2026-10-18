@@ -68,6 +68,9 @@ class Profile:
         self.l2_classes = l2_classes(rd.get('l2_classes', 'wide'))
         self.coarse_classes = set(rd.get('coarse_classes', COARSE_CLASSES))
         self.coarse_simplify_metres = float(rd.get('coarse_simplify_metres', 20))
+        self.speed_unit = rd.get('speed_unit', 'km/h')      # what the posted-limit signs read in
+        if self.speed_unit not in ('km/h', 'mph'):
+            raise SystemExit('speed_unit must be km/h or mph, not %r' % self.speed_unit)
 
         land = data.get('land', {})
         self.land = {}
@@ -142,5 +145,5 @@ if __name__ == '__main__':
     print(P)
     for k in ('description', 'country', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
               'west_meshes', 'sea', 'simplify_metres', 'skip', 'l2_classes', 'l2_graph',
-              'coarse_classes', 'land', 'targets'):
+              'coarse_classes', 'speed_unit', 'land', 'targets'):
         print('%-22s %s' % (k, getattr(P, k)))

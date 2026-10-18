@@ -199,13 +199,23 @@ count)` layer pairs, a pad word, the shapes. Layer 5 holds roads, layer 0 ferrie
 is a chain of consecutive link ids along one way: `u16 length in words (itself included)`,
 `0x8000 | points` (sometimes with 0x4000), `0x8000`, `0004 000c 8004` (or `0144 ffff 8004`),
 `0`, the start node `(0x0800 | x, 0x2800 | y)`, then per link `style, value, link id` (style
-0x1031 roads, 0x001e ferry; value unknown; from the second link only `value, id`), the link's
+0x1031 roads, 0x001e ferry; value unknown; from the second link only `value, id` unless the
+style changes, see below), the link's
 points `(0x1000 | x, y)` with the first point of a link flagged 0x7000 (first link) or 0x5000,
 the link's end node with `0x0800 | y` unless it ends the shape, and one trailer word. Points
 are absolute parcel coordinates. Curves are the shape points; the graph only has the ends.
 On a unit (24 Sep 2026): one street drew from 200 m to 50 m with one shape per link in the
 single-link form (start node, `1031 0100 id`, end point flagged 0x7000, trailer 0). A chained
 form that put first-point and link-end flags on the same point drew lines off the parcel.
+
+The style word is the posted speed limit (18 Oct 2026, factory B58R060R Norway and B50R068R
+northern England, 0x2046 directories only). Bit 5 set means a limit, `((w & 0x1f) + 1) * 5` in
+the country's unit; low bits `0x1e` with bit 5 clear mean none. Bit 12 is set on most words and
+clear on most ferries; bit 6 is unknown and toggles on its own along a chain. A y with `0x2000`
+is followed by a style word, so a chain whose limit changes sets `0x2800` on the y of the link
+end before the change and opens the next link with `style, value, id`. Norway has 28,643 such
+restyles and northern England 6,868; every one differs from the word before it, and 20,169 and
+3,302 of them change the limit, so a limit change needs no new shape.
 
 The x word carries four flags, not three:
 

@@ -952,6 +952,81 @@ class TestRoadShapes(unittest.TestCase):
                                    hws=['motorway', 'residential'])
 
 
+class TestSpeedLimits(unittest.TestCase):
+    """The level-1 style word carries the posted limit. Factory Norway and northern England
+    restyle a chain where the limit changes instead of splitting the shape."""
+
+    NODES = TestRoadShapes.NODES
+    CHAIN = TestRoadShapes.CHAIN
+
+    def test_style_word(self):
+        self.assertEqual(fa_encode.style_word(None), 0x101e, 'no limit')
+        self.assertEqual(fa_encode.style_word(50), 0x1029)
+        self.assertEqual(fa_encode.style_word(30), 0x1025)
+        for v in range(5, 165, 5):
+            self.assertEqual(fa_encode.limit_of(fa_encode.style_word(v)), v)
+        for v in (0, 52, 165):
+            self.assertEqual(fa_encode.style_word(v), 0x101e, v)
+        self.assertIsNone(fa_encode.limit_of(0x101e))
+
+    def test_speed_limit(self):
+        f = fa_encode.speed_limit
+        self.assertEqual(f('50'), 50)
+        self.assertEqual(f(' 80 '), 80)
+        self.assertEqual(f('30 mph'), 50, '48 km/h, signed in steps of 5')
+        self.assertEqual(f('30 mph', 'mph'), 30)
+        self.assertEqual(f('50', 'mph'), 30)
+        self.assertEqual(f('50;30'), 50)
+        for v in (None, '', 'IS:urban', 'none', 'walk', 'signals', '52'):
+            self.assertIsNone(f(v), v)
+
+    def shape(self, limits):
+        return fa_encode.shape_words(self.CHAIN, self.NODES, styles=[fa_encode.style_word(v) for v in limits])
+
+    def test_one_limit_writes_one_word(self):
+        plain = fa_encode.shape_words(self.CHAIN, self.NODES)
+        same = self.shape([50, 50])
+        self.assertEqual(len(same), len(plain), 'an unchanged limit is not repeated')
+        self.assertEqual(same[9], 0x1029)
+        self.assertEqual([i for i, v in enumerate(same) if v == 0x1029], [9])
+
+    def test_a_change_restyles_the_next_link(self):
+        sh = self.shape([50, 30])
+        self.assertEqual(len(sh), len(self.shape([50, 50])) + 1)
+        pts = len(self.CHAIN[0][3]) + 1
+        end = 9 + 3 + 2 * pts                     # one past the first link's last point
+        self.assertEqual(sh[end - 1] & 0xf800, 0x2800, 'the link end announces a style word')
+        self.assertEqual(sh[end:end + 3], [0x1025, 0x0100, 2])
+
+    def test_record_reads_back(self):
+        CH = TestShapeIndex.CHAINS
+        st = [[fa_encode.style_word(80), fa_encode.style_word(None)], [fa_encode.style_word(30)]]
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, TestShapeIndex.NODES, CH,
+                                          hws=['trunk', 'residential'], styles=st)
+        ix = fa_encode.build_record.last_index
+        _, _, shapes = fa_encode.parse_record(plain)
+        for S in ix['shapes']:
+            got = next(s for s in shapes if s['at'] == S['at'])
+            self.assertTrue(got['ok'])
+            self.assertEqual(got['points'], {w: (role, lid) for w, lid, role in S['points']},
+                             'the address index still names the right words')
+            self.assertEqual(got['styles'], st[S['chain']])
+
+    def test_rd_build_takes_maxspeed(self):
+        pts = TestRoadChains.POINTS
+        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, maxspeed='30', nodes=pts[:3])
+        b = dict(a, id=2, maxspeed='50', nodes=pts[2:])
+        c = dict(id=3, hw='service', name=None, ref=None, nodes=[pts[1], (-21.896, 64.127)])
+        parcels = rd_build.build_graphs([a, b, c], TestRoadChains.CELL, 1, True)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        (pc, rec), = recs.items()
+        _, _, shapes = fa_encode.parse_record(rec[2])
+        got = sorted(([fa_encode.limit_of(v) for v in s['styles']] for s in shapes), key=len)
+        self.assertEqual(got, [[None], [30, 30, 50]], 'one shape restyled at the way change; no maxspeed, no limit')
+
+
 class TestRoadChains(unittest.TestCase):
     """rd_build turns ways into links that carry their own bends. A graph node at every bend
     instead gives the matcher one two-point fragment per bend to project onto."""
