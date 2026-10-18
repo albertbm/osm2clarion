@@ -1483,3 +1483,23 @@ class IcodeTree(unittest.TestCase):
         self.assertEqual(len(b), icode_io.NSLOT * icode_io.SLOT)
         self.assertEqual(b[:9], b'2=COUNTRY')
         self.assertEqual(b[3 * icode_io.SLOT:], b'\x00' * (4 * icode_io.SLOT))
+
+
+class TestReferHeader(unittest.TestCase):
+    def test_header_round_trips(self):
+        import refer_header
+        slots = {6: (0x00000010, 1), 7: (0, 2), 278: (0x40, 3)}
+        h = refer_header.header(slots, (4160, 3520, -1680, -720), '14/11/17/01')
+        self.assertEqual(len(h), 0x1000)
+        self.assertEqual(refer_header.slots_of(h), slots)
+        self.assertEqual(h[0x0e0:0x0e0 + 48].decode('utf-16-be'), 'DATA VERSION 14/11/17/01')
+        self.assertTrue(refer_header.check(h))
+
+    def test_adm_frame_is_aligned(self):
+        import frames
+        names = [('REYKJAVÍK', (0, 0), 20), ('KÓPAVOGUR', (0, 1), 20)]
+        keys = {'RE'.encode('utf-16-be'): [(0, False)], 'KO'.encode('utf-16-be'): [(1, False)]}
+        out, at, dfo = frames.adm(0x2000, 0, 2, names, keys)
+        self.assertEqual(at, 0x2000)
+        self.assertEqual(dfo % 256, 0)
+        self.assertEqual(len(out) % 256, 0)
