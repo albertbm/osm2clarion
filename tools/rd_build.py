@@ -14,6 +14,8 @@
                                    address records name streets the same way
     --shape-index OUT.json         where each level-1 drawn shape and point sits, checked
                                    against the written tile (shape_index.py)
+    --country N                    ISO 3166 numeric code for the road records, if the
+                                   profile has none
 
 roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut at parcel
 edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
@@ -34,11 +36,13 @@ SIDES = {'top': 0x8000, 'right': 0xa000, 'bottom': 0xc000, 'left': 0xe000}
 # South-west mesh of the database grid. Only the remainder modulo the directory size matters,
 # so this is what keeps level-2 directories on the grid the card already uses.
 ORIGIN = (32, 904)
+COUNTRY = None     # ISO 3166 numeric code for every section-2 record, from the profile
 
 
 def use_profile(P):
-    global ORIGIN
+    global ORIGIN, COUNTRY
     ORIGIN = P.mesh_origin
+    COUNTRY = P.country
 
 
 def parcel_of(lon, lat, level=1):
@@ -250,7 +254,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
-                                               regs=(regs or {}).get(pc))
+                                               regs=(regs or {}).get(pc), country=COUNTRY)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         # drawn geometry: one shape per chain of links, each pointing at its street's label entry
@@ -289,8 +293,10 @@ def shape_index_record(level, pc, ix, chains, links, label_of, no_names):
     return dict(code=list(ix['code']), unit=ix['unit'], mesh=[y, x], row=row, col=col,
                 box=[lon0, lat0, w, h], shapes=shapes)
 
-def simplify(pts, tol):
-    """Douglas-Peucker in metres, endpoints kept."""
+def simplify(pts, tol, junctions=frozenset()):
+    """Douglas-Peucker in metres, endpoints kept, and every point in junctions: a vertex two
+    ways share is where they meet, and dropping it from one cuts the graph there. Before 18
+    Oct 2026 it was dropped, which left the Þorláksgeisli address link in a piece of its own."""
     if len(pts) < 3: return pts
     lat = math.radians(pts[0][1]); kx, ky = 111320 * math.cos(lat), 111320
     def d2(p, a, b):
@@ -298,7 +304,8 @@ def simplify(pts, tol):
         L = bx * bx + by * by
         t = 0 if L == 0 else max(0, min(1, -(ax * bx + ay * by) / L))
         return (ax + bx * t) ** 2 + (ay + by * t) ** 2
-    keep = [0, len(pts) - 1]; stack = [(0, len(pts) - 1)]
+    keep = sorted({0, len(pts) - 1} | {i for i, p in enumerate(pts) if tuple(p) in junctions})
+    stack = list(zip(keep, keep[1:]))
     while stack:
         i, j = stack.pop()
         if j - i < 2: continue
@@ -324,8 +331,13 @@ def count_labels(b):
 
 def main():
     argv = sys.argv[1:]
+    global COUNTRY
     P = clarion_profile.take_arg(argv)
     use_profile(P)
+    if '--country' in argv:
+        i = argv.index('--country'); COUNTRY = int(argv[i + 1]); del argv[i:i + 2]
+    if not COUNTRY:
+        raise SystemExit('no country: set country in the profile or pass --country N')
     skip, tol, l2 = set(P.skip), P.simplify_metres, P.l2_classes
     no_l2_graph, no_l2_names = not P.l2_graph, False
     if '--skip' in argv:
@@ -353,7 +365,9 @@ def main():
         raise SystemExit('no road set: set source.roads in the profile or pass roads.json')
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
     if tol:
-        for w in ways: w['nodes'] = simplify(w['nodes'], tol)
+        shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
+        junctions = {p for p, n in shared.items() if n > 1}
+        for w in ways: w['nodes'] = simplify(w['nodes'], tol, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
     boxes = {}; report = []

@@ -31,6 +31,7 @@ import clarion_tile
 import fa_encode
 import make_drstr
 import rd_build
+import rd_check
 import rd_encode
 import tile_grid
 import tile_retarget
@@ -555,7 +556,7 @@ class TestRoadGraph(unittest.TestCase):
     LINKS = [(0, 1, 850), (1, 2, 1600), (0, 3, 700)]
 
     def test_nodes_and_links_roundtrip(self):
-        plain, comp = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS)
+        plain, comp = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS, country=352)
         rec = clarion_rd.parse_record(plain)
         self.assertIsNone(rec.get('error'))
         self.assertEqual(rec['consumed'], rec['unit_len'], 'the node list fills the unit exactly')
@@ -572,25 +573,26 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(got, want)
 
     def test_nodes_are_sorted_by_x(self):
-        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS)
+        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS, country=352)
         rec = clarion_rd.parse_record(plain)
         xs = [n['x'] for n in rec['nodes']]
         self.assertEqual(xs, sorted(xs))
 
     def test_documented_header(self):
-        plain, comp = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS)
+        plain, comp = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS, country=352)
         rec = clarion_rd.parse_record(plain)
         self.assertEqual(rec['code'], clarion_bg.parcel_code(1, 96 * 32 + 7, 898 * 32 + 9))
-        self.assertEqual(struct.unpack_from('>H', plain, 52)[0], 0x017c)
+        self.assertEqual(struct.unpack_from('>H', plain, 52)[0], 352, 'word 26 is the country')
         self.assertEqual(rec['pairs'][0], (0x1b, rec['unit_len']), 'the first unit starts at word 27')
         for off, ln in rec['pairs'][1:]:
             self.assertEqual((off, ln), (0xffffffff, 0))
-        self.assertEqual(rec['classes'][0], (len(self.NODES), 2 * len(self.LINKS)))
+        self.assertEqual(rec['classes'][3], (len(self.NODES), 2 * len(self.LINKS)),
+                         'class 8 nodes and their link ends sit in the u10 pair')
         self.assertEqual(comp[:2], b'\x58\x85')
         self.assertEqual(zlib.decompress(comp), plain)
 
     def test_link_id_carries_the_northern_end(self):
-        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS)
+        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS, country=352)
         rec = clarion_rd.parse_record(plain)
         for node in rec['nodes']:
             for e in node['entries']:
@@ -609,17 +611,17 @@ class TestRoadGraph(unittest.TestCase):
 
     def test_per_link_classes(self):
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
-                                                classes=['motorway', 'primary', 'service'])
+                                                classes=['motorway', 'primary', 'service'], country=352)
         rec = clarion_rd.parse_record(plain)
         want = {rd_encode.class_word(fa_encode.layer_class(hw, 1)[1])
                 for hw in ('motorway', 'primary', 'service')}
-        got = {e['cls'] for n in rec['nodes'] for e in n['entries']}
-        self.assertEqual(got, want)
+        got = {e['cls'] & 0xff | (e['cls'] & 0xf) << 8 for n in rec['nodes'] for e in n['entries']}
+        self.assertEqual(got, want, 'the low byte is the link class word')
 
     def test_parcel_edge_entry(self):
         """A node on a parcel edge gets a last entry with the side in the top bits."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS,
-                                                {2: (0xc000, 17)})
+                                                {2: (0xc000, 17)}, country=352)
         rec = clarion_rd.parse_record(plain)
         edges = [e for n in rec['nodes'] for e in n['entries'] if e['cls'] & 0x8000]
         self.assertEqual(len(edges), 1)
@@ -628,10 +630,10 @@ class TestRoadGraph(unittest.TestCase):
 
     def test_level2_ships_raw_in_two_parts(self):
         part_a, part_b = rd_encode.build_record_edges(2, 96, 898, 1, 2, self.NODES, self.LINKS,
-                                                      {0: (0xc000, 7)})
+                                                      {0: (0xc000, 7)}, country=352)
         for part in (part_a, part_b):
             self.assertNotEqual(part[:2], b'\x58\x85', 'level-2 graph records are not compressed')
-            self.assertEqual(struct.unpack_from('>H', part, 52)[0], 0x00fa, 'level-2 header tail')
+            self.assertEqual(struct.unpack_from('>H', part, 52)[0], 352, 'both parts carry the country')
         rec = clarion_rd.parse_record(part_a)
         self.assertIsNone(rec.get('error'))
         self.assertEqual(len(rec['nodes']), len(self.NODES))
@@ -643,7 +645,118 @@ class TestRoadGraph(unittest.TestCase):
         hub = [(10, 10)] + [(100 + 10 * i, 500) for i in range(16)]
         links = [(0, i, 100) for i in range(1, 17)]
         with self.assertRaises(AssertionError):
-            rd_encode.build_record(1, 96, 898, 0, 0, hub, links)
+            rd_encode.build_record(1, 96, 898, 0, 0, hub, links, country=352)
+
+
+class TestRoadHeader(unittest.TestCase):
+    """The section-2 header rule rd_check.py measured on factory tiles: one (nodes, link ends)
+    pair per node-class group, totals without edge connections, and the country at word 26."""
+
+    NODES = [(100, 200), (900, 240), (1500, 1800), (300, 1000)]
+    LINKS = [(0, 1, 850), (1, 2, 1600), (0, 3, 700)]
+    HW = ['motorway', 'primary', 'service']          # classes 1, 5 and 9 at level 1
+
+    def build(self, edges=None, level=1, hw=HW):
+        return rd_encode.build_record_edges(level, 96, 898, 7, 9, self.NODES, self.LINKS, edges or {},
+                                            classes=hw, country=352)
+
+    def test_pairs_follow_the_node_class(self):
+        plain, _ = self.build()
+        rec = clarion_rd.parse_record(plain)
+        # nodes 0 and 1 meet the motorway (class 1), node 2 is class 5, node 3 class 9
+        want = [(0, 0)] * 11
+        want[1], want[2], want[4] = (2, 4), (1, 1), (1, 1)
+        self.assertEqual(rec['classes'], want, 'u6 for classes 0-2, u8 for 3-7, u12 for 9')
+        self.assertEqual(rd_check.check(plain), ([], []))
+
+    def test_slots(self):
+        self.assertEqual([rd_encode.pair_slot(c) for c in (0, 1, 2, 3, 7, 8, 9, 10, 12)],
+                         [1, 1, 1, 2, 2, 3, 4, 10, 10])
+        self.assertEqual([rd_check.slot(c) for c in range(16)], [rd_encode.pair_slot(c) for c in range(16)])
+
+    def test_edge_connections_are_not_link_ends(self):
+        plain, _ = self.build({2: (0xc000, 17), 3: (0x8000, 4)})
+        rec = clarion_rd.parse_record(plain)
+        self.assertEqual(rec['nlinks'], 2 * len(self.LINKS))
+        self.assertEqual(sum(l for _, l in rec['classes']), 2 * len(self.LINKS))
+        self.assertEqual(rd_check.check(plain), ([], []))
+
+    def test_class_words_name_the_far_node(self):
+        plain, _ = self.build({2: (0xc000, 17)})
+        rec = clarion_rd.parse_record(plain)
+        for nd in rec['nodes']:
+            real = [e for e in nd['entries'] if not e['cls'] & 0x8000]
+            self.assertEqual(nd['ncls'], min(e['cls'] & 0xf for e in real), 'y carries the lowest link class')
+            for e in nd['entries']:
+                if e['cls'] & 0x8000:
+                    self.assertEqual(e['cls'], 0xc000 | nd['ncls'] << 8 | real[0]['cls'] & 0xff)
+                else:
+                    self.assertEqual(e['cls'] >> 8, rec['nodes'][e['other']]['ncls'])
+
+    def test_level2_both_parts_carry_the_country(self):
+        part_a, part_b = self.build({0: (0xc000, 7)}, level=2)
+        self.assertEqual(rd_check.check(part_a + part_b, level=2, country=352), ([], []))
+        for part in (part_a, part_b):
+            self.assertEqual(struct.unpack_from('>H', part, 52)[0], 352)
+
+    def test_country_comes_from_the_profile(self):
+        self.assertEqual(clarion_profile.load(str(ROOT / 'profiles' / 'iceland.toml')).country, 352)
+        with self.assertRaises(AssertionError):
+            rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {})
+        plain, _ = self.build()
+        self.assertEqual(rd_check.check(plain, country=380)[0], ['countries [352], want [380]'])
+
+    def test_old_layout_is_refused(self):
+        """What rd_encode wrote until 18 Oct 2026: the whole record in u10, edges counted."""
+        plain, _ = self.build({2: (0xc000, 17)}, hw=['primary'] * 3)
+        w = list(struct.unpack('>%dH' % (len(plain) // 2), plain))
+        u = 27
+        nn, nl = w[u + 1], w[u + 3] + 1
+        w[u + 3] = nl
+        w[u + 4:u + 26] = [0, 0, 0, 0, 0, 0, nn, nl] + [0] * 14
+        hp, _ = rd_check.check(struct.pack('>%dH' % len(w), *w))
+        self.assertEqual(len(hp), 2, hp)
+        self.assertIn('totals (4, 7), body gives (4, 6)', hp)
+
+    def test_entry_extra_words(self):
+        """w5 bits 6-11 count regulation words and bits 0-3 more words after them; a reader
+        that took four bits and no low count lost its place on dense factory tiles."""
+        regs = list(range(0x1001, 0x1001 + 20))
+        unit = rd_encode.unit_head([8, 8], [1, 1]) + [
+            1 << 12 | 100, 0x8000 | 200, 0, 1, 0, 20 << 6 | 2, 1, 0x898, 0x8010, 40] + regs + [0x20ff, 0x0410] + [
+            1 << 12 | 300, 0x8000 | 400, 0, 0, 0, 0, 0x2001, 0x898, 0x8010, 40]
+        head, _ = rd_encode.record_head(1, 96, 898, 7, 9, [(0x1b, len(unit))], 352)
+        rec = clarion_rd.parse_record(head + struct.pack('>%dH' % len(unit), *unit))
+        self.assertEqual(rec['consumed'], rec['unit_len'])
+        self.assertEqual(len(rec['nodes']), 2)
+        self.assertEqual(rec['nodes'][0]['entries'][0]['extra'], regs + [0x20ff, 0x0410])
+        self.assertEqual(rd_check.check(head + struct.pack('>%dH' % len(unit), *unit)), ([], []))
+
+    def test_simplify_keeps_junctions(self):
+        """A vertex another way ends on stays, however straight the line through it is."""
+        line = [(-21.75 + i * 0.0001, 64.12) for i in range(5)]
+        self.assertEqual(rd_build.simplify(line, 2), [line[0], line[-1]])
+        self.assertEqual(rd_build.simplify(line, 2, {line[2]}), [line[0], line[2], line[-1]])
+
+    def test_components_join_across_parcel_edges(self):
+        """Two parcels joined by an edge entry make one piece; a link left alone makes two."""
+        nodes, links = [(100, 100), (2047, 100), (500, 900), (600, 900)], [(0, 1, 50), (2, 3, 10)]
+        west, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, nodes, links, {1: (0xa000, 0)}, country=352)
+        east, _ = rd_encode.build_record_edges(1, 96, 898, 7, 10, [(0, 100), (900, 100)], [(0, 1, 50)],
+                                               {0: (0xe000, 3)}, country=352)
+        got = rd_check.pieces([west, east])
+        self.assertEqual(sorted(n for _, n in got), [2, 4])
+        self.assertEqual(sorted(len(l) for l, _ in got), [1, 2])
+
+    def test_two_country_records(self):
+        """A parcel a border runs through lists both codes and starts unit 0 a word later."""
+        unit = rd_encode.unit_head([8, 8], [1, 1]) + [
+            1 << 12 | 100, 0x8000 | 200, 0, 1, 0, 0, 1, 0x898, 0x8010, 40,
+            1 << 12 | 300, 0x8000 | 400, 0, 0, 0, 0, 0x2001, 0x898, 0x8010, 40]
+        head, _ = rd_encode.record_head(1, 96, 898, 7, 9, [(28, len(unit))], 578)
+        rec = clarion_rd.parse_record(head + struct.pack('>H', 752) + struct.pack('>%dH' % len(unit), *unit))
+        self.assertEqual(rec['countries'], [578, 752])
+        self.assertEqual(rd_check.check(head + struct.pack('>H', 752) + struct.pack('>%dH' % len(unit), *unit)), ([], []))
 
 
 class TestRoadShapes(unittest.TestCase):

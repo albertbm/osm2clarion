@@ -60,12 +60,17 @@ class Rec:
 
 class TileScan:
     def __init__(self, path):
+        """path, or the tile's bytes when it was read off a card image."""
+        if isinstance(path, (bytes, bytearray, memoryview)):
+            self.f, self.m = None, path
+            return
         self.f = open(path, 'rb')
         self.m = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
 
     def close(self):
-        self.m.close()
-        self.f.close()
+        if self.f:
+            self.m.close()
+            self.f.close()
 
     def __enter__(self):
         return self

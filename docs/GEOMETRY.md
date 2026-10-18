@@ -158,22 +158,33 @@ table lists levels 5, 4, 2, 1; the level table at 0x1ac and the box table at 0x2
 section-2 group (box in arc-minutes of the data extent).
 
 Record: words 0-1 parcel code (same as the background record), two zero dwords, five
-`(u32 offset, u32 length)` unit pairs in 16-bit words from the record start, `u16 0x017c`;
-the first unit starts at word 27. Unit 0 is the graph: `u32 nodes, u32 links` (links counted
-once per end, so twice), three zero dwords, eight `(u16 nodes, u16 links)` per class group,
-data from word 26. Group 0 holds the `0x0898` family (ordinary roads, also `0x0889`,
-`0x088a`), group 1 the `0x0899`/`0x0999`/`0x0989` family, group 7 the ferries `0x0a8a`.
-Unit 2 exists only with group 1: `0101 9800 ff00 0018` per extra group (`0102` for two).
+`(u32 offset, u32 length)` unit pairs in 16-bit words from the record start, then from word
+26 the ISO 3166 numeric country code of every country in the parcel, one word each (578
+Norway; `0242 02f0` where the Norway-Sweden border crosses), up to where unit 0 starts:
+word 27 for one country, 28 for two. Unit 0 is the graph: `u32 nodes, u32 link ends`, then
+eleven `(u16 nodes, u16 link ends)` pairs at u4..u25, then the nodes from u26. A node counts
+in the pair of its own class: classes 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up
+(ferries) at u24; u4 and u14..u23 stay zero. Its link ends are its entries less any
+parcel-edge entry, and the totals are the sums, so edge entries are never counted.
+Measured 18 Oct 2026 by `tools/rd_check.py` on 183,567 records of 14 tiles from three cards
+(214-062, 214-066, 218-120), both levels, with no exception; 115 records in the two densest
+tiles do not parse yet. Unit 2, in about 4% of records, is `0102 9800 ff00 0018 d801 ff00 0018`.
 
 Node, in ascending x: `u16 x` with the entry count in the top nibble and the parcel
-coordinate in the low 11 bits, `u16 y` with bit 15 set (bit 12 for group 1) and the
-coordinate in the low 11 bits, a flag word (0 or 0x2000), then per entry `other node index,
-w4, w5, link id, class, a, b` and `(w5 >> 6) & 0xf` extra words. The link id carries
-`0x2000` at the end with the larger y. `a` is `0x8000 | travel time in quarter seconds`
-(0.4 * length for the common 10 m/s links) with class bits above bit 9; `b` is the length in
-metres. Extra words look like turn or lane lists (`1001 2001 2002 0001`, `f001`); w4 is 0,
-0x80 or 0x140 on roads. A node on a parcel edge has a last entry with class `0x8898` plus
-the side in the top bits (0x8 top, 0xa right, 0xc bottom, 0xe left), whose "other node" is
+coordinate in the low 11 bits, `u16 y` with the node's class in the top nibble (the lowest
+link class among its entries) and the coordinate in the low 11 bits, a flag word (0x2000 on a
+level-1 node that also exists at level 2: 4,822 of 4,822 flagged nodes in three tiles have a
+level-2 twin, 98 of 44,662 unflagged ones do),
+then per entry `other node index, w4, w5, link id, class, a, b` and
+`((w5 >> 6) & 0x3f) + (w5 & 0xf)` extra words. The class word is the far node's class in the
+high byte and the link's class word in the low byte (`0x0598` is a class-8 link reaching a
+class-5 node). The link id carries `0x2000` at the end with the larger y. `a` is the travel
+time and `b` the length (`rd_encode.cost_words`). Extra words look like turn or lane lists
+(`1001 2001 2002 0001`, `f001`); w4 is the same at both ends of a link (0, 0x80, 0x2, 0x140
+...), and w5's top bits `0x8000`/`0x4000` at opposite ends of 5% of level-2 links look like
+one-way marks. A node on a parcel edge has a last entry whose class word is the side in the
+top bits (0x8 top, 0xa right, 0xc bottom, 0xe left), the node's own class, then the low byte
+of its link's class word, and whose "other node" is
 an index in the neighbouring parcel. Curvature is shape nodes of degree 2; there is no
 separate geometry, and the background records carry no road lines.
 

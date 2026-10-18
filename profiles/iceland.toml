@@ -8,6 +8,7 @@
 
 name = "iceland"
 description = "Iceland on a 2017 or 2014 European database"
+country = 352            # ISO 3166 numeric; every road record carries it
 
 [source]
 # The OSM extract and what is derived from it. Not shipped with the tools.
