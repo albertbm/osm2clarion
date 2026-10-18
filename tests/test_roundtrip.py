@@ -843,13 +843,13 @@ class TestRoadChains(unittest.TestCase):
     def test_a_bend_is_not_a_graph_node(self):
         P = self.parcel([self.WAY])
         self.assertEqual(len(P['links']), 1, 'one way run, one link')
-        self.assertEqual(len(P['links'][0][7]), 3, 'the three bends ride inside the link')
+        self.assertEqual(len(P['links'][0][8]), 3, 'the three bends ride inside the link')
         self.assertEqual(len(P['nodes']), 2, 'only the two ends are nodes')
 
     def test_no_chain_puts_a_node_at_every_point(self):
         P = self.parcel([self.WAY], chain=False)
         self.assertEqual(len(P['links']), 4)
-        self.assertEqual([len(l[7]) for l in P['links']], [0, 0, 0, 0])
+        self.assertEqual([len(l[8]) for l in P['links']], [0, 0, 0, 0])
         self.assertEqual(len(P['nodes']), 5)
 
     def test_a_junction_splits_the_link_and_not_the_shape(self):
@@ -860,7 +860,7 @@ class TestRoadChains(unittest.TestCase):
         P = self.parcel([self.WAY, side])
         mine = [l for l in P['links'] if l[3] == self.WAY['id']]
         self.assertEqual(len(mine), 2, 'the junction splits the run')
-        self.assertEqual(len({l[8] for l in mine}), 1, 'both links keep one chain id')
+        self.assertEqual(len({l[9] for l in mine}), 1, 'both links keep one chain id')
         chains = [c for c in rd_build.chains_of(P['links'], P['index']) if len(c) == 2]
         self.assertEqual(len(chains), 1, 'one shape of two links')
         npts = 1 + sum(len(inner) + 1 for _, _, _, inner in chains[0])

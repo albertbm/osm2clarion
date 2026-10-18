@@ -9,6 +9,7 @@
     --no-l2-graph                  leave out the section-2 level-2 directories
     --no-l2-names                  level-2 shapes without names
     --no-chain                     a graph node at every point, two points per shape
+    --turn-restrictions turns.json turn prohibitions from osm_turns.py; none unless given
 
 roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut at parcel
 edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
@@ -85,7 +86,7 @@ MAX_POINTS = 64   # points per shape; a chain breaks at a link boundary before e
 
 def build_graphs(ways, cell, level=1, chain=True):
     """Per parcel: nodes {key: ...} and links [(from key, to key, length, way id, name, hw,
-    ref, inner points, chain id)]. With chain, a point is a graph node only where ways meet
+    ref, maxspeed, inner points, chain id)]. With chain, a point is a graph node only where ways meet
     or end and the bends between nodes ride inside the link as its inner points, which is
     how the factory writes them. Without, every point is a node and every link two points,
     so the matcher sees a junction at every bend."""
@@ -118,7 +119,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                     for key, p in (part[0], part[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
                     length = sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
                     P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
-                                       wy['hw'], wy.get('ref'), [k for k, _ in part[1:-1]], rid))
+                                       wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid))
         del P['runs'], P['touch']
         if chain: P['links'] = chain_links(P['links'])
     # edge nodes: coordinate on a parcel border; find the twin in the neighbour
@@ -140,9 +141,9 @@ def chain_links(links):
     and ref also ends at, the two are joined, so an OSM way split at an attribute change
     draws on as one road. A chain never closes on itself."""
     chains = {}
-    for l in links: chains.setdefault(l[8], []).append(l)
+    for l in links: chains.setdefault(l[9], []).append(l)
     def key(c): return (c[0][5], c[0][4], c[0][6])
-    def flip(c): return [(l[1], l[0]) + l[2:7] + (l[7][::-1], l[8]) for l in reversed(c)]
+    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9]) for l in reversed(c)]
     ends = collections.defaultdict(list)                     # node -> [(chain id, 'a' start | 'b' end)]
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -162,7 +163,7 @@ def chain_links(links):
     for c in chains.values():
         # a closed way (roundabout, turning circle) is two shapes, as the factory draws them
         for part in ([c[:len(c) // 2], c[len(c) // 2:]] if c[0][0] == c[-1][1] and len(c) > 1 else [c]):
-            out += [l[:8] + (cid,) for l in part]; cid += 1
+            out += [l[:9] + (cid,) for l in part]; cid += 1
     return out
 
 def neighbour(pc, side):
@@ -180,20 +181,49 @@ def label(name, ref):
     parts = ([f'1={name}'] if name else []) + ([f'2={ref}'] if ref else [])
     return ';'.join(parts)
 
+def map_turns(parcels, turns, level=1):
+    """OSM turn restrictions as {parcel: [(node index, from link index, to link index)]}, and
+    a Counter of what was dropped and why.
+
+    The regulation record needs link numbers at one node of one parcel, so a restriction is
+    used only when its via point quantises onto a graph node and each of its two ways has
+    exactly one link there. A way that runs straight through the node has two, and the
+    approach direction is then ambiguous, so it is dropped rather than guessed."""
+    out = {}; stats = collections.Counter(); inc = {}
+    for pc, P in parcels.items():
+        m = {}
+        for li, l in enumerate(P['links']):
+            for key in (l[0], l[1]): m.setdefault(P['index'][key], []).append((li, l[3]))
+        inc[pc] = m
+    for r in turns:
+        lon, lat = r['via']
+        pc = parcel_of(lon, lat, level)
+        P = parcels.get(pc)
+        if P is None: stats['via outside this cell'] += 1; continue
+        nd = P['index'].get(quant((lon, lat), pc, level))
+        if nd is None: stats['via is not a graph node'] += 1; continue
+        cand = inc[pc].get(nd, [])
+        f = sorted({li for li, w in cand if w == r['from']})
+        t = sorted({li for li, w in cand if w == r['to']})
+        if not f or not t: stats['from or to link not at the node'] += 1; continue
+        if len(f) > 1 or len(t) > 1: stats['way runs through the node, ambiguous'] += 1; continue
+        out.setdefault(pc, []).append((nd, f[0], t[0])); stats['mapped'] += 1
+    return out, stats
+
 def chains_of(links, idx, chain=True):
     """Shapes as [(link id, from index, to index, inner points)] chains: consecutive links of
     one way run, broken where the next link would take the shape past MAX_POINTS."""
     chains = []; npts = 0
     for lid, l in enumerate(links, start=1):
-        item = (lid, idx[l[0]], idx[l[1]], l[7]); n = len(l[7]) + 1
-        if chain and chains and links[lid - 2][8] == l[8] and npts + n <= MAX_POINTS:
+        item = (lid, idx[l[0]], idx[l[1]], l[8]); n = len(l[8]) + 1
+        if chain and chains and links[lid - 2][9] == l[9] and npts + n <= MAX_POINTS:
             chains[-1].append(item); npts += n
         else:
             chains.append([item]); npts = n + 1
     return chains
 
-def encode_parcels(parcels, level=1, no_names=False, chain=True):
-    out = {}
+def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
+    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = 0
     for pc, P in parcels.items():
         keys = P['order']; idx = P['index']
         nodes = list(keys)
@@ -210,7 +240,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True):
                     cands = [(abs(k[0] - tw[0]) + abs(k[1] - tw[1]), i) for k, i in parcels[npc]['index'].items() if (k[0] == tw[0] if nd['edge'] in ('left', 'right') else k[1] == tw[1])]
                     twin = min(cands)[1] if cands else None
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
-        out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges, classes=[l[5] for l in P['links']])
+        out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
+                                               classes=[l[5] for l in P['links']],
+                                               speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
+                                               regs=(regs or {}).get(pc))
+        encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
+        encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         # drawn geometry: one shape per chain of links, each pointing at its street's label entry
         chains = chains_of(P['links'], idx, chain)
         hws = [P['links'][c[0][0] - 1][5] for c in chains]
@@ -277,6 +312,9 @@ def main():
     if no_chain: argv.remove('--no-chain')
     if '--l2-classes' in argv:
         i = argv.index('--l2-classes'); l2 = clarion_profile.l2_classes(argv[i + 1]); del argv[i:i + 2]
+    turns = []
+    if '--turn-restrictions' in argv:
+        i = argv.index('--turn-restrictions'); turns = json.load(open(argv[i + 1])); del argv[i:i + 2]
     src, dest, cell = argv[:3]
     rpath = argv[3] if len(argv) > 3 else P.roads
     if not rpath:
@@ -292,7 +330,8 @@ def main():
         # factory's chained level-2 form has a header this file has not decoded
         chain = level == 1 and not no_chain
         parcels = build_graphs(subset, cell, level, chain)
-        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain)
+        regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
+        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs)
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
@@ -300,6 +339,10 @@ def main():
             per_dir.setdefault((y, x), {}).setdefault(row, {})[col] = (plain, comp)
         for (y, x), rows in sorted(per_dir.items()):
             if not (level == 2 and no_l2_graph): lv['dirs'].append(rd_encode.make_dir(level, y, x, rows))
+        if not lv['dirs'] and not (level == 2 and no_l2_graph):
+            # once any tile on the card has roads, a tile that declares none at this level
+            # hangs the first map draw; one directory with no records is enough
+            lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}))
         bydir = {(D['y'], D['x']): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
         placed = place_shapes(recs, bydir)
         PW, PH = PSIZE[level]
@@ -318,6 +361,10 @@ def main():
             report.append(f'  shapes {len(shapes)}: points/shape median {pts[len(pts)//2]} '
                           f'mean {sum(pts)/len(pts):.2f} max {pts[-1]}, '
                           f'multi-link {100 * multi / len(shapes):.1f}%')
+        if tstats is not None:
+            report.append('  turn restrictions: %d of %d written, %d dropped in the encoder; %s'
+                          % (encode_parcels.regs_written, len(turns), encode_parcels.regs_dropped,
+                             ', '.join('%s %d' % kv for kv in tstats.most_common()) or 'none mapped'))
     nw, _, _ = clarion_tile.table_words(sec2); sec2['count'] = -(-2 * nw // 256)
     hdr = bytearray(t['header'])
     p = 0x1ac + 2; groups = hdr[p - 2] << 8 | hdr[p - 1]
