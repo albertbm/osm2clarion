@@ -11,8 +11,39 @@ data that nothing on this card reads at those levels.
     ./lev_roads.py --profile iceland IN.DAT OUT.DAT [roads.json]
     --classes motorway,trunk,primary   overrides the profile's coarse set
     --simplify METRES                  level-4 tolerance; level 3 uses a quarter of it
+
+That in-place pass edits an existing coarse file, appending what it rewrites. The
+clean-room coarse file is written whole by lev_build.py, which calls build() below for
+its road shapes; that is the path the generated cards use.
+
+The coarse road shape, as build() writes it and check() verifies it on stock files:
+Road shapes for the coarse map file: levels 3, 4 and 5 of LEV3456R.DAT.
+
+Level 3 draws at 2 and 4 km, level 4 at 10 and 16 km, level 5 at 64 km (docs/LEVEL5.md).
+Levels 3 and 4 keep road shapes in their own record, kind 0x00fa in the even pair beside the
+background record; level 5 keeps them as a road block inside the background record. All
+three use the level-2 record layout: eleven layer pairs, roads of classes 3 to 7 in layer 6
+and 0 to 2 in layer 7. Labels are route numbers only, `2=REF` in the background record's
+names section, one sub-table item per shape: every coarse label on the 2015 card reads that
+way (3,065 at level 5, 13,231 at level 4, 64,902 at level 3).
+
+A shape: length in words (0x2000 / 0x4000 add one / two header words), 0x8000 | points
+(level 3: points alone), class << 12, word 3, the name entry's word offset or 0xffff, 0, 0,
+then the start point and the links. Levels 4 and 5 open every link with its id; level 3
+carries no ids. x flags, as at level 2 without the style word:
+
+    0x2000  first point of a link (levels 4 and 5; level 3 has none)
+    0x1000  the link goes on past this point, or the shape's last point
+    0x0800  this point does not end a link, and the start point
+
+A link end inside the shape clears 0x1000 and 0x0800, and at levels 4 and 5 carries 0x0800
+on its y, which says a link header follows. The start's y has 0x0800 at levels 4 and 5.
+encode(decode(words)) gives the factory words back for every shape decode() accepts:
+check() runs it over a stock coarse file.
+
+    ./lev_roads.py --check STOCK_LEV3456R.DAT
 """
-import json, math, os, sys, struct, zlib
+import collections, json, math, os, sys, struct, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import lev_coarse, clarion_bg, clarion_profile, rd_build
 from clarion_tile import addr_of, enc_addr, pad256
@@ -217,8 +248,291 @@ def add_level3(d, parcels):
     return added
 
 
+
+# ---- the clean-room coarse roads: lev_build.py --roads ----
+
+GRAMMAR_Y = 0x2800       # y bits the grammar sets: header follows (0x0800), style follows (0x2000)
+
+
+def header_len(w0):
+    return 7 + (1 if w0 & 0x2000 else 0) + (2 if w0 & 0x4000 else 0)
+
+
+def decode(words, level):
+    """A shape as dict(head, links=[(id or None, [(x, y, ybits)])]); ybits are y's bits
+    outside the grammar, kept as found. None if it does not follow the grammar."""
+    L = words[0] & 0x1fff
+    if L != len(words): return None
+    h = header_len(words[0])
+    head = list(words[1:h])
+    npts = words[1] & (0x3fff if level != 3 else 0x3fff)
+    q = h
+    sx, sy = words[q], words[q + 1]; q += 2
+    if sx & 0xf800 != 0x0800: return None
+    ids = level != 3
+    if ids and sy & GRAMMAR_Y != 0x0800: return None
+    if not ids and sy & GRAMMAR_Y: return None
+    start = (sx & 0x7ff, sy & 0x7ff, sy & ~(0x7ff | GRAMMAR_Y) & 0xffff)
+    links = []; prev_y = sy
+    while q < L:
+        lid = None
+        if ids:
+            if not prev_y & 0x0800 or prev_y & 0x2000: return None
+            lid = words[q]; q += 1
+        pts = []
+        while q + 1 < L + 1:
+            if q + 1 >= L: return None
+            x, y = words[q], words[q + 1]; q += 2
+            first = not pts
+            last = q >= L
+            end = not x & 0x1000
+            pts.append((x & 0x7ff, y & 0x7ff, y & ~(0x7ff | GRAMMAR_Y) & 0xffff))
+            prev_y = y
+            if end or last: break
+        links.append((lid, pts))
+        if q >= L: break
+    s = dict(head=head, start=start, links=links)
+    return s if encode(s, level) == list(words) else None
+
+
+def encode(s, level):
+    """Words of a shape from decode()'s form."""
+    ids = level != 3
+    sx, sy, sb = s['start']
+    out = list(s['head']) + [0x0800 | sx, sy | sb | (0x0800 if ids else 0)]
+    n = len(s['links'])
+    for i, (lid, pts) in enumerate(s['links']):
+        if ids: out.append(lid)
+        for k, (x, y, yb) in enumerate(pts):
+            link_end = k == len(pts) - 1; chain_end = i == n - 1
+            xf = (0x2000 if k == 0 and ids else 0) | (0 if link_end and not chain_end else 0x1000) \
+                 | (0 if link_end else 0x0800)
+            yf = 0x0800 if link_end and not chain_end and ids else 0
+            out += [xf | x, y | yb | yf]
+    hl = 1 + len(s['head'])
+    L = len(out) + 1
+    w0 = L | (0x2000 if hl == 8 else 0x4000 if hl == 9 else 0x6000 if hl == 10 else 0)
+    return [w0] + out
+
+
+def shape(level, cls, links, name_off=0xffff):
+    """A shape from points: links is [[(x, y), ...], ...], the first point of the first link
+    being the shape's start, each later link starting where the previous ended (that point
+    not repeated). Named shapes carry word 3 0 and plain y words; unnamed ones word 3 0x3000
+    and 0x4000 on every y, the two commonest factory forms at levels 3 and 4."""
+    named = name_off != 0xffff
+    yb = 0 if named else 0x4000
+    start = links[0][0]
+    body = [[(x, y, yb) for x, y in links[0][1:]]] + [[(x, y, yb) for x, y in l] for l in links[1:]]
+    npts = 1 + sum(len(b) for b in body)
+    head = [(0x8000 if level != 3 else 0) | npts, cls << 12, 0 if named else 0x3000, name_off, 0, 0]
+    ids = list(range(1, len(body) + 1)) if level != 3 else [None] * len(body)
+    return encode(dict(head=head, start=(start[0], start[1], yb), links=list(zip(ids, body))), level)
+
+
+def shapes_of(w, g):
+    """(layer, words) for every shape of a level-2 layout unit starting at word g."""
+    out = []
+    for li in range(11):
+        off, cnt = w[g + 2 * li], w[g + 1 + 2 * li]
+        if off == 0xffff: continue
+        q = g + 2 * off
+        for _ in range(cnt):
+            L = w[q] & 0x1fff
+            out.append((li, w[q:q + L])); q += L
+    return out
+
+
+def factory_shapes(lev):
+    """(level, layer, words) for every road shape of a coarse file read by lev_file.read."""
+    for L in lev['sections'][0]['levels']:
+        if L['level'] not in (3, 4, 5): continue
+        for D in L['dirs']:
+            for row in D['rows'] or []:
+                if not row: continue
+                for k, r in enumerate(row):
+                    if r is None or 'plain' not in r: continue
+                    p = r['plain']
+                    if len(p) < 44: continue
+                    w = struct.unpack('>%dH' % (len(p) // 2), p)
+                    if w[2] != 0x00fa: continue
+                    if L['level'] == 5:
+                        if w[7] in (0, 0xffff): continue
+                    elif D['pairs'] != 2 * D['cols'] or k % 2: continue
+                    for li, s in shapes_of(w, 2 * w[7]):
+                        yield L['level'], li, list(s)
+
+
+# OSM highway -> coarse class is CLASS_CODE3 above: the top nibble of shape word 2
+LEVEL_CLASSES = {3: {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'motorway_link', 'trunk_link',
+                     'primary_link', 'secondary_link', 'tertiary_link'},
+                 4: {'motorway', 'trunk', 'primary', 'secondary'},
+                 5: {'motorway', 'trunk', 'primary', 'secondary'}}
+# Douglas-Peucker in metres per level. The quantum is about 12 x 18 m at level 3, 48 x 72 m
+# at 4 and 190 x 290 m at 5 (64 N); factory segments run a median 218, 201 and 290 m.
+TOLERANCE = {3: 10.0, 4: 40.0, 5: 150.0}
+MAXPTS = 60
+LAYER = 6                 # classes 3 to 7 at every coarse level; 0 to 2 would go in 7
+DIR_MESHES = {3: 8, 4: 88, 5: 88}
+GRID = {3: 16, 4: 44, 5: 11}
+
+
+def chains(ways):
+    """Join ways that meet end to end and share a class and a route number (or a name) into
+    one run, so a route split into many OSM ways draws as a few long shapes."""
+    groups = collections.defaultdict(list)
+    for w in ways:
+        groups[(CLASS_CODE3[w['hw']], w.get('ref') or w.get('name') or ('way', w['id']))].append(w)
+    out = []
+    for (cls, key), gw in groups.items():
+        ends = collections.defaultdict(list)
+        for i, w in enumerate(gw):
+            for e in (0, -1): ends[tuple(w['nodes'][e])].append(i)
+        left = set(range(len(gw)))
+        while left:
+            i = next((i for i in sorted(left) if any(len(ends[tuple(gw[i]['nodes'][e])]) == 1 for e in (0, -1))),
+                     min(left))
+            left.discard(i)
+            pts = [tuple(p) for p in gw[i]['nodes']]
+            for _ in range(2):
+                while True:
+                    nxt = [j for j in ends.get(pts[-1], []) if j in left]
+                    if not nxt: break
+                    j = nxt[0]; left.discard(j)
+                    seg = [tuple(p) for p in gw[j]['nodes']]
+                    if seg[-1] == pts[-1]: seg.reverse()
+                    pts += seg[1:]
+                pts.reverse()
+            out.append(dict(hw=gw[i]['hw'], cls=cls, ref=gw[i].get('ref'), nodes=pts))
+    return out
+
+
+def parcel_runs(pts, level, origin):
+    """Per parcel, the polyline's runs inside it in parcel units. A parcel key is (directory
+    y0, x0, row, col)."""
+    import clarion_bg
+    oy, ox = origin
+    lon0, lat0, w, h = clarion_bg.parcel_geo(level, oy, ox, 0, 0)
+    n = GRID[level]; m = DIR_MESHES[level]
+    def key(lon, lat):
+        r, c = int((lat - lat0) // h), int((lon - lon0) // w)
+        return (oy + m * (r // n), ox + m * (c // n), r % n, c % n)
+    def q(p, k):
+        x0, y0, pw, ph = clarion_bg.parcel_geo(level, *k)
+        return (max(0, min(2047, round((p[0] - x0) / pw * 2048))), max(0, min(2047, round((p[1] - y0) / ph * 2048))))
+    out = []; cur = None; run = []
+    for a, b in zip(pts, pts[1:]):
+        seg = [a]; cr = []
+        for step, i, base in ((w, 0, lon0), (h, 1, lat0)):
+            if a[i] == b[i]: continue
+            k = math.floor((min(a[i], b[i]) - base) / step) + 1
+            while base + k * step < max(a[i], b[i]):
+                cr.append((base + k * step - a[i]) / (b[i] - a[i])); k += 1
+        for t in sorted(c for c in cr if 0 < c < 1):
+            seg.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
+        seg.append(b)
+        for p0, p1 in zip(seg, seg[1:]):
+            k = key((p0[0] + p1[0]) / 2, (p0[1] + p1[1]) / 2)
+            if k != cur:
+                if cur is not None and len(run) > 1: out.append((cur, run))
+                cur = k; run = [q(p0, k)]
+            e = q(p1, k)
+            if e != run[-1]: run.append(e)
+    if cur is not None and len(run) > 1: out.append((cur, run))
+    return out
+
+
+def record(code, shapes, country):
+    """A level-3 or level-4 road-shape record: the level-2 layout, shapes in layer 6, word
+    20 the country (02d4, Spain, on the Canary Islands' records)."""
+    unit = [0xffff, 0x0000] * 11
+    if shapes: unit[2 * LAYER], unit[2 * LAYER + 1] = 11, len(shapes)
+    for sh in shapes: unit += sh
+    if len(unit) % 2: unit.append(0)
+    w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2,
+         0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0, country, 0]
+    return struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
+
+
+def road_block(plain, shapes, country):
+    """A level-5 background record with a road block put in front of its background, which
+    moves to w9/w10; names and the rest come through as they were."""
+    w = list(struct.unpack_from('>22H', plain, 0))
+    assert w[2] == 0x00fa and w[7] == 0xffff and w[9] not in (0, 0xffff), 'not a level-5 background record'
+    unit = [0xffff, 0x0000] * 11
+    unit[2 * LAYER], unit[2 * LAYER + 1] = 11, len(shapes)
+    for sh in shapes: unit += sh
+    if len(unit) % 2: unit.append(0)
+    road = struct.pack('>%dH' % len(unit), *unit)
+    assert w[9] == 11, 'the background must follow the header directly'
+    shift = len(road) // 4
+    for i in (9, 11, 13, 15, 17):
+        if w[i] not in (0, 0xffff): w[i] += shift
+    w[7], w[8] = 11, shift
+    w[20] = country
+    return struct.pack('>22H', *w) + road + plain[44:]
+
+
+def build(levels, ways, origin, country):
+    """Put road shapes into a coarse file's section-1 directories, as lev_build lays them
+    out: levels {level: [directory]}, rows of records {'plain': bytes}, background in the
+    last pair of each column. Returns {level: (records, shapes, points, labels)}."""
+    import fa_encode, rd_build
+    stats = {}
+    for level in (3, 4, 5):
+        sel = [dict(w) for w in ways if w['hw'] in LEVEL_CLASSES[level]]
+        runs = chains(sel)
+        for r in runs: r['nodes'] = rd_build.simplify([list(p) for p in r['nodes']], TOLERANCE[level])
+        per = collections.defaultdict(list)
+        for r in runs:
+            for k, run in parcel_runs(r['nodes'], level, origin):
+                for i in range(0, len(run) - 1, MAXPTS - 1):
+                    piece = run[i:i + MAXPTS]
+                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece))
+        dirs = {(D['y'] if level == 3 else origin[0], (D['x'] if level == 3 else origin[1])): D for D in levels[level]}
+        nrec = nsh = npt = nlab = 0
+        for (y0, x0, row, col), items in sorted(per.items()):
+            D = dirs.get((y0, x0))
+            if D is None or D['rows'][row] is None: continue
+            ppc = D['pairs'] // D['cols']
+            bg = D['rows'][row][col * ppc + ppc - 1]
+            if bg is None: continue
+            labels = list(dict.fromkeys('2=' + ref for _, ref, _ in items if ref))
+            _, offs = fa_encode.names_section(labels, [])
+            shapes = [shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff) for cls, ref, piece in items]
+            subs = [fa_encode.item_words(sh, 2, sh[4], country) for sh in shapes]
+            section, _ = fa_encode.names_section(labels, subs)
+            plain = rd_build.merge_names(bg['plain'], section)
+            if level == 5:
+                D['rows'][row][col] = dict(plain=road_block(plain, shapes, country))
+            else:
+                code = struct.unpack_from('>2H', plain, 0)
+                D['rows'][row][col * ppc + ppc - 1] = dict(plain=plain)
+                D['rows'][row][col * ppc] = dict(plain=record(code, shapes, country))
+            nrec += 1; nsh += len(shapes); npt += sum(len(p) for _, _, p in items); nlab += len(labels)
+        stats[level] = (nrec, nsh, npt, nlab)
+    return stats
+
+
+def check(path):
+    import lev_file
+    lev = lev_file.read(open(path, 'rb').read())
+    n = collections.Counter(); ok = collections.Counter(); forms = collections.Counter()
+    for level, layer, words in factory_shapes(lev):
+        n[level] += 1
+        s = decode(words, level)
+        if s: ok[level] += 1; forms[(level, len(s['links']) > 1)] += 1
+    for level in sorted(n):
+        print('level %d: %d shapes, %d re-encode to the same words (%.2f%%), %d of them multi-link'
+              % (level, n[level], ok[level], 100 * ok[level] / n[level], forms[(level, True)]))
+    return n, ok
+
+
 def main():
     argv = sys.argv[1:]
+    if argv[:1] == ['--check']:
+        for p in argv[1:]: check(p)
+        return
     P = clarion_profile.take_arg(argv)
     use_profile(P)
     classes = P.coarse_classes

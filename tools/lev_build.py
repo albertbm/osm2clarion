@@ -14,7 +14,12 @@ tiles need.
 
 Parcels outside the profile's cells are left absent. The sea label goes on level 3 only.
 
-    lev_build.py --profile iceland [--coastline PATH] --data-version yy/mm/dd/nn OUT.DAT
+    lev_build.py --profile iceland [--coastline PATH] [--roads roads.json] --data-version yy/mm/dd/nn OUT.DAT
+
+--roads adds road shapes at levels 3, 4 and 5 (lev_roads.build): the road-shape record in the
+even pair of a level-3 or level-4 column, a road block inside a level-5 record, and route
+numbers in the background records' names sections. Section 2 stays empty: the coarse graph
+is routing data and is not written.
 """
 import os
 import sys
@@ -23,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shapely.geometry import box  # noqa: E402
 
 import bg_encode  # noqa: E402
+import lev_roads  # noqa: E402
 import bg_tiles  # noqa: E402
 import clarion_bg  # noqa: E402
 import clarion_profile  # noqa: E402
@@ -110,7 +116,7 @@ def directory(level, y0, x0, recs, labels):
     return D
 
 
-def build(P, coast_path, data_version):
+def build(P, coast_path, data_version, ways=None):
     bg_tiles.use_profile(P)
     land, _, _ = bg_tiles.load_land(coast_path)
     dby0, dbx0 = P.mesh_origin
@@ -145,6 +151,10 @@ def build(P, coast_path, data_version):
     print('level 3: %d directories, %d parcels' % (
         len(levels[3]), sum(r is not None for D in levels[3] for row in D['rows'] if row for r in row)))
 
+    if ways:
+        for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country).items()):
+            print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
+
     cells = arcmin(cy0, cy1, cx0, cx1)
     sec1 = dict(id=1, levels=[dict(level=l, typ=t, dirs=levels.get(l, [])) for l, t in tile_header.LEVELS[1]])
     sec2 = dict(id=2, levels=[dict(level=l, typ=t, dirs=[]) for l, t in tile_header.LEVELS[2]])
@@ -162,10 +172,16 @@ def main(argv):
         i = argv.index('--coastline')
         coast = argv[i + 1]
         del argv[i:i + 2]
+    ways = None
+    if '--roads' in argv:
+        import json
+        i = argv.index('--roads')
+        ways = json.load(open(argv[i + 1]))
+        del argv[i:i + 2]
     i = argv.index('--data-version')
     version = argv[i + 1]
     del argv[i:i + 2]
-    out = build(P, coast, version)
+    out = build(P, coast, version, ways)
     with open(argv[0], 'wb') as f:
         f.write(out)
     print('wrote %s %d B' % (argv[0], len(out)))

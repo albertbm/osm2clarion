@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) that sits in the even pair of a level-1 background
 directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
-(w17, w18) = a 5-dword tail table, w19 0x8104, w20 0x017c. Geometry unit: u16 count, twelve
+(w17, w18) = a 5-dword tail table, w19 0x8104, w20 the ISO country code. Geometry unit: u16 count, twelve
 (u16 offset in dwords from the unit start, u16 shape count) layer pairs, a pad word, then the
 shapes. Roads sit in the layer their class belongs to (layer 7 for classes 1-2, 6 for 3-6,
 5 for 8, 4 for 9, 0 for ferries), and the class is the top nibble of shape word 2. A shape:
@@ -102,7 +102,13 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
     of crossing lines. Tromso sets it on all 30,690 points that do not end a link and
     clears it on all 13,338 that do, over 7,520 shapes, with no exceptions. 0x0c00 on a
     link end's y is an earlier reading of the same mark: bit 10 belongs to the coordinate,
-    so that form drew the shape off the parcel. Level 2 is single-link only here."""
+    so that form drew the shape off the parcel.
+
+    Level 2 has no value word and no trailer, and writes the style word on the first link
+    only. Its first-of-link flag is 0x4000 on a link opened by a style word and 0x2000 on
+    one that is not; 0x1000 and 0x0800 mean what they do at level 1. Counted on 102,671
+    level-2 shapes of B58R060R and B50R060R (214-062), no exceptions in the forms written
+    here."""
     if cls is None: cls = 8 if level == 1 else 7
     if styles is None or level != 1: styles = [STYLE] * len(chain)
     fresh = restyled(styles)
@@ -113,7 +119,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
         if level == 1: out += [styles[n], 0x0100, lid] if fresh[n] else [0x0100, lid]
-        else: out += [0x101e, lid]
+        else: out += [0x101e, lid] if n == 0 else [lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
             first = k == 0; link_end = k == len(pts) - 1; chain_end = n == len(chain) - 1
@@ -123,7 +129,10 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
                       | (0 if link_end else 0x0800))
                 if link_end and not chain_end: y |= 0x2800 if fresh[n + 1] else 0x0800
             else:
-                xf = 0x5000 if first else 0x1000
+                # a link opened by a style word starts 0x4000, one without 0x2000
+                xf = ((0x4000 if n == 0 else 0x2000) if first else 0) \
+                     | (0 if link_end and not chain_end else 0x1000) | (0 if link_end else 0x0800)
+                if link_end and not chain_end: y |= 0x0800
             out += [xf | x, y]; npts += 1
     if level == 1: out += [0x0000]
     body = [0x8000 | npts] + out
@@ -142,21 +151,28 @@ def point_words(chain, level=1, styles=None):
             out.append((q, lid, 'end' if k == len(inner) else 'vertex')); q += 2
     return out
 
-def item_words(shape, level=1, name_off=0xffff):
-    """Names sub-table item for a shape: 0x8000 | 2*(points-2), then constants. Level 2
-    items end with (1, k, name offset), k = 1 named, 0 unnamed."""
+def item_words(shape, level=1, name_off=0xffff, country=None):
+    """Names sub-table item for a shape: 0x8000, its length in words, 0x8000 | 2*(points-2),
+    6, 0x0bc0, the ISO 3166 country code, then constants. Level 2 items end with (1, k, name
+    offset), k = 1 named, 0 unnamed. Word 5 is the country on every factory item read (578
+    Norway and 752 Sweden on B58R060R, 208, 276, 528 on B50R060R); until 19 Oct 2026 this
+    wrote 380 (Italy) at level 1 and 250 (France) at level 2."""
+    assert country, 'item_words needs the country code'
     npts = shape[1] & 0x3fff   # word 1 is 0x8000 | points
-    if level == 1: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, 0x017c, 0xe, 8, 0xd]
+    if level == 1: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 0xe, 8, 0xd]
     named = name_off != 0xffff
-    return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, 0x00fa, 1, 1 if named else 0, name_off if named else 0]
+    return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 1, 1 if named else 0, name_off if named else 0]
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None):
+                 styles=None, country=None):
     """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
     OSM highway value, which picks the layer and class. styles: per chain, the level-1 style
     word of each link (style_word), or None for no posted limit anywhere. Level 1 has twelve layer pairs and a
     pad word, so its data starts at dword 13; level 2 has eleven pairs and starts at 11.
-    Shapes are grouped by layer and each layer's pair gives (offset in dwords, count)."""
+    Shapes are grouped by layer and each layer's pair gives (offset in dwords, count).
+    country: ISO 3166 numeric, header word 20 and every names item; word 20 is the parcel's
+    country on every factory shape record read, both levels (B58R060R, B50R060R)."""
+    assert country, 'build_record needs the country code'
     if hws is None: hws = [None] * len(chains)
     lc = [layer_class(hw, level, layer) for hw in hws]
     if styles is None: styles = [None] * len(chains)
@@ -179,15 +195,16 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     tail = [0x0004, 0x0001, 0xffff, 0x0000, 0xffff, 0x0000, 0xffff, 0x0000, ((len(shapes) + nlinks) & 0xff) << 8 | 1, 0x0000]
     if level == 1:
         w = [code[0], code[1], 0x00fa, 0x347a, 0x2aef, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
-             11 + len(unit) // 2, 5, 0x8104, 0x017c, 0]
+             11 + len(unit) // 2, 5, 0x8104, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>10H', *tail)
     else:
         w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
-             0xffff, 0, 0, 0x00fa, 0]
+             0xffff, 0, 0, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
     c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(plain) + c.flush()
     if len(comp) % 2: comp += b'\0'
-    build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off)) for i in order]
+    build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off), country)
+                               for i in order]
     # where each chain landed, in record words: the address files point at these
     build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
         dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], length=len(shapes[i]),

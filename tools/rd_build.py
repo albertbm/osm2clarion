@@ -5,6 +5,7 @@
     ./rd_build.py --profile iceland TILE_IN TILE_OUT CELL [roads.json]
     --skip service,living_street   OSM classes left out altogether
     --simplify METRES              Douglas-Peucker tolerance
+    --l2-simplify METRES           the same for level 2, level 1's when unset
     --l2-classes wide|narrow|a,b,c which roads reach level 2
     --no-l2-graph                  leave out the section-2 level-2 directories
     --no-l2-names                  level-2 shapes without names
@@ -101,11 +102,13 @@ def build_graphs(ways, cell, level=1, chain=True):
     how the factory writes them. Without, every point is a node and every link two points,
     so the matcher sees a junction at every bend."""
     yb, xb = tile_cell(cell)
+    def inside(pc): return yb <= pc[0] < yb + 8 and xb <= pc[1] < xb + 8
     parcels = {}
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
-            y, x, row, col = pc
-            if not (yb <= y < yb + 8 and xb <= x < xb + 8): continue
+            # the ring of parcels just outside the cell is built too, so an edge node on the
+            # cell's border finds its twin in the next tile; only the cell's own are written
+            if not inside(pc) and not any(inside(neighbour(pc, sd)) for sd in SIDES): continue
             P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter()))
             q = []
             for p in run:
@@ -142,7 +145,13 @@ def build_graphs(ways, cell, level=1, chain=True):
     for pc, P in parcels.items():
         keys = sorted(P['nodes'], key=lambda k: (k[0], k[1]))
         P['order'] = keys; P['index'] = {k: i for i, k in enumerate(keys)}
+        P['ring'] = not inside(pc)
     return parcels
+
+
+def own(parcels):
+    """The parcels of the cell itself, without the ring around it."""
+    return {pc: P for pc, P in parcels.items() if not P['ring']}
 
 def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive, and renumber their chain
@@ -236,8 +245,10 @@ def chains_of(links, idx, chain=True):
     return chains
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
-    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = 0; encode_parcels.index = {}
+    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
+    encode_parcels.index = {}
     for pc, P in parcels.items():
+        if P.get('ring'): continue
         keys = P['order']; idx = P['index']
         nodes = list(keys)
         links = [(idx[a], idx[b], ln) for a, b, ln, *_ in P['links']]
@@ -248,10 +259,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
             if npc in parcels:
                 gx, gy = key
                 tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx, 0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
+                # only the node at the mirrored point: a nearest-node fallback joined two nodes
+                # to one across the edge, which then answered only one of them (18 of 2,266
+                # level-1 edge entries on the capital area); a run that only grazes the
+                # neighbour leaves no twin there, and that end stays a dead end
                 twin = parcels[npc]['index'].get(tw)
-                if twin is None:   # nearest node on that edge of the neighbour
-                    cands = [(abs(k[0] - tw[0]) + abs(k[1] - tw[1]), i) for k, i in parcels[npc]['index'].items() if (k[0] == tw[0] if nd['edge'] in ('left', 'right') else k[1] == tw[1])]
-                    twin = min(cands)[1] if cands else None
+                if twin is None: encode_parcels.no_twin += 1
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
@@ -274,7 +287,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         styles = [[fa_encode.style_word(fa_encode.speed_limit(P['links'][lid - 1][7], SPEED_UNIT)) for lid, *_ in c]
                   for c in chains]
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles)
+                                    styles=styles, country=COUNTRY)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, chains, P['links'],
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
@@ -350,6 +363,8 @@ def main():
         i = argv.index('--skip'); skip = set(argv[i + 1].split(',')); del argv[i:i + 2]
     if '--simplify' in argv:
         i = argv.index('--simplify'); tol = float(argv[i + 1]); del argv[i:i + 2]
+    if '--l2-simplify' in argv:
+        i = argv.index('--l2-simplify'); P.l2_simplify_metres = float(argv[i + 1]); del argv[i:i + 2]
     if '--no-l2-graph' in argv: argv.remove('--no-l2-graph'); no_l2_graph = True
     if '--l2-graph' in argv: argv.remove('--l2-graph'); no_l2_graph = False
     if '--no-l2-names' in argv: argv.remove('--no-l2-names'); no_l2_names = True
@@ -374,17 +389,24 @@ def main():
         shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
         junctions = {p for p, n in shared.items() if n > 1}
         for w in ways: w['nodes'] = simplify(w['nodes'], tol, junctions)
+    ways2 = [dict(w) for w in ways if w['hw'] in l2]
+    tol2 = P.l2_simplify_metres if P.l2_simplify_metres is not None else tol
+    if tol2:
+        shared = collections.Counter(tuple(p) for w in ways2 for p in w['nodes'])
+        junctions = {p for p, n in shared.items() if n > 1}
+        for w in ways2: w['nodes'] = simplify(w['nodes'], tol2, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
     boxes = {}; report = []
-    for level, subset in ((1, ways), (2, [w for w in ways if w['hw'] in l2])):
-        # level 2 keeps one two-point shape per link: the matcher reads level 1 only, and the
-        # factory's chained level-2 form has a header this file has not decoded
-        chain = level == 1 and not no_chain
+    for level, subset in ((1, ways), (2, ways2)):
+        # both levels chain: a graph node only where roads meet, the bends inside the links,
+        # as factory level-2 shapes are (median 3 points, 24% multi-link on B58R060R/B50R060R)
+        chain = not no_chain
         parcels = build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs)
         if level == 1: index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
+        parcels = own(parcels)
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
@@ -405,6 +427,9 @@ def main():
             boxes[level] = (math.ceil(max(lats) * 60), math.floor(min(lats) * 60),
                             math.floor(min(lons) * 60), math.ceil(max(lons) * 60))
         counts = sorted(len(Q['nodes']) for Q in parcels.values()) or [0]
+        if encode_parcels.no_twin:
+            report.append(f'level {level}: {encode_parcels.no_twin} edge nodes with no node at the mirrored point '
+                          f'across the edge, left without an edge entry')
         report.append(f'level {level}: {len(recs)} parcels in {len(lv["dirs"])} dirs, '
                       f'{sum(len(Q["nodes"]) for Q in parcels.values())} nodes, shapes placed {placed}, '
                       f'nodes/parcel median {counts[len(counts)//2]} max {counts[-1]}')
@@ -446,6 +471,20 @@ def main():
         if bad: sys.exit(1)
 
 
+def merge_names(plain, section):
+    """A background record with a road names section merged in: the road labels first, then
+    the labels it already had, and the road section's sub-table, one item per shape."""
+    r = clarion_bg.parse_record(plain)
+    old = r['sections'].get('names'); keep = labels_unpadded(old[24:4 * struct.unpack_from('>H', old, 8)[0]] if struct.unpack_from('>H', old, 8)[0] != 0xffff else old[24:]) if old else b''
+    hdr = bytearray(section[:24]); nl = struct.unpack_from('>H', section, 2)[0]
+    sub_off = struct.unpack_from('>H', section, 8)[0]; labels = section[24:4 * sub_off]; sub = section[4 * sub_off:]
+    body = labels_unpadded(labels) + keep
+    while len(body) % 4: body += b'\0'
+    struct.pack_into('>H', hdr, 2, nl + count_labels(keep)); struct.pack_into('>H', hdr, 8, (24 + len(body)) // 4)
+    r['sections']['names'] = bytes(hdr) + body + sub
+    return clarion_bg.build_record(r)
+
+
 def place_shapes(recs, bydir):
     """Road-shape records into the even pairs of the background directories, names into the
     background records (road names first, then whatever was there)."""
@@ -461,15 +500,8 @@ def place_shapes(recs, bydir):
             s['recs'].insert(bi, dict(k=2 * col, raw=fcomp, words=len(fplain) // 2))
             body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2); s['body'] = bytes(body2); placed += 1
             continue
-        bgrec = s['recs'][bi]; r = clarion_bg.parse_record(zlib.decompress(bgrec['raw']))
-        old = r['sections'].get('names'); keep = labels_unpadded(old[24:4 * struct.unpack_from('>H', old, 8)[0]] if struct.unpack_from('>H', old, 8)[0] != 0xffff else old[24:]) if old else b''
-        hdr = bytearray(section[:24]); nl = struct.unpack_from('>H', section, 2)[0]
-        sub_off = struct.unpack_from('>H', section, 8)[0]; labels = section[24:4 * sub_off]; sub = section[4 * sub_off:]
-        body = labels_unpadded(labels) + keep
-        while len(body) % 4: body += b'\0'
-        struct.pack_into('>H', hdr, 2, nl + count_labels(keep)); struct.pack_into('>H', hdr, 8, (24 + len(body)) // 4)
-        r['sections']['names'] = bytes(hdr) + body + sub
-        newpl = clarion_bg.build_record(r); c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); newc = c.compress(newpl) + c.flush()
+        bgrec = s['recs'][bi]
+        newpl = merge_names(zlib.decompress(bgrec['raw']), section); c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); newc = c.compress(newpl) + c.flush()
         if len(newc) % 2: newc += b'\0'
         bgrec['raw'] = newc; bgrec['words'] = len(newpl) // 2
         s['recs'].insert(bi, dict(k=2 * col, raw=fcomp, words=len(fplain) // 2))
