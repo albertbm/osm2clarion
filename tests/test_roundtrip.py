@@ -804,7 +804,7 @@ class TestRoadShapes(unittest.TestCase):
 
     def test_level1_header(self):
         plain, comp = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains(),
-                                             hws=['motorway', 'residential'])
+                                             hws=['motorway', 'residential'], country=352)
         w, unit = self.unit_words(plain)
         self.assertEqual((w[0], w[1]), clarion_bg.parcel_code(1, 96 * 32 + 7, 898 * 32 + 9))
         self.assertEqual(w[2], 0x00fa)
@@ -813,24 +813,24 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual(w[7], 11, 'the geometry unit sits at dword 11')
         self.assertEqual(w[17], 11 + w[8], 'the tail table follows the geometry unit')
         self.assertEqual(w[18], 5, 'a 5-dword tail')
-        self.assertEqual((w[19], w[20]), (0x8104, 0x017c))
+        self.assertEqual((w[19], w[20]), (0x8104, 352), 'word 20 is the country')
         self.assertEqual(comp[:2], b'\x58\x85')
         self.assertEqual(zlib.decompress(comp), plain)
 
     def test_level2_header(self):
         plain, _ = fa_encode.build_record(2, 96, 898, 7, 9, self.NODES, self.chains(),
-                                          hws=['motorway', 'residential'])
+                                          hws=['motorway', 'residential'], country=352)
         w, _ = self.unit_words(plain)
         self.assertEqual(w[2], 0x00fa)
         self.assertEqual((w[3], w[4]), (0xffff, 0xffff))
         self.assertEqual((w[17], w[18]), (0xffff, 0), 'no tail unit at level 2')
-        self.assertEqual((w[19], w[20]), (0, 0x00fa))
+        self.assertEqual((w[19], w[20]), (0, 352), 'word 20 is the country')
 
     def test_layer_pairs_point_at_the_shapes(self):
         """Twelve pairs and a pad word at level 1, eleven and no count word at level 2."""
         for level, first, npairs in ((1, 1, 12), (2, 0, 11)):
             plain, _ = fa_encode.build_record(level, 96, 898, 7, 9, self.NODES, self.chains(),
-                                              hws=['motorway', 'residential'])
+                                              hws=['motorway', 'residential'], country=352)
             w, unit = self.unit_words(plain)
             pairs = {i: (unit[first + 2 * i], unit[first + 1 + 2 * i]) for i in range(npairs)}
             used = {i: p for i, p in pairs.items() if p[0] != 0xffff}
@@ -847,7 +847,7 @@ class TestRoadShapes(unittest.TestCase):
         for level in (1, 2):
             for hw in ('motorway', 'trunk', 'primary', 'residential', 'service'):
                 plain, _ = fa_encode.build_record(level, 96, 898, 7, 9, self.NODES,
-                                                  self.chains()[:1], hws=[hw])
+                                                  self.chains()[:1], hws=[hw], country=352)
                 w, unit = self.unit_words(plain)
                 first = 1 if level == 1 else 0
                 npairs = 12 if level == 1 else 11
@@ -860,7 +860,7 @@ class TestRoadShapes(unittest.TestCase):
         for chain in (False, True):
             chains = self.chains(chain=chain)
             plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, chains,
-                                              hws=['residential'] * len(chains))
+                                              hws=['residential'] * len(chains), country=352)
             w, unit = self.unit_words(plain)
             off = unit[1 + 2 * 5]
             npts = unit[2 * off + 1] & 0x3fff
@@ -920,7 +920,7 @@ class TestRoadShapes(unittest.TestCase):
 
     def test_names_section(self):
         labels = ['1=Hringvegur;2=R1', '1=Reykjanesbraut']
-        items = [fa_encode.item_words([0, 0x8000 | 5], 1, 12)]
+        items = [fa_encode.item_words([0, 0x8000 | 5], 1, 12, 352)]
         sec, offs = fa_encode.names_section(labels, items)
         self.assertEqual(len(sec) % 4, 0)
         count, nlabels = struct.unpack_from('>HH', sec, 0)
@@ -939,17 +939,19 @@ class TestRoadShapes(unittest.TestCase):
 
     def test_item_words(self):
         shape = [0, 0x8000 | 7]
-        self.assertEqual(fa_encode.item_words(shape, 1)[2], 0x8000 | 2 * (7 - 2))
-        level2 = fa_encode.item_words(shape, 2, name_off=12)
+        self.assertEqual(fa_encode.item_words(shape, 1, country=352)[2], 0x8000 | 2 * (7 - 2))
+        level2 = fa_encode.item_words(shape, 2, name_off=12, country=352)
         self.assertEqual(level2[-3:], [1, 1, 12], 'k = 1 for a named level-2 shape')
-        self.assertEqual(fa_encode.item_words(shape, 2, name_off=0xffff)[-3:], [1, 0, 0])
+        self.assertEqual(fa_encode.item_words(shape, 2, name_off=0xffff, country=352)[-3:], [1, 0, 0])
+        for level in (1, 2):
+            self.assertEqual(fa_encode.item_words(shape, level, country=578)[5], 578, 'word 5 is the country')
 
     def test_hws_must_match_the_chains(self):
         """build_record indexes its shapes by the hws list, so a mismatch is a caller bug.
         It is caught here rather than left to produce a short record."""
         with self.assertRaises(IndexError):
             fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains()[:1],
-                                   hws=['motorway', 'residential'])
+                                   hws=['motorway', 'residential'], country=352)
 
 
 class TestSpeedLimits(unittest.TestCase):
@@ -1002,7 +1004,7 @@ class TestSpeedLimits(unittest.TestCase):
         CH = TestShapeIndex.CHAINS
         st = [[fa_encode.style_word(80), fa_encode.style_word(None)], [fa_encode.style_word(30)]]
         plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, TestShapeIndex.NODES, CH,
-                                          hws=['trunk', 'residential'], styles=st)
+                                          hws=['trunk', 'residential'], styles=st, country=352)
         ix = fa_encode.build_record.last_index
         _, _, shapes = fa_encode.parse_record(plain)
         for S in ix['shapes']:
@@ -1086,7 +1088,7 @@ class TestShapeIndex(unittest.TestCase):
     CHAINS = [[(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])], [(3, 2, 3, [])]]
 
     def test_index_matches_parse(self):
-        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS, hws=['trunk', 'residential'])
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS, hws=['trunk', 'residential'], country=352)
         ix = fa_encode.build_record.last_index
         code, unit, shapes = fa_encode.parse_record(plain)
         self.assertEqual((code, unit), (ix['code'], 22))
@@ -1098,7 +1100,7 @@ class TestShapeIndex(unittest.TestCase):
 
     def test_offsets_follow_kanren(self):
         """K = shape start + 7 - 22 for a shape's first link, I - K = 2N + 1 for N points."""
-        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS[1:], hws=['residential'])
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS[1:], hws=['residential'], country=352)
         S = fa_encode.build_record.last_index['shapes'][0]
         k, i = S['points'][0][0] - 22, S['points'][-1][0] - 22
         self.assertEqual(k, S['at'] + 7 - 22)

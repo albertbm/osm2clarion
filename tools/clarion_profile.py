@@ -63,6 +63,8 @@ class Profile:
 
         rd = data.get('roads', {})
         self.simplify_metres = float(rd.get('simplify_metres', 0))
+        l2s = rd.get('l2_simplify_metres')        # level-2 drawn shapes; level 1's when unset
+        self.l2_simplify_metres = float(l2s) if l2s is not None else None
         self.skip = set(rd.get('skip', []))
         self.l2_graph = bool(rd.get('l2_graph', False))
         self.l2_classes = l2_classes(rd.get('l2_classes', 'wide'))
@@ -144,6 +146,6 @@ if __name__ == '__main__':
     P = load(sys.argv[1] if len(sys.argv) > 1 else 'iceland')
     print(P)
     for k in ('description', 'country', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
-              'west_meshes', 'sea', 'simplify_metres', 'skip', 'l2_classes', 'l2_graph',
+              'west_meshes', 'sea', 'simplify_metres', 'l2_simplify_metres', 'skip', 'l2_classes', 'l2_graph',
               'coarse_classes', 'speed_unit', 'land', 'targets'):
         print('%-22s %s' % (k, getattr(P, k)))

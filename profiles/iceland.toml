@@ -40,6 +40,7 @@ west_meshes = 8          # 8 meshes = 8 deg = one level-5 column, four level-4 c
 simplify_metres = 2        # Douglas-Peucker; the quantisation floor is 0.74 m x 1.13 m at 64N
 skip = []                  # ["service"] drops 31% of the Reykjavik area's road length
 l2_classes = "wide"        # the factory carries ordinary streets at level 2 as class 7
+l2_simplify_metres = 5     # level-2 drawn shapes: about the level-2 quantum, 2.9 m x 4.5 m at 64N
 l2_graph = false           # routing data only, and no router runs at level 2 on this card
 coarse_classes = ["motorway", "trunk", "primary", "motorway_link", "trunk_link", "primary_link"]
 coarse_simplify_metres = 20
