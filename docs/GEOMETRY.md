@@ -219,7 +219,13 @@ clear on most ferries and one-way links (20 Oct 2026, B58R060R and B50R060R: cle
 43,845 one-way links and 6,330 of 1,521,536 two-way ones); bit 6 is unknown and toggles on its
 own along a chain. The shape's point order says nothing about the direction: 22,495 one-way
 links are drawn with the traffic and 21,350 against it. The direction lives in section 2: w5 bit
-0x4000 on the entry at the end traffic leaves, 0x8000 where it arrives (`rd_encode.oneway_bits`). A y with `0x2000`
+0x4000 on the entry at the end traffic leaves, 0x8000 where it arrives (`rd_encode.oneway_bits`),
+and the regulation words say the same again: the arriving entry carries `f0ff` (no entry from
+anyone) and every other link entry at a node with a leaving one-way entry carries `(j << 12) | 0xff`
+for each leaving entry j, itself included (B48R068R-214-066 level 1: 564,232 of 592,734 arriving
+ends, 564,128 of 592,733 leaving entries, 348,552 of 351,247 two-way ones). A regulation list runs
+through the from-entries cyclically from k + 1, so the entry's own word comes last (114,393 of
+114,393 level-2 lists; `rd_encode.oneway_regulations`, `regulation_order`). A y with `0x2000`
 is followed by a style word, so a chain whose limit changes sets `0x2800` on the y of the link
 end before the change and opens the next link with `style, value, id`. Norway has 28,643 such
 restyles and northern England 6,868; every one differs from the word before it, and 20,169 and

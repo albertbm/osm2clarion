@@ -638,6 +638,42 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual((sorted((i, j) for i, j, _ in ow), bad), ([(0, 2), (3, 2)], []))
         self.assertEqual(rd_encode.oneway_bits(-1), (0x8000, 0x4000))
 
+    def test_oneway_regulations(self):
+        """A one-way link's arriving end says no entry from anyone; every other entry at a
+        node with a leaving one-way is barred from it, the leaving entry itself included
+        (rd_encode.oneway_regulations)."""
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
+                                                country=352, dirs=[1, -1, 0])
+        self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
+        self.assertEqual((rd_check.check.oneway, rd_check.check.no_entry, rd_check.check.beside, rd_check.check.barred),
+                         (2, 2, 3, 3))
+        rec = clarion_rd.parse_record(plain)
+        for nd in rec['nodes']:
+            ents = nd['entries']
+            leaving = [k << 12 | 0xff for k, e in enumerate(ents) if e['w5'] & 0xc000 == 0x4000]
+            for k, e in enumerate(ents):
+                regs = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                self.assertEqual(regs, [rd_check.NO_ENTRY] if e['w5'] & 0xc000 == 0x8000 else leaving)
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
+                                                country=352, dirs=[1, -1, 0], oneway_regs=False)
+        rd_check.check(plain, 1, 352)
+        self.assertEqual((rd_check.check.oneway, rd_check.check.no_entry, rd_check.check.beside, rd_check.check.barred),
+                         (2, 0, 3, 0))
+
+    def test_oneway_regulations_with_turns(self):
+        """A turn prohibition joins the one-way words on the same entry, once, in the
+        factory's order: by from-entry cyclically after the entry itself, so its own word
+        comes last. A turn onto an arriving one-way end is already covered and not written."""
+        self.assertEqual(rd_encode.regulation_order([0x00ff, 0x20ff, 0x10ff], 1), [0x20ff, 0x00ff, 0x10ff])
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
+                                                country=352, dirs=[1, 0, 0], regs=[(0, 2, 0), (0, 2, 0), (1, 1, 0)])
+        self.assertEqual(rd_encode.build_record_edges.regs_written, 1)
+        self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
+        rec = clarion_rd.parse_record(plain)
+        words = {(nd['x'], e['id'] & 0x1fff): e['extra'][:(e['w5'] >> 6) & 0x3f] for nd in rec['nodes'] for e in nd['entries']}
+        self.assertEqual(words[(100, 1)], [0x10ff, 0x00ff], 'link 1 leaves node 0: the turn from entry 1, then itself')
+        self.assertEqual(words[(900, 1)], [rd_check.NO_ENTRY])
+
     def test_parcel_edge_entry(self):
         """A node on a parcel edge gets a last entry with the side in the top bits."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS,
