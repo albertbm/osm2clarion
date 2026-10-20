@@ -211,7 +211,11 @@ form that put first-point and link-end flags on the same point drew lines off th
 The style word is the posted speed limit (18 Oct 2026, factory B58R060R Norway and B50R068R
 northern England, 0x2046 directories only). Bit 5 set means a limit, `((w & 0x1f) + 1) * 5` in
 the country's unit; low bits `0x1e` with bit 5 clear mean none. Bit 12 is set on most words and
-clear on most ferries; bit 6 is unknown and toggles on its own along a chain. A y with `0x2000`
+clear on most ferries and one-way links (20 Oct 2026, B58R060R and B50R060R: clear on 34,118 of
+43,845 one-way links and 6,330 of 1,521,536 two-way ones); bit 6 is unknown and toggles on its
+own along a chain. The shape's point order says nothing about the direction: 22,495 one-way
+links are drawn with the traffic and 21,350 against it. The direction lives in section 2: w5 bit
+0x4000 on the entry at the end traffic leaves, 0x8000 where it arrives (`rd_encode.oneway_bits`). A y with `0x2000`
 is followed by a style word, so a chain whose limit changes sets `0x2800` on the y of the link
 end before the change and opens the next link with `style, value, id`. Norway has 28,643 such
 restyles and northern England 6,868; every one differs from the word before it, and 20,169 and

@@ -97,7 +97,8 @@ MAX_POINTS = 64   # points per shape; a chain breaks at a link boundary before e
 
 def build_graphs(ways, cell, level=1, chain=True):
     """Per parcel: nodes {key: ...} and links [(from key, to key, length, way id, name, hw,
-    ref, maxspeed, inner points, chain id)]. With chain, a point is a graph node only where ways meet
+    ref, maxspeed, inner points, chain id, one-way)]; one-way is the way's dir (osm_roads.oneway)
+    in the link's own from-to sense. With chain, a point is a graph node only where ways meet
     or end and the bends between nodes ride inside the link as its inner points, which is
     how the factory writes them. Without, every point is a node and every link two points,
     so the matcher sees a junction at every bend."""
@@ -132,7 +133,8 @@ def build_graphs(ways, cell, level=1, chain=True):
                     for key, p in (part[0], part[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
                     length = sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
                     P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
-                                       wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid))
+                                       wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid,
+                                       wy.get('dir', 0)))
         del P['runs'], P['touch']
         if chain: P['links'] = chain_links(P['links'])
     # edge nodes: coordinate on a parcel border; find the twin in the neighbour
@@ -162,7 +164,7 @@ def chain_links(links):
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
     def key(c): return (c[0][5], c[0][4], c[0][6])
-    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9]) for l in reversed(c)]
+    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) for l in reversed(c)]
     ends = collections.defaultdict(list)                     # node -> [(chain id, 'a' start | 'b' end)]
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -182,7 +184,7 @@ def chain_links(links):
     for c in chains.values():
         # a closed way (roundabout, turning circle) is two shapes, as the factory draws them
         for part in ([c[:len(c) // 2], c[len(c) // 2:]] if c[0][0] == c[-1][1] and len(c) > 1 else [c]):
-            out += [l[:9] + (cid,) for l in part]; cid += 1
+            out += [l[:9] + (cid,) + l[10:] for l in part]; cid += 1
     return out
 
 def neighbour(pc, side):
@@ -269,7 +271,8 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
-                                               regs=(regs or {}).get(pc), country=COUNTRY)
+                                               regs=(regs or {}).get(pc), country=COUNTRY,
+                                               dirs=[l[10] for l in P['links']])
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         # drawn geometry: one shape per chain of links, each pointing at its street's label entry
@@ -283,8 +286,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         # offsets first (the section layout only depends on the labels and the item count)
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(label_of.get(c[0][0]), 0xffff) for c in chains]
-        # the posted limit per link, from the way's own maxspeed only; no class default
-        styles = [[fa_encode.style_word(fa_encode.speed_limit(P['links'][lid - 1][7], SPEED_UNIT)) for lid, *_ in c]
+        # the posted limit per link, from the way's own maxspeed only (no class default), and one-way
+        styles = [[fa_encode.style_word(fa_encode.speed_limit(P['links'][lid - 1][7], SPEED_UNIT), P['links'][lid - 1][10] != 0)
+                   for lid, *_ in c]
                   for c in chains]
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
                                     styles=styles, country=COUNTRY)

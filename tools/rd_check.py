@@ -25,6 +25,10 @@ parses (115 in two dense city tiles do not yet):
 Two body rules ride along, since a writer has to get them right for the header to mean
 anything: a node's class is the lowest link class among its entries (the class word's low
 nibble), and an entry's high byte is the class of the node at the link's far end.
+
+A third is one-way (oneway_links): w5 bits 0x4000 and 0x8000 sit at opposite ends of a
+link, traffic leaving the 0x4000 end; 0xc000 at both ends is the factory's other form
+(I: closed both ways). Parcel-edge entries never carry them.
 """
 import collections, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -55,6 +59,25 @@ def expected(rec):
     return sum(p[0] for p in pairs), sum(p[1] for p in pairs), [tuple(p) for p in pairs]
 
 
+def oneway_links(rec):
+    """([(from node, to node, link id)] for one-way links, [problems]) of a parsed record."""
+    ends, out, bad = {}, [], []
+    for i, nd in enumerate(rec['nodes']):
+        for e in nd['entries']:
+            if e['cls'] & 0x8000:
+                if e['w5'] & 0xc000: bad.append('node %d edge entry with one-way bits %04x' % (i, e['w5']))
+                continue
+            if e['other'] & 0x4000: continue
+            ends.setdefault((e['id'] & 0x1fff, min(i, e['other']), max(i, e['other'])), []).append((i, e['w5'] & 0xc000))
+    for (lid, _, _), l in ends.items():
+        if len(l) != 2: continue
+        (i, a), (j, b) = l
+        if (a, b) == (0x4000, 0x8000): out.append((i, j, lid))
+        elif (a, b) == (0x8000, 0x4000): out.append((j, i, lid))
+        elif a != b: bad.append('link %d ends carry %04x and %04x' % (lid, a, b))
+    return out, bad
+
+
 def part_a(plain, level):
     """The graph part of a record: level-1 records are one zlib stream, level-2 records ship
     raw as part a then part b, and part a ends where its last unit does."""
@@ -64,7 +87,9 @@ def part_a(plain, level):
 
 
 def check(plain, level=1, country=None):
-    """(header problems, body problems) for one inflated record; both empty when it passes."""
+    """(header problems, body problems) for one inflated record; both empty when it passes.
+    check.oneway is left at the record's count of one-way links."""
+    check.oneway = 0
     pa = part_a(plain, level)
     w = struct.unpack('>%dH' % (len(pa) // 2), pa[:len(pa) // 2 * 2])
     hp, bp = [], []
@@ -96,7 +121,9 @@ def check(plain, level=1, country=None):
             far = nodes[e['other']]['ncls']
             if (e['cls'] >> 8) & 0xf != far:
                 bp.append('node %d entry class %04x, far node class %d' % (i, e['cls'], far))
-    return hp, bp
+    ow, bad = oneway_links(rec)
+    check.oneway = len(ow)
+    return hp, bp + bad
 
 
 SIDE = {0x8000: (1, 0), 0xa000: (0, 1), 0xc000: (-1, 0), 0xe000: (0, -1)}   # top, right, bottom, left
@@ -200,6 +227,7 @@ def check_tile(tile, country=None):
             countries[(r.level, struct.unpack_from('>%dH' % (off - 26), plain, 52))] += 1
             tally[(r.level, 'header', not hp)] += 1
             tally[(r.level, 'body', not bp)] += 1
+            tally[(r.level, 'one-way links', True)] += check.oneway
             if not bp: tally[(r.level, 'header where the body is sound', not hp)] += 1
             if (hp or bp) and len(bad) < 20: bad.append((r.level, r.slot, r.k, hp[:3], bp[:3]))
     return tally, countries, bad
@@ -239,6 +267,7 @@ def main(argv):
             for part in PARTS:
                 ok, no = tally[(lev, part, True)], tally[(lev, part, False)]
                 if ok or no: line.append('L%d %s %d/%d' % (lev, part, ok, ok + no))
+            if tally[(lev, 'one-way links', True)]: line.append('L%d one-way links %d' % (lev, tally[(lev, 'one-way links', True)]))
         cs = ' '.join('L%d:%s x%d' % (l, '+'.join(map(str, c)), n) for (l, c), n in sorted(countries.items()))
         print('%s  %s  country %s' % (os.path.basename(name), ', '.join(line) or 'no records', cs))
         for b in bad if verbose else bad[:3]:
