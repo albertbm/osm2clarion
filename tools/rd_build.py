@@ -22,8 +22,10 @@ roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut a
 edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
 whose "other node" is the point's index in the neighbour's x-sorted node list. The drawn
 shape's layer and class come from the OSM highway value through `fa_encode.CLASSES`, which is
-what the renderer takes its road width from. One graph class group (0x0898) for every road.
-Directories are added per mesh, the level table and the box table updated.
+what the renderer takes its road width from. Links are listed in section-1 drawing order
+(layer_order) and numbered 1..n within each class (link_ids), so a link is named by (class,
+id) in both sections. Directories are added per mesh, the level table and the box table
+updated.
 """
 import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -137,6 +139,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                                        wy.get('dir', 0)))
         del P['runs'], P['touch']
         if chain: P['links'] = chain_links(P['links'])
+        P['links'] = layer_order(P['links'], level)
     # edge nodes: coordinate on a parcel border; find the twin in the neighbour
     for pc, P in parcels.items():
         y, x, row, col = pc
@@ -187,6 +190,36 @@ def chain_links(links):
             out += [l[:9] + (cid,) + l[10:] for l in part]; cid += 1
     return out
 
+def layer_order(links, level=1):
+    """Links in section-1 drawing order: by layer, chains kept whole and in their order.
+    fa_encode.build_record groups shapes by layer the same way, so the link list, the shapes
+    and the graph entries then all run in one order."""
+    return sorted(links, key=lambda l: fa_encode.layer_class(l[5], level)[0])
+
+def link_ids(links, level=1):
+    """The link id per link: 1..n within each class, counted in list order. 6,683 of 6,683
+    class groups of the factory tile B48R068R-214-066 number their links this way (6,647 in
+    drawing order); until 20 Oct 2026 we numbered 1..N over the parcel, so only single-class
+    records agreed (REPORT-oneway-diag in leaf-is-map). A link id is unique within its class
+    only, so a link is named by (class, id)."""
+    n = collections.Counter(); out = []
+    for l in links:
+        cls = fa_encode.layer_class(l[5], level)[1]
+        n[cls] += 1; out.append(n[cls])
+    return out
+
+def link_groups(links, chain=True):
+    """Link positions grouped into shapes: consecutive links of one way run, broken where
+    the next link would take the shape past MAX_POINTS."""
+    groups = []; npts = 0
+    for k, l in enumerate(links):
+        n = len(l[8]) + 1
+        if chain and groups and links[k - 1][9] == l[9] and npts + n <= MAX_POINTS:
+            groups[-1].append(k); npts += n
+        else:
+            groups.append([k]); npts = n + 1
+    return groups
+
 def neighbour(pc, side):
     y, x, row, col = pc
     dr, dc = {'top': (1, 0), 'bottom': (-1, 0), 'right': (0, 1), 'left': (0, -1)}[side]
@@ -234,17 +267,11 @@ def map_turns(parcels, turns, level=1):
         out.setdefault(pc, []).append((nd, f[0], t[0])); stats['mapped'] += 1
     return out, stats
 
-def chains_of(links, idx, chain=True):
-    """Shapes as [(link id, from index, to index, inner points)] chains: consecutive links of
-    one way run, broken where the next link would take the shape past MAX_POINTS."""
-    chains = []; npts = 0
-    for lid, l in enumerate(links, start=1):
-        item = (lid, idx[l[0]], idx[l[1]], l[8]); n = len(l[8]) + 1
-        if chain and chains and links[lid - 2][9] == l[9] and npts + n <= MAX_POINTS:
-            chains[-1].append(item); npts += n
-        else:
-            chains.append([item]); npts = n + 1
-    return chains
+def chains_of(links, idx, chain=True, ids=None, groups=None):
+    """Shapes as [(link id, from index, to index, inner points)] chains over link_groups.
+    ids: the link id per link (link_ids); positions 1..N when None."""
+    if groups is None: groups = link_groups(links, chain)
+    return [[(ids[k] if ids else k + 1, idx[links[k][0]], idx[links[k][1]], links[k][8]) for k in g] for g in groups]
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
@@ -254,6 +281,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
         keys = P['order']; idx = P['index']
         nodes = list(keys)
         links = [(idx[a], idx[b], ln) for a, b, ln, *_ in P['links']]
+        ids = link_ids(P['links'], level)
         edges = {}
         for key, nd in P['nodes'].items():
             if not nd['edge']: continue
@@ -272,46 +300,47 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
-                                               dirs=[l[10] for l in P['links']])
+                                               dirs=[l[10] for l in P['links']], ids=ids)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         # drawn geometry: one shape per chain of links, each pointing at its street's label entry
-        chains = chains_of(P['links'], idx, chain)
-        hws = [P['links'][c[0][0] - 1][5] for c in chains]
-        label_of = {c[0][0]: label(P['links'][c[0][0] - 1][4], P['links'][c[0][0] - 1][6]) for c in chains}
+        groups = link_groups(P['links'], chain)
+        chains = chains_of(P['links'], idx, chain, ids, groups)
+        L = P['links']
+        hws = [L[g[0]][5] for g in groups]
+        label_of = [label(L[g[0]][4], L[g[0]][6]) for g in groups]
         labels = []
-        for c in chains:
-            n = label_of.get(c[0][0])
+        for n in label_of:
             if n and n not in labels: labels.append(n)
         # offsets first (the section layout only depends on the labels and the item count)
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
-        name_offs = [0xffff] * len(chains) if no_names else [offs.get(label_of.get(c[0][0]), 0xffff) for c in chains]
+        name_offs = [0xffff] * len(chains) if no_names else [offs.get(n, 0xffff) for n in label_of]
         # the posted limit per link, from the way's own maxspeed only (no class default), and one-way
-        styles = [[fa_encode.style_word(fa_encode.speed_limit(P['links'][lid - 1][7], SPEED_UNIT), P['links'][lid - 1][10] != 0)
-                   for lid, *_ in c]
-                  for c in chains]
+        styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
+                  for g in groups]
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
                                     styles=styles, country=COUNTRY)
-        encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, chains, P['links'],
+        encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
         out[pc] = out[pc] + fa + (None if no_names else section,)
     return out
 
-def shape_index_record(level, pc, ix, chains, links, label_of, no_names):
-    """One record of the shape index (shape_index.py): where each chain's points landed."""
+def shape_index_record(level, pc, ix, groups, ids, links, label_of, no_names):
+    """One record of the shape index (shape_index.py): where each chain's points landed.
+    groups: link positions per chain (link_groups), ids the link id per position."""
     lon0, lat0, w, h = parcel_geo(level, *pc)
     def geo(k): return [round(lon0 + k[0] / 2048 * w, 7), round(lat0 + k[1] / 2048 * h, 7)]
     shapes = []
     for S in ix['shapes']:
-        c = chains[S['chain']]
-        keys = [links[c[0][0] - 1][0]] + [k for lid, *_ in c for k in links[lid - 1][8] + [links[lid - 1][1]]]
+        g = groups[S['chain']]
+        keys = [links[g[0]][0]] + [key for k in g for key in links[k][8] + [links[k][1]]]
         assert len(keys) == len(S['points'])
-        lab = '' if no_names else (label_of.get(c[0][0]) or '')
-        shapes.append(dict(name=links[c[0][0] - 1][4], label=lab, layer=S['layer'], at=S['at'],
-                           links=[dict(id=lid, way=links[lid - 1][3]) for lid, *_ in c],
-                           points=[dict(word=wd, link=lid, role=role, lon=g[0], lat=g[1])
-                                   for (wd, lid, role), g in zip(S['points'], map(geo, keys))]))
+        lab = '' if no_names else (label_of[S['chain']] or '')
+        shapes.append(dict(name=links[g[0]][4], label=lab, layer=S['layer'], cls=S['cls'], at=S['at'],
+                           links=[dict(id=ids[k], way=links[k][3]) for k in g],
+                           points=[dict(word=wd, link=lid, role=role, lon=pt[0], lat=pt[1])
+                                   for (wd, lid, role), pt in zip(S['points'], map(geo, keys))]))
     y, x, row, col = pc
     return dict(code=list(ix['code']), unit=ix['unit'], mesh=[y, x], row=row, col=col,
                 box=[lon0, lat0, w, h], shapes=shapes)

@@ -17,6 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg, fa_encode
 
 CLASS = 0x0898
+END_FLAG = 0x2000    # on the link-id word of the entry at the link's drawn last point
 MAXVAL = 0xffd       # 0xfff means infinite and 0xffe unknown, so a real value stops below them
 
 # Travel speed in km/h when the OSM way carries no `maxspeed`, which is 41,000 of the 62,439
@@ -112,16 +113,15 @@ def node_classes(nodes, links, link_cls):
             ncls[n] = c if ncls[n] is None else min(ncls[n], c)
     return ncls
 
-def build_record(level, y0, x0, row, col, nodes, links, compress=True, speeds=None, country=None):
+def build_record(level, y0, x0, row, col, nodes, links, compress=True, speeds=None, country=None, ids=None):
     order = sorted(range(len(nodes)), key=lambda i: (nodes[i][0], nodes[i][1]))
     pos = {old: new for new, old in enumerate(order)}
     adj = {i: [] for i in range(len(nodes))}
-    for lid, (i, j, length) in enumerate(links, start=1):
-        yi, yj = nodes[i][1], nodes[j][1]
-        north = i if (yi, nodes[i][0]) > (yj, nodes[j][0]) else j
-        a, bw = cost_words(length, speeds[lid - 1] if speeds else DEFAULT_SPEED_KMH)
+    for k, (i, j, length) in enumerate(links):
+        lid = ids[k] if ids else k + 1
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH)
         for end, other in ((i, j), (j, i)):
-            adj[end].append((pos[other], lid | (0x2000 if end == north else 0), a, bw))
+            adj[end].append((pos[other], lid | (END_FLAG if end == j else 0), a, bw))
     body = []
     for old in order:
         x, y = nodes[old]; ents = adj[old]
@@ -163,13 +163,20 @@ def regulation_word(entry_index):
     return (entry_index << 12) | PROHIBITED
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
-                       speeds=None, regs=None, country=None, dirs=None):
+                       speeds=None, regs=None, country=None, dirs=None, ids=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
     Level 1: zlib. Level 2: raw two parts, the second a per-node connection table. classes: per-link OSM highway value; each link then gets its
     own class word instead of the level's default. speeds: per-link km/h for the travel time.
     regs: [(node index, from link index, to link index)] turn prohibitions, written as
-    regulation records on the entry for the to-link. Routing reads this, the renderer does not
+    regulation records on the entry for the to-link; link indexes are positions in links.
+    Routing reads this, the renderer does not
     -- rewriting all 160,876 level-1 link words in a tile changed nothing on screen.
+
+    ids: the link id word per link (rd_build.link_ids), 1..N in list order when None. The
+    factory numbers links 1..n within each class in section-1 shape order, and marks the entry
+    at the link's drawn last point with END_FLAG (174,656 of 174,656 level-1 links of
+    B48R068R-214-066; REPORT-oneway-diag in leaf-is-map). Until 20 Oct 2026 this put the flag
+    on the end with the larger y, which is the drawn last point only 89% of the time there.
 
     Class words are written as the factory's are: the link's class in the low byte, the far
     node's class in the high byte, and on an edge entry the node's own class, since its twin
@@ -181,16 +188,15 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     order = sorted(range(len(nodes)), key=lambda i: (nodes[i][0], nodes[i][1]))
     pos = {old: new for new, old in enumerate(order)}
     adj = {i: [] for i in range(len(nodes))}
-    slot = {}                       # (node index, link index) -> that link's entry number at the node
-    for lid, (i, j, length) in enumerate(links, start=1):
-        yi, yj = nodes[i][1], nodes[j][1]
-        north = i if (yi, nodes[i][0]) > (yj, nodes[j][0]) else j
-        a, bw = cost_words(length, speeds[lid - 1] if speeds else DEFAULT_SPEED_KMH)
-        low = cls_of[lid - 1] & 0xff
-        ow = oneway_bits(dirs[lid - 1] if dirs else 0)
+    slot = {}                       # (node index, link position) -> that link's entry number at the node
+    for k, (i, j, length) in enumerate(links):
+        lid = ids[k] if ids else k + 1
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH)
+        low = cls_of[k] & 0xff
+        ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
-            slot[(end, lid - 1)] = len(adj[end])
-            adj[end].append((pos[other], lid | (0x2000 if end == north else 0), ncls[other] << 8 | low, a, bw,
+            slot[(end, k)] = len(adj[end])
+            adj[end].append((pos[other], lid | (END_FLAG if end == j else 0), ncls[other] << 8 | low, a, bw,
                              ow[0] if end == i else ow[1]))
     real = {i: len(v) for i, v in adj.items()}
     for i, (side, twin) in edges.items():
