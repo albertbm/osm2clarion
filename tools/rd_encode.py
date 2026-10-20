@@ -139,6 +139,15 @@ def build_record(level, y0, x0, row, col, nodes, links, compress=True, speeds=No
     if len(comp) % 2: comp += b'\0'
     return out, comp
 
+def oneway_bits(d):
+    """The w5 bits for a link's (i end, j end): d = 1 one-way from i to j, -1 from j to i, 0
+    both ways. Traffic leaves the 0x4000 end and arrives at the 0x8000 end. Measured 20 Oct
+    2026 on factory level-1 and level-2 links: the two bits always sit at opposite ends, and
+    on divided roads the twin carriageway lies to the left of that direction in France,
+    Belgium, the Netherlands and Norway and to the right in England (REPORT-oneway in
+    leaf-is-map). Parcel-edge entries never carry them."""
+    return (0x4000, 0x8000) if d > 0 else (0x8000, 0x4000) if d < 0 else (0, 0)
+
 SIDE_B = {0x8000: 0x8000, 0xa000: 0x0080, 0xc000: 0xc000, 0xe000: 0x00c0}   # part-b side flags (top, right, bottom, left)
 
 PROHIBITED = 0xff     # between-links regulation flag (bit 7) + passage code 0x7f, "not allowed
@@ -154,7 +163,7 @@ def regulation_word(entry_index):
     return (entry_index << 12) | PROHIBITED
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
-                       speeds=None, regs=None, country=None):
+                       speeds=None, regs=None, country=None, dirs=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
     Level 1: zlib. Level 2: raw two parts, the second a per-node connection table. classes: per-link OSM highway value; each link then gets its
     own class word instead of the level's default. speeds: per-link km/h for the travel time.
@@ -164,7 +173,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
 
     Class words are written as the factory's are: the link's class in the low byte, the far
     node's class in the high byte, and on an edge entry the node's own class, since its twin
-    across the edge carries the same roads. country: ISO 3166 numeric, word 26 of both parts."""
+    across the edge carries the same roads. country: ISO 3166 numeric, word 26 of both parts.
+    dirs: per link 1 one-way from i to j, -1 from j to i, 0 both ways (oneway_bits)."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else [default] * len(links)
     ncls = node_classes(nodes, links, [c & 0xf for c in cls_of])
@@ -177,13 +187,15 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         north = i if (yi, nodes[i][0]) > (yj, nodes[j][0]) else j
         a, bw = cost_words(length, speeds[lid - 1] if speeds else DEFAULT_SPEED_KMH)
         low = cls_of[lid - 1] & 0xff
+        ow = oneway_bits(dirs[lid - 1] if dirs else 0)
         for end, other in ((i, j), (j, i)):
             slot[(end, lid - 1)] = len(adj[end])
-            adj[end].append((pos[other], lid | (0x2000 if end == north else 0), ncls[other] << 8 | low, a, bw))
+            adj[end].append((pos[other], lid | (0x2000 if end == north else 0), ncls[other] << 8 | low, a, bw,
+                             ow[0] if end == i else ow[1]))
     real = {i: len(v) for i, v in adj.items()}
     for i, (side, twin) in edges.items():
         # the edge entry repeats the class word of the link that reaches the edge
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0))
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0))
     extras = {}                     # (node index, entry number) -> [regulation words]
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
@@ -204,9 +216,9 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         # the entry count shares its word with x, so 15 is the ceiling; above it x is corrupted
         assert len(ents) <= 15, 'node %r has %d entries, too many for the count nibble' % (nodes[old], len(ents))
         body += [(len(ents) << 12) | x, ncls[old] << 12 | y, 0]
-        for k, (other, lid, cls, a, length) in enumerate(ents):
+        for k, (other, lid, cls, a, length, ow) in enumerate(ents):
             ex = extras.get((old, k), ())
-            body += [other, 0, len(ex) << 6, lid, cls, a, length] + list(ex)
+            body += [other, 0, ow | len(ex) << 6, lid, cls, a, length] + list(ex)
     live = [old for old in order if adj[old]]
     nn = len(live)
     unit = unit_head([ncls[old] for old in live], [real[old] for old in live]) + body
@@ -220,7 +232,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     pb = [nn, 0xa100]
     for k, old in enumerate(o for o in order if adj[o]):
         pb += [0x2000, k, 0, k]
-        for other, lid, cls, a, length in adj[old]:
+        for other, lid, cls, a, length, _ in adj[old]:
             pb += [other, SIDE_B.get(cls & 0xe000, 0) if cls & 0x8000 else 0, other]
     pb += [hdr[0], hdr[1], 0]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)

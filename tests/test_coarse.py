@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Coarse road shapes, chained level-2 shapes, edge twins across parcels, and the region
-road selector. Inputs are built in code; nothing here needs a card or an OSM extract.
-
-    python3 -m unittest discover -s tests -v
-"""
+road selector. Inputs are built in code; nothing here needs a card or an OSM extract."""
 import struct
 import sys
 import unittest
@@ -24,8 +21,7 @@ import rd_build
 
 @unittest.skipIf(lev_roads is None, 'shapely is not installed')
 class TestCoarseShapes(unittest.TestCase):
-    # factory words off the 2015 coarse file: a named level-4 shape with one link and two
-    # bends, and an unnamed one of two links; a level-3 shape with a link end inside
+    # factory words off the 2015 coarse file: named and unnamed level-4 shapes, a level-3 shape
     L4_NAMED = [0x0010, 0x8004, 0x6000, 0x0000, 0x000c, 0x0000, 0x0000, 0x0d01, 0x08cc, 0x0001,
                 0x3cf9, 0x00d5, 0x1cf1, 0x00e8, 0x14ef, 0x0121]
     L4_TWO = [0x000f, 0x8003, 0x6000, 0x1000, 0x000c, 0x0000, 0x0000, 0x0d01, 0x88cc, 0x0002,
@@ -46,7 +42,7 @@ class TestCoarseShapes(unittest.TestCase):
 
     def test_broken_flags_are_refused(self):
         bad = list(self.L4_NAMED)
-        bad[12] &= ~0x0800          # an inner point that claims to end the link
+        bad[12] &= ~0x0800
         self.assertIsNone(lev_roads.decode(bad, 4))
 
     def test_shape_writes_the_named_form(self):
@@ -113,7 +109,6 @@ class TestEdgeTwins(unittest.TestCase):
                                                       / 'profiles' / 'iceland.toml')))
 
     def test_every_edge_entry_is_answered(self):
-        # a way across a parcel column edge, and one that only grazes the next parcel
         lon_edge = -22.0 + 1.875 / 60 * 3
         a = dict(id=1, hw='residential', name='A', ref=None,
                  nodes=[(lon_edge - 0.01, 64.130), (lon_edge + 0.01, 64.131)])
@@ -127,8 +122,6 @@ class TestEdgeTwins(unittest.TestCase):
         self.assertEqual(bad, [])
 
     def test_ring_parcels_are_built_but_not_written(self):
-        # a way leaving the cell to the west: the parcel across the cell edge is built
-        # for its twin, and only the cell's own parcel is written
         x0 = -28.0
         w = dict(id=1, hw='residential', name='A', ref=None, nodes=[(x0 + 0.01, 64.13), (x0 - 0.01, 64.13)])
         parcels = rd_build.build_graphs([w], 'B60R080R', 1, True)
@@ -156,6 +149,12 @@ class TestAreaRoads(unittest.TestCase):
         self.assertEqual(osm_roads.oneway({'oneway': '-1'}), -1)
         self.assertEqual(osm_roads.oneway({'junction': 'roundabout'}), 1)
         self.assertEqual(osm_roads.oneway({}), 0)
+        self.assertEqual(osm_roads.oneway({'oneway': 'true'}), 1)
+        self.assertEqual(osm_roads.oneway({'junction': 'roundabout', 'oneway': 'no'}), 0)
+        self.assertEqual(osm_roads.oneway({'highway': 'motorway'}), 1)
+        self.assertEqual(osm_roads.oneway({'highway': 'motorway_link', 'oneway': 'no'}), 0)
+        self.assertEqual(osm_roads.oneway({'highway': 'trunk', 'oneway': 'reversible'}), 0)
+        self.assertEqual(fa_encode.style_word(50, oneway=True), 0x0029)
 
     def test_clip_keeps_points_and_adds_crossings(self):
         inside = lambda p: p[0] < 10

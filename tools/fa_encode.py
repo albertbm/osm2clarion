@@ -16,12 +16,14 @@ import clarion_bg
 
 STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
 
-def style_word(limit):
+def style_word(limit, oneway=False):
     """Level-1 style word for a posted limit in the country's unit, or STYLE for none.
     Bit 5 marks a limit and the low five bits n give (n + 1) * 5, so 5..160 in steps of 5.
-    Bits 6 and 12 are not understood; 0x1000 is kept as most factory words carry it."""
-    if not limit or limit % 5 or not 5 <= limit <= 160: return STYLE
-    return 0x1020 | (limit // 5 - 1)
+    Bit 12 clear marks a one-way link: clear on 34,118 of 43,845 factory one-way links and
+    on 6,330 of 1,521,536 two-way ones (B58R060R, B50R060R). The direction is only in section
+    2. Bit 6 is not understood."""
+    w = STYLE if not limit or limit % 5 or not 5 <= limit <= 160 else 0x1020 | (limit // 5 - 1)
+    return w & ~0x1000 if oneway else w
 
 def limit_of(style):
     """The posted limit a style word carries, or None."""

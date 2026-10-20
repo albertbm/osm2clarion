@@ -618,6 +618,16 @@ class TestRoadGraph(unittest.TestCase):
         got = {e['cls'] & 0xff | (e['cls'] & 0xf) << 8 for n in rec['nodes'] for e in n['entries']}
         self.assertEqual(got, want, 'the low byte is the link class word')
 
+    def test_oneway_bits(self):
+        """0x4000 where traffic leaves, 0x8000 where it arrives; nodes are stored sorted by x."""
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {2: (0xc000, 17)},
+                                                country=352, dirs=[1, -1, 0])
+        self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
+        self.assertEqual(rd_check.check.oneway, 2)
+        ow, bad = rd_check.oneway_links(clarion_rd.parse_record(plain))
+        self.assertEqual((sorted((i, j) for i, j, _ in ow), bad), ([(0, 2), (3, 2)], []))
+        self.assertEqual(rd_encode.oneway_bits(-1), (0x8000, 0x4000))
+
     def test_parcel_edge_entry(self):
         """A node on a parcel edge gets a last entry with the side in the top bits."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS,
@@ -1027,6 +1037,29 @@ class TestSpeedLimits(unittest.TestCase):
         _, _, shapes = fa_encode.parse_record(rec[2])
         got = sorted(([fa_encode.limit_of(v) for v in s['styles']] for s in shapes), key=len)
         self.assertEqual(got, [[None], [30, 30, 50]], 'one shape restyled at the way change; no maxspeed, no limit')
+
+    def test_rd_build_writes_oneway(self):
+        # a runs east, b is drawn west but joins a as one chain, so chain_links flips it
+        pts = TestRoadChains.POINTS
+        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, dir=1, nodes=pts[:3])
+        b = dict(a, id=2, dir=1, nodes=pts[2:][::-1])
+        c = dict(id=3, hw='service', name=None, ref=None, nodes=[pts[1], (-21.896, 64.127)])
+        parcels = rd_build.build_graphs([a, b, c], TestRoadChains.CELL, 1, True)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        (pc, rec), = recs.items()
+        self.assertEqual(rd_check.check(rec[0], 1, 352), ([], []))
+        g = clarion_rd.parse_record(rec[0])
+        ow, bad = rd_check.oneway_links(g)
+        self.assertEqual(bad, [])
+        split = rd_build.quant(pts[2], pc)[0]
+        got = sorted(('a' if max(g['nodes'][i]['x'], g['nodes'][j]['x']) <= split else 'b',
+                      g['nodes'][j]['x'] > g['nodes'][i]['x']) for i, j, _ in ow)
+        self.assertEqual(got, [('a', True), ('a', True), ('b', False)], 'a eastbound, b westbound')
+        _, _, shapes = fa_encode.parse_record(rec[2])
+        styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
+        self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'bit 12 clear on one-way links only')
 
 
 class TestRoadChains(unittest.TestCase):

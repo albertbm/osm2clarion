@@ -64,10 +64,14 @@ def keep(tags):
 
 
 def oneway(tags):
+    """1 one-way along the way, -1 against it, 0 both ways. Roundabouts and motorways are
+    one-way unless tagged otherwise; reversible and alternating roads count as two-way."""
     ow = tags.get('oneway')
     if ow in ('yes', '1', 'true'): return 1
     if ow == '-1': return -1
-    if tags.get('junction') in ('roundabout', 'circular') and ow != 'no': return 1
+    if ow is not None: return 0
+    if tags.get('junction') in ('roundabout', 'circular'): return 1
+    if tags.get('highway') in ('motorway', 'motorway_link'): return 1
     return 0
 
 
