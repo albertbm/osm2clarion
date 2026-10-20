@@ -2,25 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Section 2 (road) records: node lists with per-node link entries.
 
-Record: words 0-1 parcel code, two zero dwords, five (u32 offset, u32 length) unit pairs in
-16-bit words from the record start, then from word 26 the ISO 3166 numeric country codes of
-the record, one word each, up to where unit 0 starts (word 27 for one country, 28 for a
-record a border runs through: 578 then 752 for Norway and Sweden). Unit 0 is the graph:
-u32 nodes, u32 link ends, then eleven (u16 nodes, u16 link ends) pairs at u4..u25 per class
-group (rd_check.slot), then the nodes from u26. A node is x (entry count in the top nibble),
-y (the node's class in the top nibble), a flag word, then its entries. Entries whose class
-word has bit 15 set are parcel-edge connections; the top three bits give the side.
+Record: parcel code, two zero dwords, five unit pairs, then country codes up to where unit
+0 starts (word 27, or 28 where a border crosses the parcel). Unit 0: node/link-end totals,
+eleven (nodes, link ends) pairs per class group (rd_check.slot), then the nodes: entry count
+and class in x/y's top nibbles, then per entry other node index, w4, w5, link id (0x2000 =
+drawn last point), class word (far node's class high byte, link's class low nibble), travel
+time, length, regulation words. An entry's class word with bit 15 set is a parcel-edge
+connection; the top three bits give the side.
 """
 import struct
 
 def parse_record(pl):
-    """Node list of unit 0. Node: x (entry count in the top nibble), y (node class in the top
-    nibble), a node flag word, then per entry: other node index, w4, w5, link id (0x2000 = this
-    is the northern end), class word (the far node's class in the high byte, the link's class in
-    the low nibble), travel time, length, then extra words: (w5 >> 6) & 0x3f regulation words
-    plus w5 & 0xf more. Until 18 Oct 2026 this read four bits and no low count, and 142 of
-    22,981 records in the Denmark tile desynchronised; this form parses all of them. A class word with bit 15 set is a parcel-edge
-    connection."""
     w = list(struct.unpack('>%dH' % (len(pl) // 2), pl[:len(pl) // 2 * 2]))
     code = (w[0], w[1])
     pairs = [struct.unpack_from('>II', pl, 12 + 8 * i) for i in range(5)]
@@ -48,7 +40,7 @@ def parse_record(pl):
     return out
 
 def links(rec):
-    """(id, node index a, node index b, class word, a, b) for links seen from both ends."""
+    """(id, node a, node b, class word, a, b) for links seen from both ends."""
     ends = {}
     for i, nd in enumerate(rec['nodes']):
         for e in nd['entries']:

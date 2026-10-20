@@ -591,14 +591,24 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(comp[:2], b'\x58\x85')
         self.assertEqual(zlib.decompress(comp), plain)
 
-    def test_link_id_carries_the_northern_end(self):
-        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.LINKS, country=352)
+    def test_link_id_flag_marks_the_drawn_last_point(self):
+        # link 2 runs from node 2 south-west to node 3, so its drawn end is the lower one
+        links = self.LINKS + [(2, 3, 1200)]
+        plain, _ = rd_encode.build_record(1, 96, 898, 7, 9, self.NODES, links, country=352)
         rec = clarion_rd.parse_record(plain)
-        for node in rec['nodes']:
-            for e in node['entries']:
-                other = rec['nodes'][e['other']]
-                north = (node['y'], node['x']) > (other['y'], other['x'])
-                self.assertEqual(bool(e['id'] & 0x2000), north, 'bit 0x2000 marks the larger y')
+        at = {(n['x'], n['y']): n for n in rec['nodes']}
+        for i, j, _ in links:
+            for node, flag in ((self.NODES[i], 0), (self.NODES[j], 0x2000)):
+                e = [e for e in at[node]['entries'] if (rec['nodes'][e['other']]['x'], rec['nodes'][e['other']]['y'])
+                     == (self.NODES[j] if flag == 0 else self.NODES[i])]
+                self.assertEqual([x['id'] & 0x2000 for x in e], [flag], 'bit 0x2000 sits at the j end only')
+
+    def test_link_ids_are_given(self):
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {}, country=352,
+                                                classes=['trunk', 'trunk', 'residential'], ids=[1, 2, 1])
+        rec = clarion_rd.parse_record(plain)
+        got = sorted({(e['cls'] & 0xf, e['id'] & 0x1fff) for n in rec['nodes'] for e in n['entries']})
+        self.assertEqual(got, [(4, 1), (4, 2), (8, 1)], 'ids restart per class; the class names the group')
 
     def test_class_words(self):
         """The class word is class in the high byte then 0x90 | class, up to class 9."""
@@ -1060,6 +1070,79 @@ class TestSpeedLimits(unittest.TestCase):
         _, _, shapes = fa_encode.parse_record(rec[2])
         styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
         self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'bit 12 clear on one-way links only')
+
+
+class TestLinkNumbering(unittest.TestCase):
+    """Links are listed in section-1 drawing order (by layer) and numbered 1..n per class, with
+    the 0x2000 flag on the entry at the drawn last point, as every factory record pairs them
+    (REPORT-oneway-diag in leaf-is-map). rd_check.link_pairing holds the rule."""
+
+    def parcel(self, level=1):
+        pts = TestRoadChains.POINTS
+        ways = [dict(id=1, hw='residential', name='Jonsgeisli', ref=None, nodes=pts[:3]),
+                dict(id=2, hw='trunk', name='Vesturlandsvegur', ref='1', nodes=[pts[2], (-21.893, 64.1315), pts[4]]),
+                dict(id=3, hw='residential', name='Gvendargeisli', ref=None, nodes=[pts[1], (-21.897, 64.127)]),
+                dict(id=4, hw='service', name=None, ref=None, nodes=[pts[3], (-21.892, 64.1333)]),
+                dict(id=5, hw='primary', name='Hofdabakki', ref=None, nodes=[(-21.893, 64.1315), (-21.890, 64.1290)])]
+        parcels = rd_build.build_graphs(ways, TestRoadChains.CELL, level, True)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, level)
+        finally: rd_build.COUNTRY = was
+        (pc, rec), = recs.items()
+        (pc, P), = parcels.items()
+        return P, rec
+
+    def test_links_run_in_layer_order(self):
+        P, rec = self.parcel()
+        layers = [fa_encode.layer_class(l[5], 1)[0] for l in P['links']]
+        self.assertEqual(layers, sorted(layers))
+        self.assertGreater(len(set(layers)), 1, 'the fixture spans several layers')
+
+    def test_ids_restart_per_class(self):
+        P, rec = self.parcel()
+        ids = rd_build.link_ids(P['links'])
+        per = {}
+        for l, i in zip(P['links'], ids): per.setdefault(fa_encode.layer_class(l[5], 1)[1], []).append(i)
+        self.assertEqual(sorted(per), [4, 5, 8, 9])
+        for cls, lst in per.items(): self.assertEqual(lst, list(range(1, len(lst) + 1)), 'class %d' % cls)
+
+    def test_sections_pair(self):
+        P, rec = self.parcel()
+        _, _, shapes = fa_encode.parse_record(rec[2])
+        self.assertTrue(all(s['ok'] for s in shapes))
+        n, bad = rd_check.link_pairing(shapes, clarion_rd.parse_record(rec[0]))
+        self.assertEqual(bad, [])
+        self.assertEqual(n, len(P['links']))
+        self.assertEqual([s['links'] for s in shapes if s['cls'] == 4], [[1, 2]], 'the trunk draws as one shape, links 1 and 2')
+
+    def test_level2_pairs_too(self):
+        P, rec = self.parcel(2)
+        _, _, shapes = fa_encode.parse_record(rec[2], 2)
+        self.assertTrue(shapes and all(s['ok'] for s in shapes))
+        n, bad = rd_check.link_pairing(shapes, clarion_rd.parse_record(rd_check.part_a(rec[0], 2)))
+        self.assertEqual((n, bad), (len(P['links']), []))
+
+    def test_pairing_rejects_the_old_numbering(self):
+        P, rec = self.parcel()
+        _, _, shapes = fa_encode.parse_record(rec[2])
+        g = clarion_rd.parse_record(rec[0])
+        for nd in g['nodes']:
+            for e in nd['entries']: e['id'] ^= 0x2000      # flag at the drawn first point
+        n, bad = rd_check.link_pairing(shapes, g)
+        self.assertEqual(len(bad), len(P['links']))
+        self.assertTrue(all('end flag' in b for b in bad))
+        n, bad = rd_check.link_pairing(shapes, g, strict_flag=False)
+        self.assertEqual((bad, rd_check.link_pairing.flag_off), ([], len(P['links'])))
+        shapes[0]['links'][0] += 100
+        n, bad = rd_check.link_pairing(shapes, clarion_rd.parse_record(rec[0]))
+        self.assertTrue(any('want 1..' in b for b in bad), bad)
+
+    def test_shape_index_names_links_by_class_and_id(self):
+        P, rec = self.parcel()
+        R = rd_build.encode_parcels.index[next(iter(rd_build.encode_parcels.index))]
+        seen = [(S['cls'], l['id']) for S in R['shapes'] for l in S['links']]
+        self.assertEqual(len(seen), len(set(seen)), '(class, id) is unique in the record')
+        self.assertTrue(any(l['id'] == 1 for S in R['shapes'] for l in S['links'] if S['cls'] == 8))
 
 
 class TestRoadChains(unittest.TestCase):

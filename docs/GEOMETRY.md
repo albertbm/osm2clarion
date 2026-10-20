@@ -178,7 +178,11 @@ level-2 twin, 98 of 44,662 unflagged ones do),
 then per entry `other node index, w4, w5, link id, class, a, b` and
 `((w5 >> 6) & 0x3f) + (w5 & 0xf)` extra words. The class word is the far node's class in the
 high byte and the link's class word in the low byte (`0x0598` is a class-8 link reaching a
-class-5 node). The link id carries `0x2000` at the end with the larger y. `a` is the travel
+class-5 node). The link id restarts at 1 per class, numbered in the order the parcel's
+section-1 shapes list the links, so (class, id) names a link in both sections; it carries
+`0x2000` on the entry at the link's drawn last point (B48R068R-214-066: 6,683 of 6,683
+level-1 class groups, 174,656 of 174,656 links; the larger y, read as the rule until 20 Oct
+2026, is the drawn end only 89% of the time). `a` is the travel
 time and `b` the length (`rd_encode.cost_words`). Extra words look like turn or lane lists
 (`1001 2001 2002 0001`, `f001`); w4 is the same at both ends of a link (0, 0x80, 0x2, 0x140
 ...), and w5's top bits `0x8000`/`0x4000` at opposite ends of 5% of level-2 links look like

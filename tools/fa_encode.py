@@ -209,48 +209,55 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
                                for i in order]
     # where each chain landed, in record words: the address files point at these
     build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
-        dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], length=len(shapes[i]),
+        dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], cls=lc[i][1], length=len(shapes[i]),
              points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level, styles[i])])
         for i in sorted(at)])
     return plain, comp
 
-def parse_record(plain):
-    """Shapes of a level-1 0x00fa record, read with the factory's grammar (REPORT-kanren):
+def parse_record(plain, level=1):
+    """Shapes of a 0x00fa record, read with the factory's grammar (REPORT-kanren):
     length word flags 0x2000 / 0x4000 add one / two header words to the base seven; a
     point y with 0x2000 is followed by a style word, one with 0x1000 by an extra word
-    between val and id; an x with 0x1000 clear ends the link. Returns (code, unit start,
-    [dict(at, length, layer, name, points={x word: (role, link id)}, links, styles, ok)]);
-    styles is the style word in force on each link."""
+    between val and id; an x with 0x1000 clear ends the link. Level 2 has eleven layer pairs
+    with no count word before them, no val word and no trailer (3,182 of 3,182 level-2
+    records of B48R068R-214-066 parse to the word). Returns (code, unit start,
+    [dict(at, length, layer, cls, name, points={x word: (role, link id)}, links, styles, ends,
+    ok)]); styles is the style word in force on each link, cls the class in the top nibble of
+    header word 2, ends each link's (first, last) point as (x, y)."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     assert w[2] == 0x00fa, hex(w[2])
     g = 2 * w[7]
     shapes = []
-    for li in range(12):
-        off, cnt = w[g + 1 + 2 * li], w[g + 2 + 2 * li]
+    layers, t0 = (12, 1) if level == 1 else (11, 0)    # level 1 has a count word before the pairs
+    for li in range(layers):
+        off, cnt = w[g + t0 + 2 * li], w[g + t0 + 1 + 2 * li]
         if off == 0xffff: continue
         p = g + 2 * off
         for _ in range(cnt):
             if p >= len(w): break
             L = w[p] & 0x1fff
             h = 7 + (1 if w[p] & 0x2000 else 0) + (2 if w[p] & 0x4000 else 0)
-            end = min(p + L - 1, len(w) - 1)
+            end = min(p + L - (1 if level == 1 else 0), len(w) - 1 if level == 1 else len(w))
             pts = {p + h: ('start', None)}
-            q = p + h + 2; prev_y = w[p + h + 1]; links = []; styles = []; style = None
+            q = p + h + 2; prev_y = w[p + h + 1]; links = []; styles = []; ends = []; style = None
+            cur = (w[p + h] & 0x7ff, w[p + h + 1] & 0x7ff)
             while q + 2 < end:
                 if prev_y & 0x2000: style = w[q]; q += 1
                 styles.append(style)
-                q += 1                                  # val
+                if level == 1: q += 1                   # val
                 if prev_y & 0x1000: q += 1
                 lid = w[q]; q += 1; links.append(lid)
                 if pts[p + h][1] is None: pts[p + h] = ('start', lid)
+                first = cur
                 while q + 1 <= end and q + 1 < len(w):
                     x, y = w[q], w[q + 1]; q += 2
                     last = not x & 0x1000 or q >= end
                     pts[q - 2] = ('end' if last else 'vertex', lid)
-                    prev_y = y
+                    prev_y = y; cur = (x & 0x7ff, y & 0x7ff)
                     if not x & 0x1000: break
-            shapes.append(dict(at=p, length=L, layer=li, name=w[p + 4], points=pts, links=links, styles=styles,
-                               ok=q == end and len(pts) == (w[p + 1] & 0xff)))
+                ends.append((first, cur))
+            shapes.append(dict(at=p, length=L, layer=li, cls=w[p + 2] >> 12, name=w[p + 4], points=pts, links=links,
+                               styles=styles, ends=ends, ok=q == end and len(pts) == (w[p + 1] & 0xff)))
             p += L
     return (w[0], w[1]), g, shapes
 

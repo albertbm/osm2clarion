@@ -29,10 +29,17 @@ nibble), and an entry's high byte is the class of the node at the link's far end
 A third is one-way (oneway_links): w5 bits 0x4000 and 0x8000 sit at opposite ends of a
 link, traffic leaving the 0x4000 end; 0xc000 at both ends is the factory's other form
 (I: closed both ways). Parcel-edge entries never carry them.
+
+Two more tie a record to the drawn shapes of its parcel (link_pairing, measured 20 Oct 2026
+on B48R068R-214-066, REPORT-oneway-diag in leaf-is-map): within each class the shapes' link
+ids are the set 1..n (level 1 6,683 of 6,683 class groups, level 2 8,483 of 8,483), and a
+link's two section-2 entries sit at its drawn first and last point, the one at the last
+point carrying 0x2000 on the id word (level 1 174,656 of 174,656 links; level 2 541,324 of
+541,762). A link is named by (class, id); ids repeat across classes.
 """
 import collections, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_rd
+import clarion_rd, fa_encode
 from tile_scan import TileScan
 
 
@@ -68,14 +75,51 @@ def oneway_links(rec):
                 if e['w5'] & 0xc000: bad.append('node %d edge entry with one-way bits %04x' % (i, e['w5']))
                 continue
             if e['other'] & 0x4000: continue
-            ends.setdefault((e['id'] & 0x1fff, min(i, e['other']), max(i, e['other'])), []).append((i, e['w5'] & 0xc000))
-    for (lid, _, _), l in ends.items():
+            ends.setdefault((e['cls'] & 0xf, e['id'] & 0x1fff, min(i, e['other']), max(i, e['other'])), []).append((i, e['w5'] & 0xc000))
+    for (_, lid, _, _), l in ends.items():
         if len(l) != 2: continue
         (i, a), (j, b) = l
         if (a, b) == (0x4000, 0x8000): out.append((i, j, lid))
         elif (a, b) == (0x8000, 0x4000): out.append((j, i, lid))
         elif a != b: bad.append('link %d ends carry %04x and %04x' % (lid, a, b))
     return out, bad
+
+
+END_FLAG = 0x2000
+
+
+def link_pairing(shapes, rec, strict_flag=True):
+    """(links paired, [problems]) between a parcel's shapes (fa_encode.parse_record) and its
+    parsed section-2 record. Per class the shape link ids must be the set 1..n; each link
+    must have two entries, at the nodes on its drawn first and last point, with END_FLAG on
+    the last one only. A misplaced flag is a problem when strict_flag, else only counted in
+    link_pairing.flag_off: the factory's level 2 has 438 such links in 541,762, level 1 none."""
+    bad = []; per = collections.defaultdict(list); link_pairing.flag_off = 0
+    for sh in shapes:
+        per[sh['cls']] += sh['links']
+    for cls, ids in sorted(per.items()):
+        if sorted(i & 0x1fff for i in ids) != list(range(1, len(ids) + 1)):
+            bad.append('class %d: %d links with ids %s, want 1..%d' % (cls, len(ids), sorted(i & 0x1fff for i in ids)[:8], len(ids)))
+    ends = collections.defaultdict(list)
+    for nd in rec['nodes']:
+        for e in nd['entries']:
+            if e['cls'] & 0x8000: continue
+            ends[(e['cls'] & 0xf, e['id'] & 0x1fff)].append(((nd['x'], nd['y']), bool(e['id'] & END_FLAG)))
+    n = 0
+    for sh in shapes:
+        for lid, (first, last) in zip(sh['links'], sh['ends']):
+            key = (sh['cls'], lid & 0x1fff); en = ends.get(key, [])
+            if len(en) != 2:
+                bad.append('link %d/%d: %d section-2 entries, want 2' % (key + (len(en),))); continue
+            at = dict(en)
+            if set(at) != {first, last}:
+                bad.append('link %d/%d: drawn %s..%s, entries at %s' % (key + (first, last, sorted(at)))); continue
+            if at[last] is not True or at[first] is not False:
+                link_pairing.flag_off += 1
+                if strict_flag:
+                    bad.append('link %d/%d: end flag at %s, drawn last point is %s' % (key + ([p for p, f in en if f], last)))
+            n += 1
+    return n, bad
 
 
 def part_a(plain, level):
@@ -169,7 +213,7 @@ def pieces(plains, level=1):
                     dr, dc = SIDE[e['cls'] & 0xe000]
                     union(me, (rc[0] + dr, rc[1] + dc, e['other'] & 0x3fff))
                 else:
-                    links.setdefault(rc + (e['id'] & 0x1fff,), me)
+                    links.setdefault(rc + (e['cls'] & 0xf, e['id'] & 0x1fff), me)
                     if not e['other'] & 0x4000: union(me, rc + (e['other'],))
     groups = collections.defaultdict(lambda: [set(), 0])
     for n in list(parent):
@@ -212,14 +256,28 @@ def fmt(pairs):
     return ' '.join('u%d:%d/%d' % (4 + 2 * i, n, l) for i, (n, l) in enumerate(pairs) if n or l) or 'empty'
 
 
+def shape_records(t, level=1):
+    """{parcel code: Rec} of a tile's 0x00fa records at one level (section 1, even slots)."""
+    out = {}
+    for r in t.records(section=1, level=level, even_only=True):
+        try: pl = r.plain()
+        except Exception: continue
+        if len(pl) >= 44 and struct.unpack_from('>H', pl, 4)[0] == 0x00fa:
+            out[struct.unpack_from('>HH', pl, 0)] = r
+    return out
+
+
 def check_tile(tile, country=None):
     """Tally one tile: path or bytes. Returns {(level, part, ok): n}, the
-    countries seen per level, and up to 20 failing examples."""
+    countries seen per level, and up to 20 failing examples. A level-1 record is paired with
+    its parcel's shapes (link_pairing) when both parse, at both levels; 'links paired' counts
+    the links."""
     tally, countries, bad = collections.Counter(), collections.Counter(), []
     with TileScan(tile) as t:
         for sid, lev, doff, _ in t._dirs(2):
             kind = struct.unpack_from('>H', t.m, doff)[0]
             assert kind == 0x1046, 'section-2 directory kind %#x; only 0x1046 is walked right' % kind
+        shapes = {lev: shape_records(t, lev) for lev in (1, 2)}
         for r in t.records(section=2):
             plain = r.plain()
             hp, bp = check(plain, r.level, country)
@@ -229,13 +287,24 @@ def check_tile(tile, country=None):
             tally[(r.level, 'body', not bp)] += 1
             tally[(r.level, 'one-way links', True)] += check.oneway
             if not bp: tally[(r.level, 'header where the body is sound', not hp)] += 1
-            if (hp or bp) and len(bad) < 20: bad.append((r.level, r.slot, r.k, hp[:3], bp[:3]))
+            pp = []
+            sr = shapes.get(r.level, {}).get(struct.unpack_from('>HH', plain, 0)) if not bp else None
+            if sr is not None:
+                _, _, sh = fa_encode.parse_record(sr.plain(), r.level)
+                if sh and all(x['ok'] for x in sh):
+                    n, pp = link_pairing(sh, clarion_rd.parse_record(part_a(plain, r.level)), r.level == 1)
+                    tally[(r.level, 'pairing', not pp)] += 1
+                    tally[(r.level, 'links paired', True)] += n
+                    tally[(r.level, 'end flag off', True)] += link_pairing.flag_off
+                else:
+                    tally[(r.level, 'pairing skipped, a shape does not parse', True)] += 1
+            if (hp or bp or pp) and len(bad) < 20: bad.append((r.level, r.slot, r.k, hp[:3], bp[:3] + pp[:3]))
     return tally, countries, bad
 
 
 # A record whose body does not parse, or breaks the body rules, is one this reader cannot
 # vouch for; dense factory cities have a few (0.1%, an entry form not decoded yet).
-PARTS = ('header', 'body', 'header where the body is sound')
+PARTS = ('header', 'body', 'header where the body is sound', 'pairing')
 
 
 def main(argv):
@@ -268,6 +337,10 @@ def main(argv):
                 ok, no = tally[(lev, part, True)], tally[(lev, part, False)]
                 if ok or no: line.append('L%d %s %d/%d' % (lev, part, ok, ok + no))
             if tally[(lev, 'one-way links', True)]: line.append('L%d one-way links %d' % (lev, tally[(lev, 'one-way links', True)]))
+            if tally[(lev, 'links paired', True)]: line.append('L%d links paired %d' % (lev, tally[(lev, 'links paired', True)]))
+            if tally[(lev, 'end flag off', True)]: line.append('L%d end flag off %d' % (lev, tally[(lev, 'end flag off', True)]))
+            if tally[(lev, 'pairing skipped, a shape does not parse', True)]:
+                line.append('L%d pairing skipped %d' % (lev, tally[(lev, 'pairing skipped, a shape does not parse', True)]))
         cs = ' '.join('L%d:%s x%d' % (l, '+'.join(map(str, c)), n) for (l, c), n in sorted(countries.items()))
         print('%s  %s  country %s' % (os.path.basename(name), ', '.join(line) or 'no records', cs))
         for b in bad if verbose else bad[:3]:
@@ -285,7 +358,7 @@ def main(argv):
             for R in json.load(open(path))['records']:
                 at = rowcol(1, *R['code'])
                 for S in R['shapes']:
-                    for l in S['links']: names[at + (l['id'],)] = S['name']
+                    for l in S['links']: names[at + (S.get('cls'), l['id'])] = S['name']
         tiles = [F.read(n if n.startswith('/') else '/MAPAL001/' + n) if F else n for n in argv]
         for k, (lks, nn) in enumerate(components(tiles)):
             named = collections.Counter(names.get(l, '?') or 'unnamed' for l in lks) if names else None

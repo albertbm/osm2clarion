@@ -2,19 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Where every drawn road shape sits inside the level-1 0x00fa records of a tile.
 
-An address record names a 0x00fa record by its parcel code and a point on a shape by its
-word offset from the record's geometry unit (REPORT-kanren in leaf-is-map). `rd_build.py
---shape-index` writes this file next to each tile; this module reads tiles back and checks
-the file against them.
-
-Sidecar: {"cell", "records": [{"code": [w0, w1], "unit", "mesh", "row", "col", "box",
-"shapes": [{"name", "label", "layer", "at", "links": [{"id", "way"}],
-"points": [{"word", "link", "role", "lon", "lat"}]}]}]}. role is start / end (graph nodes)
-or vertex.
-
-    shape_index.py verify SIDECAR.json TILE.DAT
-    shape_index.py dump TILE.DAT
-"""
+An address record names a point by its word offset from the record's geometry unit
+(REPORT-kanren in leaf-is-map); rd_build.py --shape-index writes the sidecar this checks
+tiles against. Link ids restart at 1 per class, so (cls, id) names a link within a record."""
 import json, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg, clarion_tile, fa_encode
@@ -31,7 +21,6 @@ def label_name(label):
 
 
 def bg_labels(bg):
-    """{word offset in the names section: label text} of a background record."""
     r = clarion_bg.parse_record(bg)
     s = r['sections'].get('names')
     out = {}
@@ -47,7 +36,6 @@ def bg_labels(bg):
 
 
 def tile_records(d):
-    """{(w0, w1): (0x00fa plain, background plain or None)} for section 1, level 1."""
     t = clarion_tile.read_tile(d)
     out = {}
     for sec in t['sections']:
@@ -67,7 +55,6 @@ def tile_records(d):
 
 
 def shapes_of(plain, bg):
-    """parse_record's shapes, each with its label text added."""
     code, unit, shapes = fa_encode.parse_record(plain)
     names = bg_labels(bg) if bg else {}
     for s in shapes: s['label'] = names.get(s['name'], '')
@@ -75,8 +62,7 @@ def shapes_of(plain, bg):
 
 
 def verify(side, d):
-    """Problems between a sidecar and the tile it describes; [] when every indexed word is
-    a point x word of a shape carrying the indexed name, with the same role and link."""
+    """[] when every indexed word matches the tile: same shape, label, class, points."""
     recs = tile_records(d); bad = []
     for R in side['records']:
         code = tuple(R['code'])
@@ -90,6 +76,8 @@ def verify(side, d):
                 bad.append('%04x %04x: no shape at word %d' % (code + (S['at'],))); continue
             if got['label'] != S['label']:
                 bad.append('%04x %04x @%d: label %r, index says %r' % (code + (S['at'], got['label'], S['label'])))
+            if 'cls' in S and got['cls'] != S['cls']:
+                bad.append('%04x %04x @%d: class %d, index says %d' % (code + (S['at'], got['cls'], S['cls'])))
             for P in S['points']:
                 if got['points'].get(P['word']) != (P['role'], P['link']):
                     bad.append('%04x %04x @%d: word %d is %s, index says %s link %d'
