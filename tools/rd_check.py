@@ -2,40 +2,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check section-2 road records against what their own bodies say the header must hold.
 
-    ./rd_check.py [--country 352] [--card IMAGE] TILE...     TILE is a path, or with --card
-                                                             a name such as B60R080R.DAT
-    -v                                                       print every failing record
-    --graph [SHAPES.json ...]                                connected pieces of the level-1
-                                                             graph, named from shape indexes,
-                                                             and edge entries left unanswered
+    ./rd_check.py [--country 352] [--card IMAGE] TILE...
+    --graph [SHAPES.json ...]   connected pieces of the level-1 graph, and unanswered edges
 
-The header rule. Measured 18 Oct 2026 on 14 factory tiles off 214-062, 214-066 and 218-120,
-both levels, multi-class and border records included: 183,567 of 183,567 records whose body
-parses (115 in two dense city tiles do not yet):
-
-- words 2-5 are zero, and the units end where part a does;
-- from word 26 to the start of unit 0 sit the record's ISO 3166 numeric country codes, one
-  word each: one country and unit 0 at word 27, or two where a border crosses the parcel;
-- unit 0 words 0-3 are u32 nodes and u32 link ends, then eleven (nodes, link ends) pairs
-  at u4..u25, one per class group (slot). A node counts in the group of its own class, the
-  top nibble of its y word; its link ends are its entries, parcel-edge connections
-  excluded, and count in the same group. The totals in words 0-3 are the sums, so edge
-  connections are never counted.
-
-Two body rules ride along, since a writer has to get them right for the header to mean
-anything: a node's class is the lowest link class among its entries (the class word's low
-nibble), and an entry's high byte is the class of the node at the link's far end.
-
-A third is one-way (oneway_links): w5 bits 0x4000 and 0x8000 sit at opposite ends of a
-link, traffic leaving the 0x4000 end; 0xc000 at both ends is the factory's other form
-(I: closed both ways). Parcel-edge entries never carry them.
-
-Two more tie a record to the drawn shapes of its parcel (link_pairing, measured 20 Oct 2026
-on B48R068R-214-066, REPORT-oneway-diag in leaf-is-map): within each class the shapes' link
-ids are the set 1..n (level 1 6,683 of 6,683 class groups, level 2 8,483 of 8,483), and a
-link's two section-2 entries sit at its drawn first and last point, the one at the last
-point carrying 0x2000 on the id word (level 1 174,656 of 174,656 links; level 2 541,324 of
-541,762). A link is named by (class, id); ids repeat across classes.
+Words 2-5 are zero; unit 0 (word 27, or 28 across a border) holds u32 nodes, u32 link
+ends, then eleven (nodes, link ends) pairs at u4..u25, one per class group (slot), from
+the per-node class and entry counts (parcel-edge entries excluded). A node's class is
+the lowest of its link classes; an entry's high byte is the far node's class. One-way
+(oneway_links): w5 0x4000/0x8000 sit at opposite link ends, 0xc000 both means closed
+both ways. link_pairing ties a record to its parcel's shapes: per class the shape link
+ids are 1..n, and a link's two section-2 entries sit at its drawn first and last point,
+0x2000 on the id word at the last.
 """
 import collections, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -44,8 +21,7 @@ from tile_scan import TileScan
 
 
 def slot(cls):
-    """Pair index in u4..u25 for a node class: 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10
-    and up (ferries) at u24. u4/u5 and u14..u23 were zero on every factory record read."""
+    """Pair index in u4..u25 for a node class: 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up (ferries) at u24."""
     return 1 if cls <= 2 else 2 if cls <= 7 else 3 if cls == 8 else 4 if cls == 9 else 10
 
 SLOTS = 11
@@ -66,15 +42,28 @@ def expected(rec):
     return sum(p[0] for p in pairs), sum(p[1] for p in pairs), [tuple(p) for p in pairs]
 
 
+NO_ENTRY = 0xf0ff      # regulation word: prohibited from every entry at the node
+
+
 def oneway_links(rec):
-    """([(from node, to node, link id)] for one-way links, [problems]) of a parsed record."""
+    """([(from node, to node, link id)] for one-way links, [problems]) of a parsed record.
+    Sets oneway_links.no_entry/beside/barred counts for the regulation records around them."""
     ends, out, bad = {}, [], []
+    oneway_links.no_entry = oneway_links.beside = oneway_links.barred = 0
     for i, nd in enumerate(rec['nodes']):
-        for e in nd['entries']:
+        ents = nd['entries']
+        leaving = [k << 12 | 0xff for k, e in enumerate(ents) if not e['cls'] & 0x8000 and e['w5'] & 0xc000 == 0x4000]
+        for k, e in enumerate(ents):
             if e['cls'] & 0x8000:
                 if e['w5'] & 0xc000: bad.append('node %d edge entry with one-way bits %04x' % (i, e['w5']))
                 continue
             if e['other'] & 0x4000: continue
+            regs = e['extra'][:(e['w5'] >> 6) & 0x3f]
+            if e['w5'] & 0xc000 == 0x8000:
+                if NO_ENTRY in regs: oneway_links.no_entry += 1
+            elif leaving:
+                oneway_links.beside += 1
+                if set(leaving) <= set(regs): oneway_links.barred += 1
             ends.setdefault((e['cls'] & 0xf, e['id'] & 0x1fff, min(i, e['other']), max(i, e['other'])), []).append((i, e['w5'] & 0xc000))
     for (_, lid, _, _), l in ends.items():
         if len(l) != 2: continue
@@ -89,11 +78,9 @@ END_FLAG = 0x2000
 
 
 def link_pairing(shapes, rec, strict_flag=True):
-    """(links paired, [problems]) between a parcel's shapes (fa_encode.parse_record) and its
-    parsed section-2 record. Per class the shape link ids must be the set 1..n; each link
-    must have two entries, at the nodes on its drawn first and last point, with END_FLAG on
-    the last one only. A misplaced flag is a problem when strict_flag, else only counted in
-    link_pairing.flag_off: the factory's level 2 has 438 such links in 541,762, level 1 none."""
+    """(links paired, [problems]) between a parcel's shapes and its section-2 record: per
+    class the shape link ids must be 1..n, and each link's two entries must sit at its drawn
+    first and last point with END_FLAG on the last only (counted, not failed, when not strict_flag)."""
     bad = []; per = collections.defaultdict(list); link_pairing.flag_off = 0
     for sh in shapes:
         per[sh['cls']] += sh['links']
@@ -123,16 +110,14 @@ def link_pairing(shapes, rec, strict_flag=True):
 
 
 def part_a(plain, level):
-    """The graph part of a record: level-1 records are one zlib stream, level-2 records ship
-    raw as part a then part b, and part a ends where its last unit does."""
+    """The graph part of a record: level 1 is one zlib stream, level 2 ships part a raw then part b."""
     if level == 1: return plain
     units = [struct.unpack_from('>II', plain, 12 + 8 * i) for i in range(5)]
     return plain[:2 * max(o + n for o, n in units if o != 0xffffffff)]
 
 
 def check(plain, level=1, country=None):
-    """(header problems, body problems) for one inflated record; both empty when it passes.
-    check.oneway is left at the record's count of one-way links."""
+    """(header problems, body problems) for one inflated record, both empty when it passes."""
     check.oneway = 0
     pa = part_a(plain, level)
     w = struct.unpack('>%dH' % (len(pa) // 2), pa[:len(pa) // 2 * 2])
@@ -167,6 +152,7 @@ def check(plain, level=1, country=None):
                 bp.append('node %d entry class %04x, far node class %d' % (i, e['cls'], far))
     ow, bad = oneway_links(rec)
     check.oneway = len(ow)
+    check.no_entry, check.beside, check.barred = oneway_links.no_entry, oneway_links.beside, oneway_links.barred
     return hp, bp + bad
 
 
@@ -192,8 +178,7 @@ def components(tiles, level=1):
 
 
 def pieces(plains, level=1):
-    """Connected pieces of a set of inflated records, joined across parcel edges through the
-    edge entries: [(set of (row, col, link id), node count)], largest first."""
+    """[(set of (row, col, link id), node count)], joined across parcel edges, largest first."""
     parent = {}
     def find(a):
         while parent.setdefault(a, a) != a:
@@ -225,11 +210,8 @@ OPPOSITE = {0x8000: 0xc000, 0xc000: 0x8000, 0xa000: 0xe000, 0xe000: 0xa000}
 
 
 def edge_joins(plains, level=1):
-    """(edge entries read, [unanswered]) over a set of inflated records. An edge entry
-    names a side and the node it meets in the neighbour across it; that node must carry an
-    entry on the opposite side naming this one back. Each miss is (row, col, node, side,
-    far node, why). Held on five factory tiles off 214-062, about 224,000 level-1 edge
-    entries: every miss pointed into a parcel outside the tile."""
+    """(edge entries read, [unanswered]) over a set of inflated records: each edge entry's
+    far node must answer back on the opposite side. Each miss is (row, col, node, side, far node, why)."""
     edges, parcels = {}, set()
     for plain in plains:
         rec = clarion_rd.parse_record(part_a(plain, level))
@@ -268,10 +250,7 @@ def shape_records(t, level=1):
 
 
 def check_tile(tile, country=None):
-    """Tally one tile: path or bytes. Returns {(level, part, ok): n}, the
-    countries seen per level, and up to 20 failing examples. A level-1 record is paired with
-    its parcel's shapes (link_pairing) when both parse, at both levels; 'links paired' counts
-    the links."""
+    """Tally one tile (path or bytes): {(level, part, ok): n}, countries seen, up to 20 failing examples."""
     tally, countries, bad = collections.Counter(), collections.Counter(), []
     with TileScan(tile) as t:
         for sid, lev, doff, _ in t._dirs(2):
@@ -286,6 +265,9 @@ def check_tile(tile, country=None):
             tally[(r.level, 'header', not hp)] += 1
             tally[(r.level, 'body', not bp)] += 1
             tally[(r.level, 'one-way links', True)] += check.oneway
+            tally[(r.level, 'one-way no-entry records', True)] += check.no_entry
+            tally[(r.level, 'entries beside a leaving one-way', True)] += check.beside
+            tally[(r.level, 'of them barred from it', True)] += check.barred
             if not bp: tally[(r.level, 'header where the body is sound', not hp)] += 1
             pp = []
             sr = shapes.get(r.level, {}).get(struct.unpack_from('>HH', plain, 0)) if not bp else None
@@ -302,8 +284,7 @@ def check_tile(tile, country=None):
     return tally, countries, bad
 
 
-# A record whose body does not parse, or breaks the body rules, is one this reader cannot
-# vouch for; dense factory cities have a few (0.1%, an entry form not decoded yet).
+# a record that fails these cannot be vouched for; dense factory cities have a few (0.1%)
 PARTS = ('header', 'body', 'header where the body is sound', 'pairing')
 
 
@@ -336,7 +317,10 @@ def main(argv):
             for part in PARTS:
                 ok, no = tally[(lev, part, True)], tally[(lev, part, False)]
                 if ok or no: line.append('L%d %s %d/%d' % (lev, part, ok, ok + no))
-            if tally[(lev, 'one-way links', True)]: line.append('L%d one-way links %d' % (lev, tally[(lev, 'one-way links', True)]))
+            if tally[(lev, 'one-way links', True)]:
+                line.append('L%d one-way links %d (no-entry on %d, barred %d/%d)' % (
+                    lev, tally[(lev, 'one-way links', True)], tally[(lev, 'one-way no-entry records', True)],
+                    tally[(lev, 'of them barred from it', True)], tally[(lev, 'entries beside a leaving one-way', True)]))
             if tally[(lev, 'links paired', True)]: line.append('L%d links paired %d' % (lev, tally[(lev, 'links paired', True)]))
             if tally[(lev, 'end flag off', True)]: line.append('L%d end flag off %d' % (lev, tally[(lev, 'end flag off', True)]))
             if tally[(lev, 'pairing skipped, a shape does not parse', True)]:

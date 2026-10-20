@@ -11,6 +11,8 @@
     --no-l2-names                  level-2 shapes without names
     --no-chain                     a graph node at every point, two points per shape
     --turn-restrictions turns.json turn prohibitions from osm_turns.py; none unless given
+    --no-oneway-regs               one-way links with the w5 bits only, without the factory's
+                                   regulation records (rd_encode.oneway_regulations)
     --upper-names                  street names in upper case, as every factory label is;
                                    address records name streets the same way
     --shape-index OUT.json         where each level-1 drawn shape and point sits, checked
@@ -273,7 +275,7 @@ def chains_of(links, idx, chain=True, ids=None, groups=None):
     if groups is None: groups = link_groups(links, chain)
     return [[(ids[k] if ids else k + 1, idx[links[k][0]], idx[links[k][1]], links[k][8]) for k in g] for g in groups]
 
-def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
+def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.index = {}
     for pc, P in parcels.items():
@@ -300,7 +302,8 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None):
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
-                                               dirs=[l[10] for l in P['links']], ids=ids)
+                                               dirs=[l[10] for l in P['links']], ids=ids,
+                                               oneway_regs=oneway_regs)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         # drawn geometry: one shape per chain of links, each pointing at its street's label entry
@@ -403,6 +406,8 @@ def main():
     if '--no-l2-names' in argv: argv.remove('--no-l2-names'); no_l2_names = True
     no_chain = '--no-chain' in argv
     if no_chain: argv.remove('--no-chain')
+    oneway_regs = '--no-oneway-regs' not in argv
+    if not oneway_regs: argv.remove('--no-oneway-regs')
     if '--l2-classes' in argv:
         i = argv.index('--l2-classes'); l2 = clarion_profile.l2_classes(argv[i + 1]); del argv[i:i + 2]
     global UPPER_NAMES
@@ -437,7 +442,8 @@ def main():
         chain = not no_chain
         parcels = build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
-        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs)
+        recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
+                              oneway_regs=oneway_regs)
         if level == 1: index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
         parcels = own(parcels)
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]

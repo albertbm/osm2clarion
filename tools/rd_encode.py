@@ -2,15 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Encode a section-2 (road) level-1 record and directory from a node/link graph.
 
-Graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. Follows the shipped layout
-read by clarion_rd: nodes sorted by x, entries ordered as given, no parcel-edge connections.
-
-The per-entry words `a` (travel time) and `b` (length) are KIWI scaled values: bits 14-12
-a multiplication constant m, bits 11-0 the value, unit 4**m -- 0.1 s for the time, 1 m for
-the length. See KIWI 1.22 10.10.2 (17)(18) and 7.2.2.1.1 (9-4-1). Decoding the 2014 card
-that way gives sane speeds (B58R060R 1,989,501 level-1 links, median 29.8 km/h; B60R060R
-42,876 links, median 49.9 km/h), and the multiplier is live there: `a >> 12` takes 8 to 11,
-which is bit 15 set with m = 0..3.
+Graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. The per-entry words `a`
+(travel time) and `b` (length) are KIWI scaled values (KIWI 1.22 10.10.2): bits 14-12 a
+multiplier m, bits 11-0 the value, unit 4**m -- 0.1 s for time, 1 m for length.
 """
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -20,12 +14,9 @@ CLASS = 0x0898
 END_FLAG = 0x2000    # on the link-id word of the entry at the link's drawn last point
 MAXVAL = 0xffd       # 0xfff means infinite and 0xffe unknown, so a real value stops below them
 
-# Travel speed in km/h when the OSM way carries no `maxspeed`, which is 41,000 of the 62,439
-# Iceland ways. Each figure is the median of the ways of that class that DO carry one, so the
-# default is what the same kind of road is tagged in the same country. Measured 6 Oct 2026
-# over build/roads_iceland.json.
+# Default speed per class when the OSM way has no maxspeed, the median of Iceland ways that do.
 SPEED_KMH = {
-    'motorway': 90, 'motorway_link': 50,       # no motorway in Iceland; the legal limit
+    'motorway': 90, 'motorway_link': 50,
     'trunk': 90, 'trunk_link': 50,
     'primary': 70, 'primary_link': 50,
     'secondary': 50, 'secondary_link': 50,
@@ -39,9 +30,7 @@ SPEED_KMH = {
 DEFAULT_SPEED_KMH = 50
 
 def speed_of(hw, maxspeed=None):
-    """km/h for one link: the way's own `maxspeed` when it parses, else the class default.
-    Every Iceland value is a bare number, but `mph` is handled so a future extract of a
-    country that uses it does not read 50 mph as 50 km/h."""
+    """km/h for one link: the way's own maxspeed when it parses, else the class default."""
     if maxspeed:
         parts = str(maxspeed).strip().lower().split()
         try:
@@ -62,29 +51,22 @@ def scaled(q):
     return m, v
 
 def cost_words(length_m, kmh):
-    """The entry's (travel time, length) word pair. Bit 15 of the time word is left set, as
-    this file has always written it: KIWI calls it RESERVED, but the 2014 card sets it on
-    every level-1 road link and clears it on every ferry link."""
+    """The entry's (travel time, length) word pair; bit 15 of the time word is left set (KIWI RESERVED, set on every road link)."""
     secs = length_m / (kmh / 3.6)
-    mt, t = scaled(secs * 10)                      # the time unit is 0.1 s
-    mb, b = scaled(length_m)                       # the length unit is 1 m
+    mt, t = scaled(secs * 10)
+    mb, b = scaled(length_m)
     return 0x8000 | (mt << 12) | t, (mb << 12) | b
 
 def class_word(cls):
-    """The link class word: class in the high byte, then 0x90 | class. Measured over the 2014
-    card's south-west Norway tile, where the common words are 0x898 (class 8, 102,045 links),
-    0x595, 0x999, 0x494, 0x393, 0x797. The two constants this file used are that rule at
-    classes 8 and 7. Classes above 9 ship as 0x80 | class instead (0xa8a, 0xc8c)."""
+    """The link class word: class in the high byte, then 0x90 | class (0x80 | class above 9)."""
     return cls << 8 | (0x90 if cls <= 9 else 0x80) | cls
 
 def pair_slot(cls):
-    """Index of a node class in the unit's eleven (nodes, link ends) pairs at u4..u25: classes
-    0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up at u24 (rd_check.py has the evidence)."""
+    """Pair index at u4..u25 for a node class: 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up at u24."""
     return 1 if cls <= 2 else 2 if cls <= 7 else 3 if cls == 8 else 4 if cls == 9 else 10
 
 def unit_head(ncls, degree):
-    """Unit 0's 26 header words from each node's class and its count of real link ends.
-    Parcel-edge connections are not link ends; the factory never counts them."""
+    """Unit 0's 26 header words from each node's class and its count of real link ends (parcel-edge connections excluded)."""
     pairs = [[0, 0] for _ in range(11)]
     for c, d in zip(ncls, degree):
         pairs[pair_slot(c)][0] += 1; pairs[pair_slot(c)][1] += d
@@ -93,20 +75,16 @@ def unit_head(ncls, degree):
     return [nn >> 16, nn & 0xffff, nl >> 16, nl & 0xffff] + [w for p in pairs for w in p]
 
 def record_head(level, y0, x0, row, col, units, country):
-    """The 27-word record header: parcel code, two zero dwords, five unit pairs, then the ISO
-    3166 numeric country code where unit 0 starts at word 27. Shipped records carry their own
-    country here (380 Italy, 578 Norway); this file once wrote 0x017c and 0x00fa, which are
-    Italy and France, read off the Pantelleria and Paris tiles it was first copied from."""
+    """The 27-word record header: parcel code, two zero dwords, five unit pairs, ISO 3166 country code."""
     assert country, 'a section-2 record needs its ISO 3166 country code'
-    per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]   # parcels per mesh
+    per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
     hdr = list(clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)) + [0, 0, 0, 0]
     out = struct.pack('>6H', *hdr)
     for off, ln in units + [(0xffffffff, 0)] * (5 - len(units)): out += struct.pack('>II', off, ln)
     return out + struct.pack('>H', country), hdr
 
 def node_classes(nodes, links, link_cls):
-    """A node's class is the lowest class among its links: the top nibble of its y word, and
-    the high byte of every class word that points at it."""
+    """A node's class is the lowest class among its links."""
     ncls = [None] * len(nodes)
     for (i, j, _), c in zip(links, link_cls):
         for n in (i, j):
@@ -140,55 +118,51 @@ def build_record(level, y0, x0, row, col, nodes, links, compress=True, speeds=No
     return out, comp
 
 def oneway_bits(d):
-    """The w5 bits for a link's (i end, j end): d = 1 one-way from i to j, -1 from j to i, 0
-    both ways. Traffic leaves the 0x4000 end and arrives at the 0x8000 end. Measured 20 Oct
-    2026 on factory level-1 and level-2 links: the two bits always sit at opposite ends, and
-    on divided roads the twin carriageway lies to the left of that direction in France,
-    Belgium, the Netherlands and Norway and to the right in England (REPORT-oneway in
-    leaf-is-map). Parcel-edge entries never carry them."""
+    """The w5 bits for a link's (i end, j end): d = 1 one-way i to j, -1 j to i, 0 both ways.
+    Traffic leaves the 0x4000 end and arrives at the 0x8000 end."""
     return (0x4000, 0x8000) if d > 0 else (0x8000, 0x4000) if d < 0 else (0, 0)
 
 SIDE_B = {0x8000: 0x8000, 0xa000: 0x0080, 0xc000: 0xc000, 0xe000: 0x00c0}   # part-b side flags (top, right, bottom, left)
 
-PROHIBITED = 0xff     # between-links regulation flag (bit 7) + passage code 0x7f, "not allowed
-                      # unconditionally" (KIWI 1.22 10.7.1.2 (4)(4-1))
+PROHIBITED = 0xff     # regulation flag (bit 7) + passage code 0x7f, "not allowed unconditionally"
 
 def regulation_word(entry_index):
-    """One regulation record, as the card writes them: byte 0 is the entry-side link record
-    number in bits 7-4 and the exit-side one in bits 3-0, byte 1 the flag plus passage code.
-    The exit nibble is 0 in all 2,346 records of the factory tile B60R060R and in the bulk of
-    B58R060R's 279,072, so Clarion hangs the record off the entry for the exit link and leaves
-    that nibble clear. 15 in the entry nibble is the all-entry-links wildcard."""
+    """One regulation record: byte 0 entry-side link number (bits 7-4, 15 = all entries), exit
+    nibble left clear, byte 1 the flag plus passage code."""
     assert 0 <= entry_index <= 15
     return (entry_index << 12) | PROHIBITED
 
+ALL_ENTRIES = 15      # the from nibble that names every entry at the node
+
+def oneway_regulations(adj, real):
+    """{(node, entry number): [regulation words]} around one-way links: the arriving entry
+    gets no-entry-from-anyone, every entry beside a leaving one gets barred from it."""
+    out = {}
+    for nd, ents in adj.items():
+        leaving = [k for k in range(real[nd]) if ents[k][5] == 0x4000 and k <= 14]
+        for k in range(real[nd]):
+            if ents[k][5] == 0x8000:
+                out[(nd, k)] = [regulation_word(ALL_ENTRIES)]
+            elif leaving:
+                out[(nd, k)] = [regulation_word(j) for j in leaving]
+    return out
+
+def regulation_order(words, k):
+    """Entry k's regulation words sorted by from-entry, cyclically from k + 1, so a
+    prohibition from the entry itself comes last."""
+    return sorted(words, key=lambda w: ((w >> 12) - k - 1) % 16)
+
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
-                       speeds=None, regs=None, country=None, dirs=None, ids=None):
+                       speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
-    Level 1: zlib. Level 2: raw two parts, the second a per-node connection table. classes: per-link OSM highway value; each link then gets its
-    own class word instead of the level's default. speeds: per-link km/h for the travel time.
-    regs: [(node index, from link index, to link index)] turn prohibitions, written as
-    regulation records on the entry for the to-link; link indexes are positions in links.
-    Routing reads this, the renderer does not
-    -- rewriting all 160,876 level-1 link words in a tile changed nothing on screen.
-
-    ids: the link id word per link (rd_build.link_ids), 1..N in list order when None. The
-    factory numbers links 1..n within each class in section-1 shape order, and marks the entry
-    at the link's drawn last point with END_FLAG (174,656 of 174,656 level-1 links of
-    B48R068R-214-066; REPORT-oneway-diag in leaf-is-map). Until 20 Oct 2026 this put the flag
-    on the end with the larger y, which is the drawn last point only 89% of the time there.
-
-    Class words are written as the factory's are: the link's class in the low byte, the far
-    node's class in the high byte, and on an edge entry the node's own class, since its twin
-    across the edge carries the same roads. country: ISO 3166 numeric, word 26 of both parts.
-    dirs: per link 1 one-way from i to j, -1 from j to i, 0 both ways (oneway_bits)."""
+    Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else [default] * len(links)
     ncls = node_classes(nodes, links, [c & 0xf for c in cls_of])
     order = sorted(range(len(nodes)), key=lambda i: (nodes[i][0], nodes[i][1]))
     pos = {old: new for new, old in enumerate(order)}
     adj = {i: [] for i in range(len(nodes))}
-    slot = {}                       # (node index, link position) -> that link's entry number at the node
+    slot = {}
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
         a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH)
@@ -200,18 +174,20 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
                              ow[0] if end == i else ow[1]))
     real = {i: len(v) for i, v in adj.items()}
     for i, (side, twin) in edges.items():
-        # the edge entry repeats the class word of the link that reaches the edge
         adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0))
-    extras = {}                     # (node index, entry number) -> [regulation words]
+    extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
+    if oneway_regs and dirs:
+        for (nd, k), words in oneway_regulations(adj, real).items():
+            extras[(nd, k)] = words
     for nd, fl, tl in regs or []:
         fi, ti = slot.get((nd, fl)), slot.get((nd, tl))
         if fi is None or ti is None or fi > 14 or ti > 14:
             build_record_edges.regs_dropped += 1; continue
         w = regulation_word(fi)
         lst = extras.setdefault((nd, ti), [])
-        if w in lst: continue       # the same prohibition twice is one record
+        if w in lst or regulation_word(ALL_ENTRIES) in lst: continue   # already prohibited
         if len(lst) >= 14:          # w5 bits 6-11 hold the count; 14 is as far as this was tested
             build_record_edges.regs_dropped += 1; continue
         lst.append(w); build_record_edges.regs_written += 1
@@ -223,8 +199,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         assert len(ents) <= 15, 'node %r has %d entries, too many for the count nibble' % (nodes[old], len(ents))
         body += [(len(ents) << 12) | x, ncls[old] << 12 | y, 0]
         for k, (other, lid, cls, a, length, ow) in enumerate(ents):
-            ex = extras.get((old, k), ())
-            body += [other, 0, ow | len(ex) << 6, lid, cls, a, length] + list(ex)
+            ex = regulation_order(extras.get((old, k), ()), k)
+            body += [other, 0, ow | len(ex) << 6, lid, cls, a, length] + ex
     live = [old for old in order if adj[old]]
     nn = len(live)
     unit = unit_head([ncls[old] for old in live], [real[old] for old in live]) + body
@@ -234,8 +210,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(out) + c.flush()
         if len(comp) % 2: comp += b'\0'
         return out, comp
-    # part b: connection table. Header nodes, 0xa100; per node 2000 k 0 k then per entry (other, side, other)
-    pb = [nn, 0xa100]
+    pb = [nn, 0xa100]   # part b: connection table
     for k, old in enumerate(o for o in order if adj[o]):
         pb += [0x2000, k, 0, k]
         for other, lid, cls, a, length, _ in adj[old]:
@@ -243,7 +218,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     pb += [hdr[0], hdr[1], 0]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)
-    return out, partb   # caller stores the pair as (part a words, part b words)
+    return out, partb
 
 def make_dir(level, y0, x0, recs):
     """Section-2 directory: kind 0x1046, one pair per column, 32 slots of parcel rows."""
@@ -253,10 +228,10 @@ def make_dir(level, y0, x0, recs):
     for row, cols in sorted(recs.items()):
         pairs = [b'\xff' * 8] * npairs; rlist = []
         for col, (plain, comp) in sorted(cols.items()):
-            if level == 1:   # zlib: (compressed words, inflated words)
+            if level == 1:
                 pairs[col] = struct.pack('>II', len(comp) // 2, len(plain) // 2)
                 rlist.append(dict(k=col, raw=comp, words=len(plain) // 2))
-            else:            # raw: (part a words, part b words), stored back to back
+            else:
                 pairs[col] = struct.pack('>II', len(plain) // 2, len(comp) // 2)
                 rlist.append(dict(k=col, raw=plain + comp, words=len(comp) // 2))
         slots[row] = dict(body=b''.join(pairs), recs=rlist)
