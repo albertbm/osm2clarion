@@ -2,15 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Land-use and water polygons of an OSM extract as GeoJSON, for bg_tiles.py --landuse.
 
-The tag rules follow Geofabrik's Shortbread schema (land and water_polygons layers), cut
-down to the kinds clarion_bg.AREA_CLASSES can draw. Each feature carries its kind; holes are
-kept in the GeoJSON, though the encoder draws outer rings only.
-
-    ./extract_landuse.py EXTRACT.osm.pbf OUT.json [--bbox lon0,lat0,lon1,lat1] [--kinds forest,water]
-
---bbox clips every polygon to the box, for a build that should carry one area only.
---kinds keeps only the named kinds.
-Needs osmium and shapely.
+Tag rules follow Geofabrik's Shortbread schema (land and water_polygons layers), cut down to
+the kinds clarion_bg.AREA_CLASSES can draw. Holes are kept in the GeoJSON, though the
+encoder draws outer rings only. Needs osmium and shapely.
 """
 import json
 import sys
@@ -28,8 +22,10 @@ RULES = [
 ]
 
 
-def classify(tags):
-    """Shortbread-style kind for a tag dict, or None. water=river|canal makes a river."""
+def classify(tags, buildings=False):
+    """water=river|canal makes a river rather than water."""
+    if buildings and tags.get('building', 'no') != 'no':
+        return 'building'
     for key, values, kind in RULES:
         if tags.get(key) in values:
             if kind == 'water' and tags.get('water') in ('river', 'canal', 'stream'):
@@ -52,13 +48,16 @@ def main(argv):
         i = argv.index('--kinds')
         kinds = set(argv[i + 1].split(','))
         del argv[i:i + 2]
+    buildings = '--buildings' in argv
+    if buildings:
+        argv.remove('--buildings')
     src, dest = argv
     fab = osmium.geom.WKBFactory()
     feats = []
 
     class H(osmium.SimpleHandler):
         def area(self, a):
-            kind = classify({t.k: t.v for t in a.tags})
+            kind = classify({t.k: t.v for t in a.tags}, buildings)
             if kind is None or (kinds and kind not in kinds):
                 return
             try:

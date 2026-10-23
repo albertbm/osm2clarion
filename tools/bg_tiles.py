@@ -9,11 +9,13 @@ and are handled by the lev_* tools, which import this module for load_land, clea
 and encode_level_fast.
 
     ./bg_tiles.py --profile iceland TEMPLATE.DAT OUTDIR [CELL...]
-    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] [--landuse PATH] OUTDIR [CELL...]
+    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] [--landuse PATH [--area-class KIND=LAYER:CLASS]] OUTDIR [CELL...]
 
 --no-road-section writes section 1 alone, with no empty section 2 declared.
 --landuse adds the polygons of an extract_landuse.py file to levels 2 and 1, each kind in its
 clarion_bg.AREA_CLASSES layer, under the roads (which sit in their own records).
+--area-class KIND=LAYER:CLASS (repeatable, hex class) adds or overrides a kind's layer and class,
+e.g. building=5:020 for a trial of OSM buildings.
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -56,15 +58,19 @@ def load_land(path):
     return land, coast, STRtree(coast)
 
 
-def load_landuse(path):
+def load_landuse(path, classes=None):
     import json
 
     from shapely.geometry import shape
     items = []
     with open(path) as fh:
         feats = json.load(fh)['features']
+    classes = {**clarion_bg.AREA_CLASSES, **(classes or {})}
     for f in feats:
-        layer, cls = clarion_bg.AREA_CLASSES[f['properties']['kind']]
+        kind = f['properties']['kind']
+        if kind not in classes:
+            raise SystemExit('no area class for kind %r; pass --area-class %s=LAYER:CLASS' % (kind, kind))
+        layer, cls = classes[kind]
         g = shape(f['geometry'])
         for p in (g.geoms if hasattr(g, 'geoms') else [g]):
             if p.geom_type == 'Polygon' and not p.is_empty:
@@ -92,8 +98,7 @@ def landuse_layers(level, rect, lon0, lat0, w, h):
             s = bg_encode.ring_shape(p.exterior, lon0, lat0, w, h, prefix | cls)
             if s:
                 out.setdefault(layer, []).append(s)
-    # A group holds at most 255 shapes: keep the largest.
-    return {k: sorted(v, key=lambda s: -len(s['pts']))[:255] for k, v in out.items()}
+    return out
 
 
 def clean_land(land, level):
@@ -215,8 +220,12 @@ def main():
     version = None
     if '--data-version' in argv:
         i = argv.index('--data-version'); version = argv[i + 1]; del argv[i:i + 2]
+    classes = {}
+    while '--area-class' in argv:
+        i = argv.index('--area-class'); kind, lc = argv[i + 1].split('='); del argv[i:i + 2]
+        classes[kind] = (int(lc.split(':')[0]), int(lc.split(':')[1], 16))
     if '--landuse' in argv:
-        i = argv.index('--landuse'); load_landuse(argv[i + 1]); del argv[i:i + 2]
+        i = argv.index('--landuse'); load_landuse(argv[i + 1], classes); del argv[i:i + 2]
     road_section = '--no-road-section' not in argv
     if not road_section:
         argv.remove('--no-road-section')

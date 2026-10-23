@@ -1570,6 +1570,35 @@ class TestAgainstBgEncode(unittest.TestCase):
         self.assertEqual([s['type'] for s in r['layers'][7]['shapes']], [0xc015])
         self.assertEqual(clarion_bg.build_record(r), plain)
 
+    def test_buildings_over_255_split_into_subgroups(self):
+        import json
+
+        from shapely.geometry import box
+
+        import bg_tiles
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, 96, 898, 7, 9)
+        d = w / 40
+        houses = [box(lon0 + i * d, lat0 + j * d, lon0 + (i + .5) * d, lat0 + (j + .5) * d)
+                  for i in range(20) for j in range(20)]
+        fc = {'type': 'FeatureCollection', 'features': [
+            {'type': 'Feature', 'properties': {'kind': 'building'}, 'geometry': g.__geo_interface__} for g in houses]}
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(fc, f)
+        try:
+            with self.assertRaises(SystemExit):
+                bg_tiles.load_landuse(f.name)
+            bg_tiles.load_landuse(f.name, {'building': (5, 0x020)})
+            extra = bg_tiles.landuse_layers(1, box(lon0, lat0, lon0 + w, lat0 + h), lon0, lat0, w, h)
+        finally:
+            bg_tiles.LANDUSE.update(items=[], tree=None)
+            os.unlink(f.name)
+        plain, _ = bg_encode.build_parcel_record(1, 96, 898, 7, 9, [], [], [], extra_layers=extra)
+        r = clarion_bg.parse_record(plain)
+        g = r['layers'][5]
+        self.assertEqual([len(s['shapes']) for s in [g] + g.get('more', [])], [255, 145])
+        self.assertEqual({s['type'] for s in g['shapes']}, {0xc020})
+        self.assertEqual(clarion_bg.build_record(r), plain)
+
 
 class TestLandUseRules(unittest.TestCase):
     """extract_landuse.classify: Shortbread's land and water tags to AREA_CLASSES kinds."""
@@ -1581,6 +1610,8 @@ class TestLandUseRules(unittest.TestCase):
                  ({'natural': 'heath'}, 'heath'), ({'building': 'yes'}, None), ({'landuse': 'residential'}, None)]
         for tags, kind in cases:
             self.assertEqual(extract_landuse.classify(tags), kind, tags)
+        self.assertEqual(extract_landuse.classify({'building': 'house', 'landuse': 'forest'}, True), 'building')
+        self.assertEqual(extract_landuse.classify({'building': 'no', 'landuse': 'forest'}, True), 'forest')
 
     def test_every_kind_has_a_class(self):
         for _, _, kind in extract_landuse.RULES:

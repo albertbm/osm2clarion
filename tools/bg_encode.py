@@ -120,7 +120,9 @@ def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlaye
     if sea_polys: layers[1] = dict(kind=0x80, shapes=sea_polys)
     if coast: layers[11] = dict(kind=0x40, shapes=coast)
     for li, shapes in (extra_layers or {}).items():
-        if shapes: layers[li] = dict(kind=0x80, shapes=shapes)
+        # a subgroup counts its shapes in one byte, so more than 255 go into further subgroups
+        subs = [dict(kind=0x80, shapes=shapes[i:i + 255]) for i in range(0, len(shapes), 255)]
+        if subs: layers[li] = dict(subs[0], more=subs[1:])
     sections = {'names': name_section(labels)} if labels else {}   # shipped records omit it when empty
     rec = dict(hdr=w, nlayers=nlayers if layers else 0, layers=layers, sections=sections)
     plain = clarion_bg.build_record(rec)
