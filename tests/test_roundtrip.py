@@ -1989,3 +1989,28 @@ class TestReferHeader(unittest.TestCase):
         self.assertEqual(at, 0x2000)
         self.assertEqual(dfo % 256, 0)
         self.assertEqual(len(out) % 256, 0)
+
+
+class TestHouse(unittest.TestCase):
+    def test_names_and_parcel_codes(self):
+        import house_encode as h
+        self.assertEqual(h.file_name(0x3f, 4, 852, 7), 'B3F40AC7.DAT')
+        self.assertEqual(h.cell_of(-21.77, 64.12), (96, 1, 902, 1))
+        # the stock US file B3F40AC7 lists these codes for rows/columns (0,0), (0,4), (15,15)
+        self.assertEqual(h.code(0x3f, 4, 0, 852, 7, 0), (0x9fc0, 0xaa70))
+        self.assertEqual(h.code(0x3f, 4, 0, 852, 7, 4), (0x9fc0, 0xaa71))
+        self.assertEqual(h.code(0x3f, 4, 15, 852, 7, 15), (0x9fcf, 0xaa7f))
+
+    def test_record_layout(self):
+        import house_encode as h
+        sq = dict(type=h.CLASS, pts=[(10, 10), (10, 40), (40, 40), (40, 10), (10, 10)])
+        r = h.record(0xb010, 0xc310, [sq] * 300, 2)
+        w = struct.unpack_from('>24H', r)
+        self.assertEqual(w[2], 0x000f)
+        self.assertEqual(8 * (w[7] + w[8]), len(r))
+        base = 8 * w[7]
+        off, ln = struct.unpack_from('>HH', r, base + 4 * h.LAYER)
+        g = base + 8 * off
+        self.assertEqual(struct.unpack_from('>HH', r, g), (2, 5))       # 300 shapes, two sub-groups
+        self.assertEqual((r[g + 4], r[g + 5], r[g + 8], r[g + 9]), (0x80, 255, 0x80, 45))
+        self.assertEqual(struct.unpack_from('>5H', r, g + 10), (5, h.CLASS, 2, 0, 0xffff))
