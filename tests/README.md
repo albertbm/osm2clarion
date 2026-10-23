@@ -26,10 +26,11 @@ It checks that decode(encode(x)) gives x back, and that the bytes in between mat
 | road shape records from `fa_encode` | GEOMETRY.md; nothing in `tools/` reads them back |
 | the point flags, bit by bit, and the chains `rd_build` makes of links | the four-flag table in GEOMETRY.md |
 | the OSM class mapping | the table in ROAD-CLASSES.md |
+| land-use tags to kinds, kinds to area classes | `extract_landuse.RULES`, `clarion_bg.AREA_CLASSES` |
 | `DRSTR001.DAT` from a tree of empty files | FORMAT.md |
 | profiles | `profiles/iceland.toml` |
 
-Six cases need `shapely`, and skip without it. They compare `bg_encode`, which cannot be
+Seven cases need `shapely`, and skip without it. Six compare `bg_encode`, which cannot be
 imported without shapely, against the two local copies of its record and directory builders
 that the other cases use. If those drift apart, those six fail.
 
