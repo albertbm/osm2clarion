@@ -9,9 +9,11 @@ and are handled by the lev_* tools, which import this module for load_land, clea
 and encode_level_fast.
 
     ./bg_tiles.py --profile iceland TEMPLATE.DAT OUTDIR [CELL...]
-    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] OUTDIR [CELL...]
+    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] [--landuse PATH] OUTDIR [CELL...]
 
 --no-road-section writes section 1 alone, with no empty section 2 declared.
+--landuse adds the polygons of an extract_landuse.py file to levels 2 and 1, each kind in its
+clarion_bg.AREA_CLASSES layer, under the roads (which sit in their own records).
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -28,6 +30,10 @@ SEA = ''
 # Extra features drawn into every level. areas: (polygon, label); lines: LineString;
 # points: (lon, lat, text). Empty for a coastline-only build.
 MARKERS = dict(areas=[], lines=[], points=[])
+# Land use: [(polygon, layer, class)] and an STRtree over the polygons, set by load_landuse.
+LANDUSE = {'items': [], 'tree': None}
+# Smallest land-use polygon drawn per level, in square degrees (1e-6 is about 0.5 ha at 64N).
+LANDUSE_MIN = {1: 2e-8, 2: 1e-6}
 
 t0 = time.time()
 
@@ -48,6 +54,46 @@ def load_land(path):
     print(f'coast ways {len(coast)}, closed rings {len(rings)}, '
           f'open pieces {len(parts) - len(rings)}, land area {land.area:.3f} deg2')
     return land, coast, STRtree(coast)
+
+
+def load_landuse(path):
+    import json
+
+    from shapely.geometry import shape
+    items = []
+    with open(path) as fh:
+        feats = json.load(fh)['features']
+    for f in feats:
+        layer, cls = clarion_bg.AREA_CLASSES[f['properties']['kind']]
+        g = shape(f['geometry'])
+        for p in (g.geoms if hasattr(g, 'geoms') else [g]):
+            if p.geom_type == 'Polygon' and not p.is_empty:
+                items.append((p, layer, cls))
+    LANDUSE['items'] = items
+    LANDUSE['tree'] = STRtree([p for p, _, _ in items]) if items else None
+    print(f'land use {len(items)} polygons from {path}')
+
+
+def landuse_layers(level, rect, lon0, lat0, w, h):
+    """{layer: shapes} of the land use inside one parcel. Outer rings only: a hole (a
+    clearing in a wood) is not representable, and a lake on top draws in a later layer."""
+    if LANDUSE['tree'] is None:
+        return {}
+    prefix = LEVELS[level]['seatype'] & 0xf000
+    out = {}
+    for i in LANDUSE['tree'].query(rect):
+        poly, layer, cls = LANDUSE['items'][i]
+        if not poly.intersects(rect):
+            continue
+        inter = poly.intersection(rect)
+        for p in (inter.geoms if hasattr(inter, 'geoms') else [inter]):
+            if p.geom_type != 'Polygon' or p.area < LANDUSE_MIN.get(level, 0):
+                continue
+            s = bg_encode.ring_shape(p.exterior, lon0, lat0, w, h, prefix | cls)
+            if s:
+                out.setdefault(layer, []).append(s)
+    # A group holds at most 255 shapes: keep the largest.
+    return {k: sorted(v, key=lambda s: -len(s['pts']))[:255] for k, v in out.items()}
 
 
 def clean_land(land, level):
@@ -95,6 +141,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                 if lon0 <= plon < lon0 + w and lat0 <= plat < lat0 + h:
                     extra_labels.append((0x4068, 0x4800, bg_encode.quant(plon, lon0, w),
                                          bg_encode.quant(plat, lat0, h), text))
+            extra = landuse_layers(level, rect, lon0, lat0, w, h)
             if not pl.intersects(rect):          # open sea
                 sea_polys = [dict(type=L['seatype'], ref=0xffff,
                                   pts=bg_encode.densify([(0, 0), (0, 2047), (2047, 2047), (2047, 0), (0, 0)]))]
@@ -102,7 +149,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
             elif pl.contains(rect):
                 # All land. A header-only record, so that every parcel exists.
                 out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
-                    level, y0, x0, row, col, [], extra_lines, extra_labels, area_polys=area_polys)
+                    level, y0, x0, row, col, [], extra_lines, extra_labels, area_polys=area_polys, extra_layers=extra)
                 continue
             else:
                 water = rect.difference(land_local)
@@ -132,7 +179,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                                bg_encode.quant(rp.y, lat0, h), sea)]
             out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
                 level, y0, x0, row, col, sea_polys, coastl + extra_lines,
-                labels + extra_labels, area_polys=area_polys)
+                labels + extra_labels, area_polys=area_polys, extra_layers=extra)
     return out
 
 
@@ -168,6 +215,8 @@ def main():
     version = None
     if '--data-version' in argv:
         i = argv.index('--data-version'); version = argv[i + 1]; del argv[i:i + 2]
+    if '--landuse' in argv:
+        i = argv.index('--landuse'); load_landuse(argv[i + 1]); del argv[i:i + 2]
     road_section = '--no-road-section' not in argv
     if not road_section:
         argv.remove('--no-road-section')

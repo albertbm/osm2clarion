@@ -40,6 +40,13 @@ LEVELS = {5: dict(cols=11, rows=11, dir_meshes=88, typ=0x90, seatype=0x8012, coa
           1: dict(cols=32, rows=32, dir_meshes=1, typ=0x92, seatype=0xc012, coasttype=0xc007, areatype=0xc02b, w34=(0x347a, 0x2aef),
                   kind=0x2046, ab=(0x20, 0x20), body=512, slots=32)}
 
+# Area kinds (extract_landuse.py) to (section-1 layer, shape class). The class is the low 12
+# bits of the shape type; the level's prefix (LEVELS seatype & 0xf000) goes on top. Read off
+# the factory Koeln tile B48R060R against known places: 01a Siebengebirge and Eifel forest,
+# 01d town parks (Mariemont, Guetersloh), 015 Rursee and Laacher See, 014 the Rhine at Mainz.
+AREA_CLASSES = {'forest': (3, 0x01a), 'heath': (3, 0x01b), 'park': (3, 0x01d),
+                'water': (7, 0x015), 'river': (7, 0x014)}
+
 def tile_cell(name):
     """South-west mesh (y0, x0) of tile BbbRrrr: filenames are hexadecimal."""
     b = int(name[1:3], 16); r = int(name[4:7], 16)

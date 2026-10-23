@@ -28,6 +28,7 @@ import clarion_bg
 import clarion_profile
 import clarion_rd
 import clarion_tile
+import extract_landuse
 import fa_encode
 import make_drstr
 import rd_build
@@ -1541,6 +1542,49 @@ class TestAgainstBgEncode(unittest.TestCase):
     def test_label_spec(self):
         got = bg_encode.parse_labels('0x4089:0x2800:-22.5,64.2:ATLANTSHAF')
         self.assertEqual(got, [(0x4089, 0x2800, -22.5, 64.2, 'ATLANTSHAF', 0x35d8)])
+
+    def test_landuse_layers(self):
+        import json
+
+        from shapely.geometry import box
+
+        import bg_tiles
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, 96, 898, 7, 9)
+        wood = box(lon0 + w / 4, lat0 + h / 4, lon0 + w / 2, lat0 + h / 2)
+        lake = wood.buffer(-w / 16)
+        fc = {'type': 'FeatureCollection', 'features': [
+            {'type': 'Feature', 'properties': {'kind': k}, 'geometry': g.__geo_interface__}
+            for k, g in (('forest', wood), ('water', lake))]}
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(fc, f)
+        try:
+            bg_tiles.load_landuse(f.name)
+            extra = bg_tiles.landuse_layers(1, box(lon0, lat0, lon0 + w, lat0 + h), lon0, lat0, w, h)
+        finally:
+            bg_tiles.LANDUSE.update(items=[], tree=None)
+            os.unlink(f.name)
+        plain, _ = bg_encode.build_parcel_record(1, 96, 898, 7, 9, [], [], [], extra_layers=extra)
+        r = clarion_bg.parse_record(plain)
+        self.assertEqual(sorted(r['layers']), [3, 7])
+        self.assertEqual([s['type'] for s in r['layers'][3]['shapes']], [0xc01a])
+        self.assertEqual([s['type'] for s in r['layers'][7]['shapes']], [0xc015])
+        self.assertEqual(clarion_bg.build_record(r), plain)
+
+
+class TestLandUseRules(unittest.TestCase):
+    """extract_landuse.classify: Shortbread's land and water tags to AREA_CLASSES kinds."""
+
+    def test_kinds(self):
+        cases = [({'landuse': 'forest'}, 'forest'), ({'natural': 'wood'}, 'forest'),
+                 ({'natural': 'water'}, 'water'), ({'natural': 'water', 'water': 'river'}, 'river'),
+                 ({'waterway': 'riverbank'}, 'river'), ({'leisure': 'park'}, 'park'),
+                 ({'natural': 'heath'}, 'heath'), ({'building': 'yes'}, None), ({'landuse': 'residential'}, None)]
+        for tags, kind in cases:
+            self.assertEqual(extract_landuse.classify(tags), kind, tags)
+
+    def test_every_kind_has_a_class(self):
+        for _, _, kind in extract_landuse.RULES:
+            self.assertIn(kind, clarion_bg.AREA_CLASSES)
 
 
 if __name__ == '__main__':

@@ -98,8 +98,9 @@ def name_section(labels):
     while len(out) % 4: out += b'\0'
     return bytes(out)
 
-def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlayers=26, area_polys=()):
-    """(y0, x0) is the directory's south-west mesh, (row, col) the parcel inside it."""
+def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlayers=26, area_polys=(), extra_layers=None):
+    """(y0, x0) is the directory's south-west mesh, (row, col) the parcel inside it.
+    extra_layers: {layer: polygon shapes}, land use from bg_tiles.landuse_layers."""
     L = LEVELS[level]
     if level in (4, 5):   # code units are 20'/30' (2 per mesh); parcels are 2 (level 4) or 8 (level 5) meshes
         m = {4: 2, 5: 8}[level]
@@ -110,7 +111,7 @@ def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlaye
         w = [0] * 22
         w[0], w[1] = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
     # level 5 ships 0xfa on records with shapes and 0xfa0 on empty ones; level 4 is 0x3e8 throughout
-    w[2] = {4: 0x3e8, 5: 0xfa if (sea_polys or coast or area_polys) else 0xfa0}.get(level, 0x19); w[3], w[4] = L['w34']
+    w[2] = {4: 0x3e8, 5: 0xfa if (sea_polys or coast or area_polys or extra_layers) else 0xfa0}.get(level, 0x19); w[3], w[4] = L['w34']
     w[7], w[8] = 0xffff, 0
     w[13], w[14] = 0xffff, 0; w[15], w[16] = 0xffff, 0; w[17], w[18] = 0xffff, 0
     w[19], w[20] = 0, 0xffff
@@ -118,6 +119,8 @@ def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlaye
     if area_polys: layers[0] = dict(kind=0x80, shapes=area_polys)
     if sea_polys: layers[1] = dict(kind=0x80, shapes=sea_polys)
     if coast: layers[11] = dict(kind=0x40, shapes=coast)
+    for li, shapes in (extra_layers or {}).items():
+        if shapes: layers[li] = dict(kind=0x80, shapes=shapes)
     sections = {'names': name_section(labels)} if labels else {}   # shipped records omit it when empty
     rec = dict(hdr=w, nlayers=nlayers if layers else 0, layers=layers, sections=sections)
     plain = clarion_bg.build_record(rec)
