@@ -155,5 +155,160 @@ class Blobs(unittest.TestCase):
         self.assertEqual(got, [raw, raw])
 
 
+def shape_words(sid, kind, typ, attr, x0, y0, deltas, tail=()):
+    """One shape as words: int8 deltas unless attr & 0x0100."""
+    wide = bool(attr & 0x0100)
+    body = []
+    for dx, dy in deltas:
+        if wide:
+            body += [dx & 0xffff, dy & 0xffff]
+        else:
+            body.append((dx & 0xff) << 8 | (dy & 0xff))
+    n = len(deltas)
+    w = [0, sid, 0xe000 | n, typ, attr, x0, y0] + body + list(tail)
+    w[0] = len(w) | (0x2000 if tail else 0)
+    return w
+
+
+def section(groups):
+    """groups: [(kind, [shape words, ...]), ...] -> section words."""
+    ng = len(groups)
+    head = [ng, 2 * ng + 1]
+    body = []
+    offs = []
+    q = 2 * ng + 1
+    for kind, shps in groups:
+        offs.append(q)
+        for w in shps:
+            body += w
+            q += len(w)
+    head.append(groups[0][0] | len(groups[0][1]))
+    for (kind, shps), o in zip(groups[1:], offs[1:]):
+        head += [o, kind | len(shps)]
+    return tuple(head + body)
+
+
+class Drawing(unittest.TestCase):
+
+    # the measured sea polygon of BPCL parcel 0bed 120d (south of Hateruma): int16
+    # deltas, a zero delta at every switch between parcel border and coast
+    SEA = [(0, 0), (2048, 0), (0, 4096), (-621, 0), (0, 0), (-8, -4), (-11, 4), (0, 0),
+           (-288, 0), (0, 0), (-6, -5), (-9, -2), (-10, 7), (0, 0), (-1095, 0), (0, -4096), (0, 0)]
+
+    def test_wide_polygon_closes_and_draws_the_coast(self):
+        sec = section([(0x8000, [shape_words(1, 0x8000, 0x0121, 0xc500, 0, 0, self.SEA)])])
+        s, = jp_dbdir.shapes(sec)
+        self.assertEqual((s.kind, s.type, s.scales), (0x80, 0x0121, 7))
+        self.assertEqual(s.pts[0], s.pts[-1])
+        self.assertEqual(s.breaks, [1, 4, 6, 7, 10, 12])
+        runs = jp_dbdir.drawn_runs(s)
+        self.assertEqual(runs, [[(1427, 4096), (1419, 4092), (1408, 4096)],
+                                [(1120, 4096), (1114, 4091), (1105, 4089), (1095, 4096)]])
+
+    def test_narrow_deltas_groups_points_and_tails(self):
+        line = shape_words(7, 0x4000, 0x0120, 0xc000, 100, 200, [(127, -128), (-1, 1)])
+        point = shape_words(9, 0, 0x054c, 0xc000, 3000, 4000, [])
+        tagged = shape_words(10, 0, 0x01f2, 0xc000, 5, 6, [], tail=(0x8000, 0x0167))
+        sec = section([(0x4000, [line]), (0x0000, [point, tagged])])
+        a, b, c = jp_dbdir.shapes(sec)
+        self.assertEqual(a.pts, [(100, 200), (227, 72), (226, 73)])
+        self.assertEqual((b.kind, b.pts, b.tail), (0, [(3000, 4000)], ()))
+        self.assertEqual(c.tail, (0x8000, 0x0167))
+
+    def test_count_above_255(self):
+        sq = [(10, 0), (0, 10), (-10, 0), (0, -10)]
+        shps = [shape_words(i, 0x8000, 0x040a, 0xc000, i, i, sq) for i in range(300)]
+        got = list(jp_dbdir.shapes(section([(0x8000, shps)])))
+        self.assertEqual(len(got), 300)
+        self.assertTrue(all(s.kind == 0x80 and s.pts[0] == s.pts[-1] for s in got))
+
+    def test_bad_group_offset(self):
+        sec = list(section([(0x4000, [shape_words(1, 0x4000, 0x0120, 0xc000, 0, 0, [(1, 1)])]),
+                            (0x4000, [shape_words(2, 0x4000, 0x0120, 0xc000, 0, 0, [(1, 1)])])]))
+        sec[3] += 1
+        with self.assertRaises(ValueError):
+            list(jp_dbdir.shapes(tuple(sec)))
+
+    def test_record_sections(self):
+        sec = section([(0x8000, [shape_words(1, 0x8000, 0x0121, 0xc500, 0, 0, self.SEA)])])
+        n = 1 + 3 * 19
+        t = [n]
+        for i in range(19):
+            t += [0, n, len(sec)] if i == 1 else [0xffff, 0xffff, 0]
+        rec = struct.pack('>%dH' % (n + len(sec)), *(t + list(sec)))
+        got = jp_dbdir.record_sections(rec)
+        self.assertEqual(list(got), [1])
+        self.assertEqual(got[1], sec)
+
+
+class DrawingRows(unittest.TestCase):
+
+    def test_blob_refs(self):
+        # BPCLD+0xE004 after the key: 29 42 | 01 06 00 00, 2a 0a 00 | 02 06 00 00 ...
+        b = bytes.fromhex('2942 0106 0000 2a0a 0002 0600 002b 3c01 0003 0600 00'.replace(' ', ''))
+        self.assertEqual(jp_dbdir.blob_refs(b), [(0x42, 1, 6), (0x0a, 2, 6), (0x13c, 3, 6)])
+        refs, rest = jp_dbdir.blob_refs(b + bytes.fromhex('d8180000'), 3)
+        self.assertEqual((len(refs), rest), (3, bytes.fromhex('d8180000')))
+
+    def test_read_blob_follows_continuations(self):
+        data = bytes(range(256)) * 40
+        first = data[:3000]
+        rest = data[3000:]
+        # page 3 holds a short row then the 0x4009 head; page 4 slot 1 the tail
+        p3 = [struct.pack('<HH', 10, 0x0009) + b'abcdef',
+              struct.pack('<HH', 8 + len(first), 0x4009) + bytes([1]) + (4).to_bytes(3, 'little') + first]
+        p4 = [struct.pack('<HH', 4 + len(rest), 0x0009) + rest]
+        img = bytes(0x10000) + data_page(p3, size=0x8000) + data_page(p4, size=0x8000)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'BPCLB')
+            with open(p, 'wb') as f:
+                f.write(img)
+            with open(p, 'rb') as f:
+                self.assertEqual(jp_dbdir.read_blob(f, (len(data), 2, 3)), data)
+                self.assertEqual(jp_dbdir.read_blob(f, (6, 1, 3)), b'abcdef')
+                with self.assertRaises(ValueError):
+                    jp_dbdir.read_blob(f, (7, 1, 3))
+
+    def test_zlib_blob(self):
+        raw = b'\x00\x3a' + bytes(200)
+        z = zlib.compress(raw)
+        img = data_page([struct.pack('<HH', 4 + len(z), 0x0009) + z], size=0x8000)
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, 'BTPCL13B')
+            with open(p, 'wb') as f:
+                f.write(img)
+            with open(p, 'rb') as f:
+                self.assertEqual(jp_dbdir.read_blob(f, (len(z), 1, 1)), raw)
+
+
+class ParcelKeys(unittest.TestCase):
+
+    def test_bpcl_level1_corner(self):
+        # BPCLD row 1: A 0x0bed, B 0x120d; its descriptor says 24.02083N 123.78125E
+        self.assertEqual(jp_dbdir.bpcl_level(0x0bed, 0x120d), 1)
+        (lon, lat), size = jp_dbdir.bpcl_parcel(0x0bed, 0x120d)
+        self.assertEqual((lon, lat), (0x366564, 0x0a8e58))
+        self.assertEqual(size, (900, 600))
+
+    def test_bpcl_level2_corner(self):
+        self.assertEqual(jp_dbdir.bpcl_level(0x0bd2, 0x123f), 2)
+        (lon, lat), size = jp_dbdir.bpcl_parcel(0x0bd2, 0x123f)
+        self.assertEqual((lon / 28800, lat / 28800), (123.625, 24.25))
+        self.assertEqual(size, (3600, 2400))
+
+    def test_btpcl_cell_is_the_mesh_key(self):
+        (lon, lat), size = jp_dbdir.btpcl_parcel(0x139f, 0x1ab4)
+        self.assertEqual((lon / 28800, lat / 28800), jp_dbdir.mesh_point(0x139f, 0x1ab4))
+        x, y = jp_dbdir.parcel_point(4096, 4096, (lon, lat), size)
+        self.assertAlmostEqual(x, jp_dbdir.mesh_point(0x13a0, 0x1ab5)[0])
+        self.assertAlmostEqual(y, jp_dbdir.mesh_point(0x13a0, 0x1ab5)[1])
+
+    def test_tokyo_datum_shift(self):
+        # Tokyo Datum -> WGS84 near Tokyo moves about -11.6" in lon and +11.6" in lat
+        lon, lat = jp_dbdir.tokyo_to_wgs84(139.75, 35.68)
+        self.assertAlmostEqual((lon - 139.75) * 3600, -11.6, delta=0.3)
+        self.assertAlmostEqual((lat - 35.68) * 3600, 11.6, delta=0.3)
+
+
 if __name__ == '__main__':
     unittest.main()

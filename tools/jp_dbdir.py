@@ -11,10 +11,12 @@ measurements and the plan.
     jp_dbdir.py summary FILE...     header fields and page census
     jp_dbdir.py keys FILE...        bounding box of the JIS mesh keys in a D file
     jp_dbdir.py blob FILE [PAGES]   framing, zlib and geometry-group census of a B file
+    jp_dbdir.py geojson DBDIR TABLE A B
+                                    one BPCL or BTPCLnn parcel as WGS84 GeoJSON (A, B hex)
 
 Nothing here writes, and none of it has been checked by a round trip yet.
 """
-import collections, os, struct, sys, zlib
+import collections, json, math, os, struct, sys, zlib
 
 CONTROL = (b'flhb', b'ratm', b'raim', b'sbmb', b'sgmb')
 ROW_PAGE = 0x1000          # rows sit in 4 KiB pages even where the header says 0x8000
@@ -213,6 +215,244 @@ def group_headers(b):
         i += 2
 
 
+# --- drawing parcels (BPCL, BTPCLnn) ------------------------------------------------
+#
+# A D row holds the parcel key (A, B), a u16, then blob references; each reference names
+# a row of the B file. The drawing record is a section table, each section a list of
+# geometry groups. Decoded on card 485-1972-00: every BPCL and BTPCL polygon closes
+# (1.5 M and 49 M), and BPCL level-1 sea outlines land on OSM coastline within metres.
+
+def blob_refs(b, limit=None):
+    """Blob references in a D row after the key and column 1.
+
+    Tag 0x29, 0x2a or 0x2b gives the width (1, 2 or 3 bytes, LE) of the length that
+    follows, then a locator: u8 slot (1-based row in the page) and u24 LE page (1-based,
+    in units of the B file's page size). With `limit`, stop after that many references
+    and return (refs, the rest of the row): BTPCL rows carry two u32 columns after them.
+    """
+    out = []
+    o = 0
+    while o < len(b) and (limit is None or len(out) < limit):
+        w = b[o] - 0x28
+        if not 1 <= w <= 3:
+            raise ValueError('not a blob reference at +%d: %02x' % (o, b[o]))
+        out.append((int.from_bytes(b[o + 1:o + 1 + w], 'little'), b[o + 1 + w],
+                    int.from_bytes(b[o + 2 + w:o + 5 + w], 'little')))
+        o += 5 + w
+    return out if limit is None else (out, b[o:])
+
+
+def read_blob(f, ref, page=0x8000):
+    """The payload a (length, slot, page) reference names, zlib streams inflated.
+
+    A row with flags 0x4009 continues in another row: its first four bytes are the
+    locator (u8 slot, u24 LE page) of the next piece.
+    """
+    ln, slot, pno = ref
+    parts = []
+    for _ in range(256):
+        f.seek((pno - 1) * page)
+        pg = f.read(page)
+        o = 4
+        for _ in range(slot - 1):
+            o += struct.unpack_from('<H', pg, o)[0]
+        n, fl = struct.unpack_from('<HH', pg, o)
+        body = pg[o + 4:o + n]
+        if fl != 0x4009:
+            parts.append(body)
+            break
+        slot, pno = body[0], int.from_bytes(body[1:4], 'little')
+        parts.append(body[4:])
+    b = b''.join(parts)
+    if len(b) != ln:
+        raise ValueError('blob holds %d bytes, its reference says %d' % (len(b), ln))
+    if b[:2] == b'\x78\x9c':
+        b = zlib.decompress(b)
+    return b
+
+
+def record_sections(b):
+    """{index: tuple of BE words} for the non-empty sections of a drawing record."""
+    w = struct.unpack('>%dH' % (len(b) // 2), b[:len(b) // 2 * 2])
+    out = {}
+    for i, o in enumerate(range(1, w[0], 3)):
+        off = w[o] << 16 | w[o + 1]
+        if off != 0xffffffff:
+            out[i] = w[off:off + w[o + 2]]
+    return out
+
+
+Shape = collections.namedtuple('Shape', 'kind id scales type attr pts breaks tail')
+
+
+def _s8(v):
+    return v - 0x100 if v & 0x80 else v
+
+
+def _s16(v):
+    return v - 0x10000 if v & 0x8000 else v
+
+
+def shapes(sec):
+    """The shapes of one section, in parcel units 0..4096 (x east, y north).
+
+    Section: `u16 groups, u16 2*groups+1, u16 kind|count`, then for each further group
+    `u16 word offset from the section start, u16 kind|count`. kind|count: 0x8000
+    polygon, 0x4000 polyline, 0 point, low 14 bits the number of shapes.
+    Shape: `u16 flags|length` (low 13 bits the length in words, 0x2000 = trailing words
+    after the points), `u16 id`, `u16 scales<<13 | n`, `u16 type`, `u16 attr`, then x, y
+    and, for lines and polygons, n deltas: int8 (dx, dy) in one word, or two int16 words
+    when attr & 0x0100. A zero delta adds no point; it toggles whether the outline is
+    drawn (see drawn_runs).
+    """
+    ng, hl = sec[0], sec[1]
+    if hl != 2 * ng + 1:
+        raise ValueError('bad group header %04x %04x' % (ng, hl))
+    heads = [(None, sec[2])] + [(sec[3 + 2 * i], sec[4 + 2 * i]) for i in range(ng - 1)]
+    q = hl
+    for goff, kc in heads:
+        if goff is not None and goff != q:
+            raise ValueError('group at word %d, expected %d' % (goff, q))
+        kind = kc >> 8 & 0xc0
+        for _ in range(kc & 0x3fff):
+            L = sec[q] & 0x1fff
+            if L < 7 or q + L > len(sec):
+                raise ValueError('bad shape length %#06x at word %d' % (sec[q], q))
+            w = sec[q:q + L]
+            n = w[2] & 0x1fff
+            wide = bool(w[4] & 0x0100)
+            need = 7 if kind == 0 else 7 + (2 * n if wide else n)
+            if need > L or (need < L and not sec[q] & 0x2000):
+                raise ValueError('shape %d: %d deltas do not fill %d words' % (w[1], n, L))
+            x, y = w[5], w[6]
+            pts, breaks = [(x, y)], []
+            for i in range(n if kind else 0):
+                if wide:
+                    dx, dy = _s16(w[7 + 2 * i]), _s16(w[8 + 2 * i])
+                else:
+                    dx, dy = _s8(w[7 + i] >> 8), _s8(w[7 + i] & 0xff)
+                if dx == dy == 0:
+                    breaks.append(len(pts))
+                    continue
+                x += dx
+                y += dy
+                pts.append((x, y))
+            yield Shape(kind, w[1], w[2] >> 13, w[3], w[4], pts, breaks, w[need:])
+            q += L
+    if q != len(sec):
+        raise ValueError('%d words left over' % (len(sec) - q))
+
+
+def drawn_runs(s):
+    """The drawn parts of a polygon outline, as point lists.
+
+    The outline starts drawn and each zero delta toggles it. Undrawn edges are the parcel
+    border and the straight cuts that split large polygons, so the drawn runs of a sea
+    polygon are the coastline.
+    """
+    runs, cur = [], []
+    for j in range(1, len(s.pts)):
+        if sum(1 for k in s.breaks if k <= j) % 2 == 0:
+            cur = cur or [s.pts[j - 1]]
+            cur.append(s.pts[j])
+        elif cur:
+            runs.append(cur)
+            cur = []
+    return runs + [cur] if cur else runs
+
+
+EXTENT = 4096
+
+
+def bpcl_level(a, b):
+    """BPCL key level: level 1 keys end in 0xc|n on both halves (a quarter of a second
+    mesh, n = 0..3); the others carry the level in A's low nibble and 0xf in B's."""
+    return 1 if a & 0xc == 0xc and b & 0xc == 0xc else a & 0xf
+
+
+def bpcl_parcel(a, b):
+    """(lon, lat) of the SW corner and (width, height), all in 1/8 arc-second, of a BPCL
+    level 1 (1.875' x 1.25') or level 2 (one second mesh, 7.5' x 5') parcel. The corner
+    is also stored in the parcel's column-2 blob, as BE u32 lat and lon in 1/2048"."""
+    lv = bpcl_level(a, b)
+    lon = (100 + (a >> 7)) * 28800 + ((a >> 4) & 7) * 3600
+    lat = ((b >> 7) * 2400 + ((b >> 4) & 7) * 300) * 8
+    if lv == 1:
+        return (lon + (a & 3) * 900, lat + (b & 3) * 600), (900, 600)
+    if lv == 2:
+        return (lon, lat), (3600, 2400)
+    raise ValueError('level %d parcel' % lv)
+
+
+def btpcl_parcel(a, b):
+    """The same for a BTPCLnn key: the plain JIS cell, 1/16 of a second mesh."""
+    return ((100 * 128 + a) * 225, b * 150), (225, 150)
+
+
+def parcel_point(x, y, corner, size):
+    """Parcel units -> (lon, lat) degrees on the Tokyo Datum."""
+    return ((corner[0] + x * size[0] / EXTENT) / 28800.0,
+            (corner[1] + y * size[1] / EXTENT) / 28800.0)
+
+
+def tokyo_to_wgs84(lon, lat):
+    """Tokyo Datum (Bessel 1841) -> WGS84 by the three-parameter shift (-146.414,
+    507.337, 680.507) m. The map data fits OSM best this way, remote islands included."""
+    def ecef(lon, lat, a, f):
+        e2 = f * (2 - f)
+        la, lo = math.radians(lat), math.radians(lon)
+        n = a / math.sqrt(1 - e2 * math.sin(la) ** 2)
+        return n * math.cos(la) * math.cos(lo), n * math.cos(la) * math.sin(lo), n * (1 - e2) * math.sin(la)
+    x, y, z = ecef(lon, lat, 6377397.155, 1 / 299.152813)
+    x, y, z = x - 146.414, y + 507.337, z + 680.507
+    a, f = 6378137.0, 1 / 298.257222101
+    e2 = f * (2 - f)
+    p = math.hypot(x, y)
+    la = math.atan2(z, p * (1 - e2))
+    for _ in range(6):
+        la = math.atan2(z + e2 * a / math.sqrt(1 - e2 * math.sin(la) ** 2) * math.sin(la), p)
+    return math.degrees(math.atan2(y, x)), math.degrees(la)
+
+
+def parcel_geojson(dbdir, table, a, b):
+    """Every shape of one parcel's drawing record as WGS84 GeoJSON features."""
+    btpcl = table.startswith('BTPCL')
+    corner, size = (btpcl_parcel if btpcl else bpcl_parcel)(a, b)
+    col = 4 if btpcl else 5
+    page = read_header(os.path.join(dbdir, table + 'B')).page
+    for row in table_rows(os.path.join(dbdir, table + 'D')):
+        present, body = columns(row)
+        if struct.unpack_from('<HH', body) != (a, b):
+            continue
+        cols = [i for i, p in enumerate(present) if p][2:]
+        if btpcl:
+            cols = [c for c in cols if c <= 5]
+        refs, _ = blob_refs(body[6:], len(cols))
+        refs = dict(zip(cols, refs))
+        if col not in refs:
+            return []
+        with open(os.path.join(dbdir, table + 'B'), 'rb') as f:
+            rec = read_blob(f, refs[col], page)
+        feats = []
+        ll = lambda q: list(tokyo_to_wgs84(*parcel_point(q[0], q[1], corner, size)))
+        for i, sec in sorted(record_sections(rec).items()):
+            try:
+                got = list(shapes(sec))
+            except ValueError:
+                continue
+            for s in got:
+                prop = {'section': i, 'type': '%04x' % s.type, 'attr': '%04x' % s.attr, 'id': s.id}
+                if s.kind == 0x80:
+                    geom = {'type': 'Polygon', 'coordinates': [[ll(q) for q in s.pts]]}
+                elif s.kind == 0x40:
+                    geom = {'type': 'LineString', 'coordinates': [ll(q) for q in s.pts]}
+                else:
+                    geom = {'type': 'Point', 'coordinates': ll(s.pts[0])}
+                feats.append({'type': 'Feature', 'properties': prop, 'geometry': geom})
+        return feats
+    return []
+
+
 # --- command line --------------------------------------------------------------------
 
 def cmd_summary(paths):
@@ -264,9 +504,13 @@ def cmd_blob(path, limit):
 
 
 def main(argv):
-    if len(argv) < 2 or argv[0] not in ('summary', 'keys', 'blob'):
+    if len(argv) < 2 or argv[0] not in ('summary', 'keys', 'blob', 'geojson'):
         raise SystemExit(__doc__)
-    if argv[0] == 'summary':
+    if argv[0] == 'geojson':
+        feats = parcel_geojson(argv[1], argv[2], int(argv[3], 16), int(argv[4], 16))
+        json.dump({'type': 'FeatureCollection', 'features': feats}, sys.stdout)
+        print()
+    elif argv[0] == 'summary':
         cmd_summary(argv[1:])
     elif argv[0] == 'keys':
         cmd_keys(argv[1:])
