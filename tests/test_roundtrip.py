@@ -2003,14 +2003,15 @@ class TestHouse(unittest.TestCase):
 
     def test_record_layout(self):
         import house_encode as h
-        sq = dict(type=h.CLASS, pts=[(10, 10), (10, 40), (40, 40), (40, 10), (10, 10)])
-        r = h.record(0xb010, 0xc310, [sq] * 300, 2)
+        layer, cls = h.KIND_CLASSES['building']
+        sq = dict(type=cls, pts=[(10, 10), (10, 40), (40, 40), (40, 10), (10, 10)])
+        r = h.record(0xb010, 0xc310, {layer: [(h.AREA, 2, [sq] * 300)]})
         w = struct.unpack_from('>24H', r)
         self.assertEqual(w[2], 0x000f)
         self.assertEqual(8 * (w[7] + w[8]), len(r))
         base = 8 * w[7]
-        off, ln = struct.unpack_from('>HH', r, base + 4 * h.LAYER)
+        off, ln = struct.unpack_from('>HH', r, base + 4 * layer)
         g = base + 8 * off
         self.assertEqual(struct.unpack_from('>HH', r, g), (2, 5))       # 300 shapes, two sub-groups
         self.assertEqual((r[g + 4], r[g + 5], r[g + 8], r[g + 9]), (0x80, 255, 0x80, 45))
-        self.assertEqual(struct.unpack_from('>5H', r, g + 10), (5, h.CLASS, 2, 0, 0xffff))
+        self.assertEqual(struct.unpack_from('>5H', r, g + 10), (5, cls, 2, 0, 0xffff))
