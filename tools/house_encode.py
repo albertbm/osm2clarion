@@ -1,33 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""HOUSE001 building files: the level-0 map the unit draws at building scale.
-
-Read off the stock US (.161) and EUR (.120) cards. A HOUSE001 file covers one level-2
-parcel, 7.5' x 5' (an eighth of a mesh each way), named B<mesh y><row><1024 - mesh x><col>
-in hex, so Everett MA is B3F40AC7.DAT. It is a map tile with one section, id 5, and one
-level, 0 (type 0x91). The section table sits at 0x1000 (slot 14 of the 0x800 list points
-there), with one directory of 16 x 16 parcels, kind 0x0826.
-
-A parcel carries up to two records. The even one (w2 = 0x000f) holds the drawing in a
-12-pair layer table with 8-byte units, drawn in layer order. Shapes carry two more words than
-level 1: a floor count (1..13 in the US file, 0 off layer 6) and 0. The odd record holds names
-and is optional, so it is left out here. MMAIN001.DAT counts the files in its section 5 row.
-
-Classes found in the stock files by locating known places (Boston, Vienna, Seattle):
-layer 1 land use (0x40d9 park, 0x408c forest, 0x40d2 cemetery, 0x40c3 hospital, 0x40be
-campus, 0x40ac airport), layer 2 water (0x4060 area, 0x405a line), layer 3 lines (0x401e),
-layer 4 street areas (0x407b, 0x4078 wide roads) with edge lines 0x4002 and 0x4001, layer 6
-footprints 0x4064, layer 10 points. The EUR files carry no layer 4 (see ROAD_CLASS).
-
-    house_encode.py LANDUSE.json OUTDIR [--kinds building,park,...] [--roads ROADS.json]
-                    [--floors N] [--template TILE.DAT] [--bbox lon0,lat0,lon1,lat1]
-
-LANDUSE.json is extract_landuse.py --buildings output; every kind in KIND_CLASSES is written
-unless --kinds narrows them. Touching footprints merge into blocks, simplified by 2 m, and
-blocks under 30 m2 are dropped. ROADS.json is osm_roads.py output, buffered by WIDTH per class.
-The template supplies the data version, database box and release string (any of the card's
-MAPAL001 tiles). --bbox writes exactly the files covering the box, empty ones included, so a
-build knows its outputs ahead.
+"""HOUSE001 building files: the level-0 map the unit draws at building scale, one file per
+level-2 parcel (7.5' x 5'), named B<mesh y><row><1024-mesh x><col>, section 5 level 0.
 """
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -40,8 +14,7 @@ AREA = 0x80
 # OSM kind -> (layer, class), read off the stock US and EUR files by locating known places
 KIND_CLASSES = {'building': (6, 0x4064), 'forest': (1, 0x408c), 'park': (1, 0x40d9),
                 'heath': (1, 0x40d9), 'water': (2, 0x4060), 'river': (2, 0x4060)}
-# US street areas are layer 4 class 0x407b; the EUR .120 build draws nothing for it but
-# draws 0x40c7 (port land in the US file) grey, so that stands in
+# EUR has no street-area class; 0x40c7 (US port land) stands in, drawn grey
 ROAD_LAYER, ROAD_CLASS = 4, 0x40c7
 WIDTH = {'motorway': 14, 'trunk': 12, 'primary': 11, 'secondary': 10, 'tertiary': 8,
          'unclassified': 6, 'residential': 6, 'living_street': 5, 'service': 4}
@@ -173,7 +146,7 @@ class Layer:
         return out
 
 
-def build_file(cell, layers, hdr, keep_empty=False, counts=None):
+def build_file(cell, layers, hdr, keep_empty=False, counts=None, verts=None, peak=None, hard=None, dense=0):
     """Bytes of one HOUSE001 file, or None when nothing lands in it (unless keep_empty)."""
     from shapely.geometry import box
     my, r, mx, c = cell
@@ -187,10 +160,20 @@ def build_file(cell, layers, hdr, keep_empty=False, counts=None):
             groups = {}
             for L in layers:
                 shapes = L.shapes(rect, x0, y0, pw, ph)
+                if hard and L is layers[-1] and sum(len(x['pts']) for x in shapes) > dense:
+                    shapes = hard.shapes(rect, x0, y0, pw, ph)
+                    if counts is not None:
+                        counts[('hard', 0)] = counts.get(('hard', 0), 0) + 1
                 if shapes:
                     groups.setdefault(L.layer, []).append((L.kind, L.floors, shapes))
                     if counts is not None:
                         counts[(L.layer, L.cls)] = counts.get((L.layer, L.cls), 0) + len(shapes)
+                    if verts is not None:
+                        verts[(L.layer, L.cls)] = verts.get((L.layer, L.cls), 0) + sum(len(x['pts']) for x in shapes)
+            if groups and peak is not None:
+                n = [sum(len(x['pts']) for _, _, sh in g for x in sh) for g in groups.values()]
+                m = [sum(len(sh) for _, _, sh in g) for g in groups.values()]
+                peak[:] = max(peak or [(0, 0, 0, 0)], [(sum(n), sum(m), s, k)])[:1]
             if groups:
                 plain = record(*code(my, r, s, mx, c, k), groups)
                 rows.setdefault(s, {})[k] = (plain, compress(plain))
@@ -262,9 +245,11 @@ def merge_blocks(polys, to_m, to_deg, gap=0.5, tol=2.0, min_area=30):
     return [to_deg(p) for p in out if p.area >= min_area]
 
 
-def areas(polys, to_m, to_deg, tol=3.0, min_area=100):
+def areas(polys, to_m, to_deg, tol=3.0, min_area=100, within=None):
     from shapely.ops import unary_union
     u = unary_union([to_m(p).buffer(0) for p in polys])
+    if within is not None:
+        u = u.intersection(to_m(within))
     return [to_deg(p) for p in polygons(u.simplify(tol, preserve_topology=True)) if p.area >= min_area]
 
 
@@ -279,6 +264,14 @@ def road_layers(path, to_m, to_deg):
     return [Layer(ROAD_LAYER, ROAD_CLASS, AREA, [to_deg(p) for p in polygons(u)])]
 
 
+def coast_land(path, bbox):
+    """Land inside the box from coastline ways (bg_tiles.load_land), and the sea around it."""
+    from shapely.geometry import box
+    import bg_tiles
+    land = bg_tiles.load_land(path)[0].intersection(box(*bbox).buffer(0.01))
+    return land, box(*bbox).difference(land)
+
+
 def main(argv):
     def opt(name, default):
         if name in argv:
@@ -290,6 +283,9 @@ def main(argv):
     template = opt('--template', None)
     bbox = opt('--bbox', None)
     roads = opt('--roads', None)
+    coast = opt('--coast', None)
+    dense = int(opt('--dense', '0'))
+    stats = opt('--stats', None)
     src, outdir = argv
     hdr = dict(db_bounds=(4800, 1280, -1200, 4080), data_version='17/09/01/01', source=None)
     if template:
@@ -299,17 +295,28 @@ def main(argv):
     if not allp:
         raise SystemExit('no polygons of kinds %s in %s' % (','.join(kinds), src))
     to_m, to_deg = metric(sum(p.centroid.y for p in allp) / len(allp))
+    land = sea = None
+    if coast:
+        assert bbox, '--coast needs --bbox'
+        land, sea = coast_land(coast, tuple(map(float, bbox.split(','))))
     layers = []
     for cls in sorted({KIND_CLASSES[k] for k in kinds if k != 'building'}):
         polys = [p for k in kinds if KIND_CLASSES[k] == cls for p in by.get(k, [])]
+        water = cls == KIND_CLASSES['water']
+        if water and sea is not None:
+            polys += polygons(sea)
         if polys:
-            layers.append(Layer(*cls, AREA, areas(polys, to_m, to_deg)))
+            layers.append(Layer(*cls, AREA, areas(polys, to_m, to_deg, within=None if water else land)))
     if roads:
         layers += road_layers(roads, to_m, to_deg)
+    hard = None
+    BLD = KIND_CLASSES['building']
     if 'building' in kinds and by.get('building'):
         merged = merge_blocks(by['building'], to_m, to_deg)
         print('buildings: %d footprints in, %d blocks' % (len(by['building']), len(merged)))
-        layers.append(Layer(*KIND_CLASSES['building'], AREA, merged, floors))
+        layers.append(Layer(*BLD, AREA, merged, floors))
+        if dense:
+            hard = Layer(*BLD, AREA, merge_blocks(by['building'], to_m, to_deg, gap=1.0, tol=4.0, min_area=60), floors)
     cells = set(box_cells(*map(float, bbox.split(',')))) if bbox else set()
     for p in ([] if bbox else allp):
         a, b, c_, e = p.bounds
@@ -317,14 +324,34 @@ def main(argv):
             for lat in (b, e):
                 cells.add(cell_of(lon, lat))
     os.makedirs(outdir, exist_ok=True)
-    counts = {}
+    from shapely.geometry import box
+    from shapely.strtree import STRtree
+    fp = [p.representative_point() for p in by.get('building', [])] if 'building' in kinds else []
+    fptree = STRtree(fp) if fp else None
+    counts, table = {}, []
     for cell in sorted(cells):
-        data = build_file(cell, layers, hdr, keep_empty=bool(bbox), counts=counts)
+        cc, cv, pk = {}, {}, []
+        data = build_file(cell, layers, hdr, keep_empty=bool(bbox), counts=cc, verts=cv, peak=pk,
+                          hard=hard if layers[-1].cls == BLD[1] else None, dense=dense)
+        hardened = cc.pop(('hard', 0), 0)
+        for k, n in cc.items():
+            counts[k] = counts.get(k, 0) + n
         if data:
             name = file_name(*cell)
             open(os.path.join(outdir, name), 'wb').write(data)
-            print('wrote', name, len(data))
+            lon0, lat0, cw, ch = cell_geo(*cell)
+            nin = len(fptree.query(box(lon0, lat0, lon0 + cw, lat0 + ch), predicate='contains')) if fptree else 0
+            table.append(dict(file=name, lon=round(lon0, 4), lat=round(lat0, 4), footprints=nin,
+                              buildings=cc.get(BLD, 0), building_verts=cv.get(BLD, 0),
+                              shapes=sum(cc.values()), verts=sum(cv.values()), bytes=len(data), hardened=hardened,
+                              peak_parcel=dict(zip(('verts', 'shapes', 'row', 'col'), pk[0])) if pk else None))
+            print('wrote %s %d bytes: %d footprints in, %d shapes, %d vertices%s'
+                  % (name, len(data), nin, sum(cc.values()), sum(cv.values()),
+                     ' (%d dense parcels)' % hardened if hardened else ''))
     print('shapes out:', ', '.join('L%d/%04x %d' % (l, c, n) for (l, c), n in sorted(counts.items())))
+    if stats:
+        import json
+        json.dump(table, open(stats, 'w'), indent=1)
 
 
 if __name__ == '__main__':

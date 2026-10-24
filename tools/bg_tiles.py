@@ -34,8 +34,9 @@ SEA = ''
 MARKERS = dict(areas=[], lines=[], points=[])
 # Land use: [(polygon, layer, class)] and an STRtree over the polygons, set by load_landuse.
 LANDUSE = {'items': [], 'tree': None}
-# Smallest land-use polygon drawn per level, in square degrees (1e-6 is about 0.5 ha at 64N).
-LANDUSE_MIN = {1: 2e-8, 2: 1e-6}
+# Smallest land-use polygon drawn per level, in square degrees (1e-6 is about 0.5 ha at 64N),
+# so that garden-sized bits do not speckle the wider zooms
+LANDUSE_MIN = {1: 1e-7, 2: 4e-6}
 
 t0 = time.time()
 
@@ -80,9 +81,10 @@ def load_landuse(path, classes=None):
     print(f'land use {len(items)} polygons from {path}')
 
 
-def landuse_layers(level, rect, lon0, lat0, w, h):
+def landuse_layers(level, rect, lon0, lat0, w, h, land=None):
     """{layer: shapes} of the land use inside one parcel. Outer rings only: a hole (a
-    clearing in a wood) is not representable, and a lake on top draws in a later layer."""
+    clearing in a wood) is not representable, and a lake on top draws in a later layer.
+    land, when given, is the parcel's land: OSM woods and parks that run out over the sea are cut to it."""
     if LANDUSE['tree'] is None:
         return {}
     prefix = LEVELS[level]['seatype'] & 0xf000
@@ -91,7 +93,7 @@ def landuse_layers(level, rect, lon0, lat0, w, h):
         poly, layer, cls = LANDUSE['items'][i]
         if not poly.intersects(rect):
             continue
-        inter = poly.intersection(rect)
+        inter = poly.intersection(rect if land is None else land)
         for p in (inter.geoms if hasattr(inter, 'geoms') else [inter]):
             if p.geom_type != 'Polygon' or p.area < LANDUSE_MIN.get(level, 0):
                 continue
@@ -146,7 +148,11 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                 if lon0 <= plon < lon0 + w and lat0 <= plat < lat0 + h:
                     extra_labels.append((0x4068, 0x4800, bg_encode.quant(plon, lon0, w),
                                          bg_encode.quant(plat, lat0, h), text))
-            extra = landuse_layers(level, rect, lon0, lat0, w, h)
+            if not pl.intersects(rect):
+                extra = {}
+            else:
+                extra = landuse_layers(level, rect, lon0, lat0, w, h,
+                                       None if pl.contains(rect) else land_local.intersection(rect))
             if not pl.intersects(rect):          # open sea
                 sea_polys = [dict(type=L['seatype'], ref=0xffff,
                                   pts=bg_encode.densify([(0, 0), (0, 2047), (2047, 2047), (2047, 0), (0, 0)]))]
