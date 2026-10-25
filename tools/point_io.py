@@ -167,14 +167,16 @@ def data_record(levels, nlevel, name_idx, category, subcategory=0xffff,
 
 def name_record(name, levels, nlevel, category, subcategory=0xffff,
                 lat=0, lon=0, ilat=0, ilon=0, glat=None, glon=None,
-                address=b'', items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
+                address=b'', house='', items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
                 tel_idx=None, flags=0x0c):
     """One POINT name record. The data record repeats its ladder, category and
     coordinates; this carries the text.
 
     The display name and the address name share one field, separated by '@': the
     factory writes `CAPELA SISTINA@VIALE VATICANO`, and the two lengths are counted in
-    halfwords in the two bytes ahead of the ladder. `tel_idx` indexes the telephone
+    halfwords in the two bytes ahead of the ladder. A house number goes ahead of the '@':
+    France's POINT010 writes `N.D.N. PARIS 17-LEVALLOIS@10@RUE CURNONSKY` for a Nissan
+    dealer (category 43), which is what `house` is for. `tel_idx` indexes the telephone
     frame; None writes the all-ones invalid, which is what every settlement record on
     all four files measured carries.
     """
@@ -182,7 +184,7 @@ def name_record(name, levels, nlevel, category, subcategory=0xffff,
     nm += b'\0' * (-len(nm) % 2)
     ad = address.encode('utf-8') if isinstance(address, str) else address
     if ad:
-        ad = b'@' + ad
+        ad = (house.encode('utf-8') if house else b'') + b'@' + ad
         ad += b'\0' * (-len(ad) % 2)
     ref = b''.join(struct.pack('>BBH', *r) for r in refs)
     t = (0, tel_idx) if tel_idx is not None else (0xffff, 0xffff)
