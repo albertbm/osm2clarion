@@ -1,20 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read and write the Clarion POINT place-name search family.
-
-Decompressed form. `POINT<nnn>.DAT` is the place-name index: the same letter trie and
-container as `ADDRE`, over settlement and facility names rather than streets. Its
-search frame declares `REGION` where `ADDRE` declares nothing, its data record is a
-fixed 40 bytes, and it carries two name frames instead of one - the names themselves
-and a telephone-number frame the name records index.
-
-A factory file also holds further search frames hanging off slot 15 of the table at
-0x800 - one keyed on CATEGORY, one named ADM, and a long run of 256-byte blocks. Those
-are carried through unread as `extra`, which is what makes the round-trip byte exact;
-nothing here writes them.
-
-Measured on `POINT002` (Andorra), `POINT040` (Vatican), `POINT006` (Denmark) and
-`POINT011` (Greece): all four round-trip byte for byte through `Point` and `assemble`.
-"""
+"""Read and write POINT<nnn>.DAT, the Clarion place-name search family: the same letter
+trie and container as ADDRE, over settlement and facility names rather than streets."""
 import struct
 import zlib
 
@@ -34,8 +20,7 @@ def u32(d, o): return struct.unpack_from('>I', d, o)[0]
 
 
 def _split_records(raw):
-    """A name or telephone frame is a run of records whose first halfword is
-    `flags << 11 | length in halfwords`, which is `ADDRE`'s own convention."""
+    """A name or telephone frame is a run of records whose first halfword is flags<<11 | length (ADDRE's convention)."""
     out = []
     q = 0
     while q < len(raw):
@@ -72,9 +57,7 @@ class Point:
         self.kw = d[0x1033]
         self.nodew = u32(d, 0x1006)
         self.recw = u16(d, 0x101a)
-        # the 'REGION' label sits where ADDRE has nothing, so the area code is six
-        # bytes further on than ADDRE's 0x103a
-        self.area = u16(d, 0x1040)
+        self.area = u16(d, 0x1040)   # REGION sits where ADDRE has nothing; 6 bytes past ADDRE's 0x103a
         self.rec_off = unaddr(u32(d, 0x1012))
         self.nrec = u32(d, 0x1016) // self.recw
         self.rec_end = self.rec_off + self.nrec * REC
@@ -136,25 +119,7 @@ class Point:
 def data_record(levels, nlevel, name_idx, category, subcategory=0xffff,
                 lat=0, lon=0, ilat=0, ilon=0, lang=LANG_LOCAL,
                 flags=0x0000, data_id=0xffffffff):
-    """One 40-byte POINT data record.
-
-    `levels` is the area ladder, country first; `nlevel` is how long the country's ISO
-    entry declares it, and the six halfwords the field holds are filled to that length
-    and then padded with 0xffff. Measured: Andorra and the Vatican declare three and
-    pad three, Denmark four, Greece five, and a 0 inside the declared length is a real
-    index, not a marker.
-
-    `flags` is 0x0000 when the trie key is the start of the name and 0x4000 when it is
-    a later word, which is `ADDRE`'s own convention and holds on all 1,609 records of
-    Andorra's and the Vatican's files.
-
-    `data_id` is the 32-bit word at bytes 32..35. It is bounded just under 0x500000 on
-    all four files measured - the Vatican's 210 records and Greece's 359,364 alike - so
-    it is not a per-country counter and no value we can compute is a real one. The
-    default is the all-ones invalid, on the same reasoning as the ADDRE build's
-    reference words: a value inside the factory range could resolve to a real but wrong
-    record.
-    """
+    """One 40-byte POINT data record; levels is the area ladder, country first, padded to nlevel with 0xffff."""
     assert len(levels) == nlevel, (levels, nlevel)
     lv = tuple(levels) + (0xffff,) * (6 - nlevel)
     return (struct.pack('>6H', *lv)
@@ -169,17 +134,7 @@ def name_record(name, levels, nlevel, category, subcategory=0xffff,
                 lat=0, lon=0, ilat=0, ilon=0, glat=None, glon=None,
                 address=b'', house='', items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
                 tel_idx=None, flags=0x0c):
-    """One POINT name record. The data record repeats its ladder, category and
-    coordinates; this carries the text.
-
-    The display name and the address name share one field, separated by '@': the
-    factory writes `CAPELA SISTINA@VIALE VATICANO`, and the two lengths are counted in
-    halfwords in the two bytes ahead of the ladder. A house number goes ahead of the '@':
-    France's POINT010 writes `N.D.N. PARIS 17-LEVALLOIS@10@RUE CURNONSKY` for a Nissan
-    dealer (category 43), which is what `house` is for. `tel_idx` indexes the telephone
-    frame; None writes the all-ones invalid, which is what every settlement record on
-    all four files measured carries.
-    """
+    """One POINT name record; the display and address names share one field, separated by '@'."""
     nm = name.encode('utf-8') if isinstance(name, str) else name
     nm += b'\0' * (-len(nm) % 2)
     ad = address.encode('utf-8') if isinstance(address, str) else address
@@ -205,8 +160,7 @@ def name_record(name, levels, nlevel, category, subcategory=0xffff,
 
 
 def tel_record(text, flags=0x00):
-    """One telephone-frame record. The factory writes the number as plain text,
-    `+(39)-066388333`, and counts it in halfwords."""
+    """One telephone-frame record: plain text, counted in halfwords."""
     s = text.encode('ascii') if isinstance(text, str) else text
     s += b'\0' * (-len(s) % 2)
     body = bytes([len(s) // 2, 0xff]) + s
@@ -237,12 +191,7 @@ def _pack_frame(records, per):
 
 def assemble(prefix, df, keys, recs, names, tels, cr, kw, area, nlevel,
              extra=b'', maxkey_hint=None):
-    """prefix: bytes 0..0x1100 from a donor; df: the 512-byte definition region.
-
-    Both are patched in place for this content. `extra` is a factory file's further
-    search frames; left empty, slot 15 of the table at 0x800 is cleared, which is the
-    shape `ADDRE` has and the only shape this writes from scratch.
-    """
+    """Bytes of a full POINT file built from prefix, df, keys, recs, names and tels."""
     node, first, _nroot = build_trie(keys, cr, kw, REC_W)
     out = bytearray(prefix)
     out[0x1032] = cr // 2
@@ -268,9 +217,7 @@ def assemble(prefix, df, keys, recs, names, tels, cr, kw, area, nlevel,
     tcmp, ttail, tblocks = _pack_frame(tels, INFO_PER_BLOCK)
     def up(x):
         return x + (-x) % ALIGN
-    # every frame starts on a 256-byte block and is padded out to one, which is how the
-    # factory's own four addresses fall out: Denmark's 61-block name tail table takes
-    # three blocks and its telephone tail table five
+    # every frame starts on, and is padded out to, a 256-byte block
     tel_off = up(nb + len(ncmp))
     P = up(tel_off + max(len(tcmp), 1))
     P2 = up(P + len(ntail))
@@ -299,9 +246,7 @@ def assemble(prefix, df, keys, recs, names, tels, cr, kw, area, nlevel,
     struct.pack_into('>I', out, 0x824 + 6, addr(nb - DF_LEN))        # slot 7
     struct.pack_into('>H', out, 0x824 + 10, DF_LEN // ALIGN)
     if not extra:
-        # a factory POINT file hangs its CATEGORY and ADM frames off slots 15, 278, 280
-        # and 287 of the table at 0x800. With no further frames those slots are cleared,
-        # which leaves 6 and 7 live - the shape every ADDRE file has.
+        # with no extra search frames, slots 8..299 clear, leaving 6 and 7 live (ADDRE's own shape)
         for i in range(8, 300):
             struct.pack_into('>IH', out, 0x800 + i * 6, 0xffffffff, 0)
 
@@ -318,8 +263,7 @@ def assemble(prefix, df, keys, recs, names, tels, cr, kw, area, nlevel,
 
 
 def _maxfield(names, i):
-    """The longest name (i=0) or address (i=1) in halfwords, over every record. Both
-    lengths sit in the four bytes ahead of the area ladder."""
+    """The longest name (i=0) or address (i=1) in halfwords, over every record."""
     best = 0
     for n in names:
         p = 16 + (n[10] * 2 - 4) + n[11] * 2 + 8
@@ -327,32 +271,17 @@ def _maxfield(names, i):
     return best
 
 
-# The category search frames. Measured on POINT040 (Vatican, 8 categories, no
-# sub-categories) and POINT002 (Andorra), EUR ZE1 stock card:
-#
-# Slot 278 at 0x800 is a table of 72-byte entries, one per category, laid out like the
-# main header at 0x1000 with a 'CATEGORY' label where that has 'REGION': +0 the entry
-# length in halfwords, +2 the trie address, +6 its length in halfwords, +0xe the first
-# child offset, +0x10 the constant 0x4c02, +0x12 the record address, +0x16 the record
-# length in halfwords, +0x1a the record width (20), +0x30 the entry length again, +0x32
-# cr/2 and kw, +0x34 the category's ordinal, +0x36 the label length and 3, +0x3a the
-# label, +0x42 the area, +0x44 0xffff, +0x46 the category code. The trie is the main
-# trie's shape (cr 14, kw 2) over that category's names, and the records are copies of
-# the category's 40-byte data records in key order. Slot 279 holds the same for
-# (category, sub-category) pairs in 78-byte entries labelled 'SUB-CATEGORY', with cr
-# 12 and kw 1; a file with no sub-categories leaves the slot empty.
-#
-# Slot 15 is a 28-byte entry per category (+4 the block address, +8 its length in
-# halfwords, +0x1a the code) pointing at the nearby-search block `nearby_frame` writes.
-# Only the one-parcel shape is modelled; the constants in each level are copied as
-# measured, and what they mean is not decoded.
+# Slot 278 at 0x800: one 72-byte entry per category, laid out like the main header with
+# CATEGORY in place of REGION. Slot 279 holds (category, sub-category) pairs, 78-byte entries.
+# Slot 15: a 28-byte entry per category pointing at the nearby-search block nearby_frame writes.
 CAT_ENTRY = 72
 CAT_CR, CAT_KW = 14, 2
 
 
-def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec):
+def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec, last=False):
     e = bytearray(CAT_ENTRY)
-    struct.pack_into('>H', e, 0, CAT_ENTRY // 2)
+    # +0 is the next entry's offset in halfwords; the last entry writes 0xffff there and at +0x30
+    struct.pack_into('>H', e, 0, 0xffff if last else CAT_ENTRY // 2 * (ordinal + 1))
     struct.pack_into('>I', e, 2, addr(trie_at))
     struct.pack_into('>I', e, 6, nodew)
     struct.pack_into('>H', e, 0xe, first)
@@ -360,7 +289,7 @@ def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec):
     struct.pack_into('>I', e, 0x12, addr(rec_at))
     struct.pack_into('>I', e, 0x16, nrec * REC_W)
     struct.pack_into('>H', e, 0x1a, REC_W)
-    struct.pack_into('>H', e, 0x30, CAT_ENTRY // 2)
+    struct.pack_into('>H', e, 0x30, 0xffff if last else CAT_ENTRY // 2)
     e[0x32], e[0x33] = CAT_CR // 2, CAT_KW
     struct.pack_into('>HHH', e, 0x34, ordinal, 0x0800, 3)
     e[0x3a:0x42] = b'CATEGORY'
@@ -369,12 +298,8 @@ def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec):
 
 
 def nearby_frame(la, lo, items):
-    """The slot-15 block for a category whose records all sit in one level-1 parcel
-    (la, lo): three 256-byte levels narrowing the parcel code (masked to 0xff00, to
-    0xfff0, then exact), then a leaf listing one 16-byte item per name, as POINT040's
-    categories 4, 8 and 24. items: [(name index, category, ilat, ilon, language)], written
-    in ilon, then language order; the language's six bits are split over the top of the two position
-    words."""
+    """The slot-15 block for a category whose records all sit in one level-1 parcel (la, lo):
+    three narrowing levels, then a leaf of 16-byte items, one per name."""
     def level(nxt, la_, lo_, tail, words=0xd):
         # word 3 is the halfword count of what the level points at: 8 per entry plus 5
         b = bytearray(ALIGN)
@@ -382,7 +307,7 @@ def nearby_frame(la, lo, items):
         b[16:16 + len(tail)] = tail
         return bytes(b)
     leaf = bytearray()
-    for name_idx, cat, ilat, ilon, lang in sorted(items, key=lambda t: (t[3] & 0x7ff, t[4], t[2] & 0x7ff, t[0])):
+    for name_idx, cat, ilat, ilon, lang in sorted(items, key=lambda t: (t[3] & 0x7ff, t[2] & 0x7ff, t[0])):
         # the category goes in as BCD: 24 reads 0x0024, 71 0x0071
         leaf += struct.pack('>8H', 8, 0, name_idx, 0, 0, int(str(cat), 16),
                             (lang >> 5) << 15 | ilat & 0x7fff, (lang & 0x1f) << 11 | ilon & 0x7ff)
@@ -395,15 +320,12 @@ def nearby_frame(la, lo, items):
 
 
 def category_frames(at, area, cats):
-    """cats: [(code, keys, recs, (la, lo))] in code order; keys and recs as `assemble`
-    takes them, but only that category's, all in the one parcel (la, lo). Returns (bytes from `at`, slot 15 value,
-    slot 278 value), each slot value an (addr, blocks) pair."""
+    """Bytes and slot 15 / slot 278 table values for a set of categories, each in one parcel."""
     assert at % ALIGN == 0
     n = len(cats)
     t15 = bytearray(ALIGN * ((28 * n + ALIGN - 1) // ALIGN))
     t278 = bytearray(ALIGN * ((CAT_ENTRY * n + ALIGN - 1) // ALIGN))
-    # in file order: the slot-15 table, its level blocks, the slot-278 table, then each
-    # category's trie and records
+    # file order: slot-15 table, its blocks, slot-278 table, then each category's trie and records
     near = bytearray()
     p = at + len(t15)
     for i, (code, keys, recs, (la, lo)) in enumerate(cats):
@@ -418,18 +340,22 @@ def category_frames(at, area, cats):
                          len(nb) // 2, 0, 0, 0xd, 0x8000, 8, i, 0, 1, code)
         near += nb
     at278 = p + len(near)
+    # every category's trie, then every category's records, as the factory lays them out
     body = bytearray()
     p = at278 + len(t278)
-    for i, (code, keys, recs, _) in enumerate(cats):
+    tries = []
+    for code, keys, recs, _ in cats:
         node, first, _n = build_trie(keys, CAT_CR, CAT_KW, REC_W)
-        trie_at = p + len(body)
+        tries.append((p + len(body), len(node) // 2, first))
         body += node + b'\0' * (-len(node) % ALIGN)
+    for i, (code, keys, recs, _) in enumerate(cats):
         rec_at = p + len(body)
         for r in recs:
             assert len(r) == REC
             body += r
         body += b'\0' * (-len(body) % ALIGN)
+        trie_at, nodew, first = tries[i]
         t278[CAT_ENTRY * i:CAT_ENTRY * (i + 1)] = category_entry(
-            i, area, code, trie_at, len(node) // 2, first, rec_at, len(recs))
+            i, area, code, trie_at, nodew, first, rec_at, len(recs), last=i + 1 == n)
     return (bytes(t15) + bytes(near) + bytes(t278) + bytes(body),
             (addr(at), len(t15) // ALIGN), (addr(at278), len(t278) // ALIGN))
