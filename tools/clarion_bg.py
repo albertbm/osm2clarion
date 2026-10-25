@@ -1,32 +1,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Background (section 1) record: parse to a dict and build back to bytes.
 
-Record layout (all big-endian, sizes in 16-bit words unless noted; "unit" = 4 bytes):
-  w0,w1   parcel code (row/col), see parcel_code()
-  w2      record type, 0x0019 = background
-  w3,w4   ffff ffff at level 2, 347a 2aef at level 1 (meaning unknown)
-  w5,w6   0
-  w7..w20 seven (offset, length) pairs in units from record start:
-          (w7,w8) unused here, (w9,w10) geometry, (w11,w12) names,
-          (w13,w14) unused, (w15,w16) point index, (w17,w18) unused, (w19,w20) = 0000 ffff
-  w21     0
-  geometry section at unit 11: layer table of N (offset, length) unit pairs relative to
-          the section start, ffff/0000 when absent, N = offset of the first group;
-          then the groups.
-  group   0001 0003, u8 kind (0x80 polygon, 0x40 polyline, 0x00 point), u8 count, shapes,
-          zero padded to a unit boundary.
-  shape   u16 nvertices, u16 type, u16 ref (ffff), u16 x0, u16 y0, (n-1) x int8 dx,dy.
-          Polygons repeat the first vertex as the last one. Points: type, ref, x, y.
-
-Only this form is modelled. A road-shape record (`fa_encode`, `lev_roads.fa_record`) shares
-the w2 = 0x00fa kind but counts shapes in a pair's second word rather than measuring units, so
-parse_record refuses it instead of returning a record short of its tail.
+Header (big-endian, unit = 4 bytes): w0,w1 parcel code, w2 type (0x19), w7..w20 seven
+(offset,length) unit pairs (w9,w10 geometry, w11,w12 names, w15,w16 point index). Geometry
+at unit 11: layer table of (offset,length) pairs, then groups of 0001 0003, kind byte (0x80
+polygon, 0x40 polyline, 0x00 point), count byte, shapes (nvertices, type, ref, x0, y0, int8
+dx,dy deltas). parse_record refuses a road-shape record (w2=0x00fa, counts shapes not units)
+rather than return it short of its tail.
 """
 import struct
 
 MAGIC = b'\x00\x01\x00\x03'
 
-# Parcel grid. Mesh coordinates: y = lat * 1.5, x = lon + 924 (a mesh is 1 deg x 40').
+# Mesh coordinates: y = lat * 1.5, x = lon + 924 (a mesh is 1 deg x 40').
 MESH_W, MESH_H = 1.0, 2/3
 UNITS = 2048
 LEVELS = {5: dict(cols=11, rows=11, dir_meshes=88, typ=0x90, seatype=0x8012, coasttype=0x8007, areatype=0x802b, w34=(0xffff, 0xffff),
@@ -40,10 +26,8 @@ LEVELS = {5: dict(cols=11, rows=11, dir_meshes=88, typ=0x90, seatype=0x8012, coa
           1: dict(cols=32, rows=32, dir_meshes=1, typ=0x92, seatype=0xc012, coasttype=0xc007, areatype=0xc02b, w34=(0x347a, 0x2aef),
                   kind=0x2046, ab=(0x20, 0x20), body=512, slots=32)}
 
-# Area kinds (extract_landuse.py) to (section-1 layer, shape class). The class is the low 12
-# bits of the shape type; the level's prefix (LEVELS seatype & 0xf000) goes on top. Read off
-# the factory Koeln tile B48R060R against known places: 01a Siebengebirge and Eifel forest,
-# 01d town parks (Mariemont, Guetersloh), 015 Rursee and Laacher See, 014 the Rhine at Mainz.
+# OSM kind -> (layer, class); class is the low 12 bits of the shape type, read off factory
+# tile B48R060R (Koeln): 01a forest, 01d park, 015 lake, 014 river.
 AREA_CLASSES = {'forest': (3, 0x01a), 'heath': (3, 0x01b), 'park': (3, 0x01d),
                 'water': (7, 0x015), 'river': (7, 0x014)}
 
@@ -56,8 +40,7 @@ def mesh_to_lon(x): return x - 924
 def mesh_to_lat(y): return y / 1.5
 
 def parcel_geo(level, y0, x0, row, col):
-    """Lower-left corner and size in degrees of a parcel of a directory whose
-    south-west mesh is (y0, x0)."""
+    """Lower-left corner and size in degrees of a parcel in the directory at (y0, x0)."""
     L = LEVELS[level]
     w = MESH_W * L['dir_meshes'] / L['cols']; h = MESH_H * L['dir_meshes'] / L['rows']
     return mesh_to_lon(x0) + col * w, mesh_to_lat(y0) + row * h, w, h
@@ -66,9 +49,8 @@ def parcel_geo(level, y0, x0, row, col):
 def s8(b): return b - 256 if b > 127 else b
 
 def parcel_code(level, row, col):
-    """w0, w1 for a parcel at absolute (row, col). Level 3 units: 20' rows, 30' cols
-    (2 per mesh). Level 2: 5' x 7.5' (8 per mesh). Level 1: 1.25' x 1.875' (32 per mesh)."""
-    if level in (3, 4, 5, 6):   # rows of 20', columns of 30' (2 per mesh); level 4 parcels are 2x2 meshes, level 5 8x8
+    """w0, w1 for a parcel at absolute (row, col)."""
+    if level in (3, 4, 5, 6):   # 20' rows, 30' cols (2/mesh); level 4 parcels are 2x2 meshes, level 5 8x8
         R, C = row >> 2, col >> 2
         lo0 = ((row & 2) << 6) | ((row & 1) << 4) | 0xf
         lo1 = ((col & 2) << 6) | ((col & 1) << 4) | {3: 0x3, 4: 0x4, 5: 0x5, 6: 0x6}[level]
@@ -98,9 +80,8 @@ def parse_shapes(d, p, kind, n):
     return p, shapes
 
 def parse_group(d, p, end):
-    """A layer: u16 sub-group count, u16 header words, then per sub-group a kind byte, a
-    count byte and (all but the last) the u16 word offset where it ends. One sub-group
-    gives the common 0001 0003 header. Extra sub-groups are kept as 'more'."""
+    """A layer: sub-group count, header word count, then per sub-group a kind byte, count
+    byte and (all but the last) the word offset where it ends; extras kept as 'more'."""
     start = p
     nsub, hw = struct.unpack_from('>HH', d, p)
     if nsub == 0 or nsub > 8 or hw != 2 + 2 * nsub - 1:
@@ -156,30 +137,32 @@ def build_group(g):
     return bytes(out)
 
 def camera_point_group(points):
-    """Layer-25 point group (REPORT-speed-cameras.md): one subgroup, kind 0 (point).
-    points: [(x, y, idx)], x/y in parcel units (0..2047), idx in words from the start
-    of the (w15, w16) service block. Firmware reads only the first subgroup (n must be
-    1, a firmware stride bug), so every point goes in that one subgroup."""
+    """Layer-25 point group; points: [(x, y, idx)]. Firmware reads only the first
+    subgroup (a stride bug), so every point goes in that one."""
     assert 1 <= len(points) <= 0xff
     body = b''.join(struct.pack('>HHHHH', 0x0050, 0xffff, x, 0x8000 | y, idx) for x, y, idx in points)
     return struct.pack('>HHH', 1, 3, len(points)) + body
 
 def camera_service_record(direction, speed_code, cam_id, mph=False, cam_type=0):
-    """One 10-word VFI_setData camera record (REPORT-speed-cameras.md). direction: 0x40
-    for both ways. speed_code: real speed is (code + 1) * 5 in the chosen unit."""
+    """One 10-word VFI_setData camera record; speed_code: real speed is (code + 1) * 5."""
     w6 = 0x80 | (0x40 if mph else 0) | 0x20 | (speed_code & 0x1f) | ((cam_type & 7) << 13)
     return struct.pack('>10H', 0, direction, 0xffff, 1, 0xc000, 4, w6, 0, cam_id >> 16, cam_id & 0xffff)
 
-def bg_slot(w):
-    """Which pointer pair holds a record's geometry.
+def emblem_point_group(points):
+    """Layer-25 point group for a logo marker (type 0x00ff); idx points at a 12-byte
+    id entry (emblem_entry), not a service record."""
+    assert 1 <= len(points) <= 0xff
+    body = b''.join(struct.pack('>HHHHH', 0x00ff, 0xffff, x, 0x8000 | y, idx) for x, y, idx in points)
+    return struct.pack('>HHH', 1, 3, len(points)) + body
 
-    A road-only record (the even pair at levels 3 and 4) keeps it at w7/w8 and a background
-    record at w9/w10, but a level-5 record has w2 = 0xfa either way and carries both, so the
-    slot has to come off the pointers rather than off w2. An unused pair reads ffff/0000 as
-    shipped and 0000/0000 on a record rebuilt against the 2014 database; neither can be a real
-    offset, since the 44-byte header puts the first one at unit 11. w9/w10 wins when both are
-    filled, and stands in when neither is.
-    """
+def emblem_entry(emblem_id):
+    """12-byte point-index entry for a logo marker; id 0x193 = Nissan (factory B48R068R)."""
+    return struct.pack('>HHHHHH', 0, 0, 0xffff, 0, 0x2000 | emblem_id, 0)
+
+def bg_slot(w):
+    """Which pointer pair holds a record's geometry: w9/w10 normally, w7/w8 for a
+    road-only record. A level-5 record has w2=0xfa either way, so this reads the
+    pointers rather than w2; w9/w10 wins when both are filled."""
     if w[9] not in (0, 0xffff) and w[10]: return 9
     if w[7] != 0xffff and w[8]: return 7
     return 9
@@ -196,8 +179,7 @@ def parse_record(d):
         if off != 0xffff: nlayers = min(nlayers, off)
     assert nlayers == len(table), (nlayers, len(table))
     if geo_off == 0xffff: assert geo_len == 0
-    # A road-shape record counts shapes in a pair's second word instead of measuring units, so
-    # its layers stop short of the section and the groups below would drop the tail unnoticed.
+    # a road-shape record counts shapes, not units, so its layers stop short and would drop the tail unnoticed
     if nlayers:
         reach = max([off + ln for off, ln in table if off != 0xffff] + [nlayers])
         assert reach == geo_len, ('layers reach %d of %d units: a road-shape record, whose '
