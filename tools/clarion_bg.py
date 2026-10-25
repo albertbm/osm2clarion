@@ -155,6 +155,21 @@ def build_group(g):
     while len(out) % 4: out.append(0)
     return bytes(out)
 
+def camera_point_group(points):
+    """Layer-25 point group (REPORT-speed-cameras.md): one subgroup, kind 0 (point).
+    points: [(x, y, idx)], x/y in parcel units (0..2047), idx in words from the start
+    of the (w15, w16) service block. Firmware reads only the first subgroup (n must be
+    1, a firmware stride bug), so every point goes in that one subgroup."""
+    assert 1 <= len(points) <= 0xff
+    body = b''.join(struct.pack('>HHHHH', 0x0050, 0xffff, x, 0x8000 | y, idx) for x, y, idx in points)
+    return struct.pack('>HHH', 1, 3, len(points)) + body
+
+def camera_service_record(direction, speed_code, cam_id, mph=False, cam_type=0):
+    """One 10-word VFI_setData camera record (REPORT-speed-cameras.md). direction: 0x40
+    for both ways. speed_code: real speed is (code + 1) * 5 in the chosen unit."""
+    w6 = 0x80 | (0x40 if mph else 0) | 0x20 | (speed_code & 0x1f) | ((cam_type & 7) << 13)
+    return struct.pack('>10H', 0, direction, 0xffff, 1, 0xc000, 4, w6, 0, cam_id >> 16, cam_id & 0xffff)
+
 def bg_slot(w):
     """Which pointer pair holds a record's geometry.
 
