@@ -325,3 +325,111 @@ def _maxfield(names, i):
         p = 16 + (n[10] * 2 - 4) + n[11] * 2 + 8
         best = max(best, n[p + i])
     return best
+
+
+# The category search frames. Measured on POINT040 (Vatican, 8 categories, no
+# sub-categories) and POINT002 (Andorra), EUR ZE1 stock card:
+#
+# Slot 278 at 0x800 is a table of 72-byte entries, one per category, laid out like the
+# main header at 0x1000 with a 'CATEGORY' label where that has 'REGION': +0 the entry
+# length in halfwords, +2 the trie address, +6 its length in halfwords, +0xe the first
+# child offset, +0x10 the constant 0x4c02, +0x12 the record address, +0x16 the record
+# length in halfwords, +0x1a the record width (20), +0x30 the entry length again, +0x32
+# cr/2 and kw, +0x34 the category's ordinal, +0x36 the label length and 3, +0x3a the
+# label, +0x42 the area, +0x44 0xffff, +0x46 the category code. The trie is the main
+# trie's shape (cr 14, kw 2) over that category's names, and the records are copies of
+# the category's 40-byte data records in key order. Slot 279 holds the same for
+# (category, sub-category) pairs in 78-byte entries labelled 'SUB-CATEGORY', with cr
+# 12 and kw 1; a file with no sub-categories leaves the slot empty.
+#
+# Slot 15 is a 28-byte entry per category (+4 the block address, +8 its length in
+# halfwords, +0x1a the code) pointing at the nearby-search block `nearby_frame` writes.
+# Only the one-parcel shape is modelled; the constants in each level are copied as
+# measured, and what they mean is not decoded.
+CAT_ENTRY = 72
+CAT_CR, CAT_KW = 14, 2
+
+
+def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec):
+    e = bytearray(CAT_ENTRY)
+    struct.pack_into('>H', e, 0, CAT_ENTRY // 2)
+    struct.pack_into('>I', e, 2, addr(trie_at))
+    struct.pack_into('>I', e, 6, nodew)
+    struct.pack_into('>H', e, 0xe, first)
+    struct.pack_into('>H', e, 0x10, 0x4c02)
+    struct.pack_into('>I', e, 0x12, addr(rec_at))
+    struct.pack_into('>I', e, 0x16, nrec * REC_W)
+    struct.pack_into('>H', e, 0x1a, REC_W)
+    struct.pack_into('>H', e, 0x30, CAT_ENTRY // 2)
+    e[0x32], e[0x33] = CAT_CR // 2, CAT_KW
+    struct.pack_into('>HHH', e, 0x34, ordinal, 0x0800, 3)
+    e[0x3a:0x42] = b'CATEGORY'
+    struct.pack_into('>HHH', e, 0x42, area, 0xffff, code)
+    return bytes(e)
+
+
+def nearby_frame(la, lo, items):
+    """The slot-15 block for a category whose records all sit in one level-1 parcel
+    (la, lo): three 256-byte levels narrowing the parcel code (masked to 0xff00, to
+    0xfff0, then exact), then a leaf listing one 16-byte item per name, as POINT040's
+    categories 4, 8 and 24. items: [(name index, category, ilat, ilon, language)], written
+    in ilon, then language order; the language's six bits are split over the top of the two position
+    words."""
+    def level(nxt, la_, lo_, tail, words=0xd):
+        # word 3 is the halfword count of what the level points at: 8 per entry plus 5
+        b = bytearray(ALIGN)
+        struct.pack_into('>8H', b, 0, 8, 0, nxt, words, la_, lo_, 0, 0)
+        b[16:16 + len(tail)] = tail
+        return bytes(b)
+    leaf = bytearray()
+    for name_idx, cat, ilat, ilon, lang in sorted(items, key=lambda t: (t[3] & 0x7ff, t[4], t[2] & 0x7ff, t[0])):
+        # the category goes in as BCD: 24 reads 0x0024, 71 0x0071
+        leaf += struct.pack('>8H', 8, 0, name_idx, 0, 0, int(str(cat), 16),
+                            (lang >> 5) << 15 | ilat & 0x7fff, (lang & 0x1f) << 11 | ilon & 0x7ff)
+    leaf += bytes.fromhex('0005ffffffff00000100000000000000')
+    leaf += b'\0' * (-len(leaf) % ALIGN)
+    return (level(0x80, la & 0xff00, lo & 0xff00, bytes.fromhex('0005ffffffffffffffff'))
+            + level(0x100, la & 0xfff0, lo & 0xfff0, bytes.fromhex('0005ffffffff0000'))
+            + level(0x180, la, lo, bytes.fromhex('0005ffffffff000000800000'), 8 * len(items) + 5)
+            + bytes(leaf))
+
+
+def category_frames(at, area, cats):
+    """cats: [(code, keys, recs, (la, lo))] in code order; keys and recs as `assemble`
+    takes them, but only that category's, all in the one parcel (la, lo). Returns (bytes from `at`, slot 15 value,
+    slot 278 value), each slot value an (addr, blocks) pair."""
+    assert at % ALIGN == 0
+    n = len(cats)
+    t15 = bytearray(ALIGN * ((28 * n + ALIGN - 1) // ALIGN))
+    t278 = bytearray(ALIGN * ((CAT_ENTRY * n + ALIGN - 1) // ALIGN))
+    # in file order: the slot-15 table, its level blocks, the slot-278 table, then each
+    # category's trie and records
+    near = bytearray()
+    p = at + len(t15)
+    for i, (code, keys, recs, (la, lo)) in enumerate(cats):
+        items, seen = [], set()
+        for r in recs:
+            w = struct.unpack('>20H', r)
+            if w[15] not in seen:
+                seen.add(w[15]); items.append((w[15], code, w[11], w[12], w[13] >> 8))
+        nb = nearby_frame(la, lo, items)
+        struct.pack_into('>14H', t15, 28 * i,
+                         (28 * (i + 1)) // 2 if i + 1 < n else 0xffff, 0, addr(p + len(near)), 0,
+                         len(nb) // 2, 0, 0, 0xd, 0x8000, 8, i, 0, 1, code)
+        near += nb
+    at278 = p + len(near)
+    body = bytearray()
+    p = at278 + len(t278)
+    for i, (code, keys, recs, _) in enumerate(cats):
+        node, first, _n = build_trie(keys, CAT_CR, CAT_KW, REC_W)
+        trie_at = p + len(body)
+        body += node + b'\0' * (-len(node) % ALIGN)
+        rec_at = p + len(body)
+        for r in recs:
+            assert len(r) == REC
+            body += r
+        body += b'\0' * (-len(body) % ALIGN)
+        t278[CAT_ENTRY * i:CAT_ENTRY * (i + 1)] = category_entry(
+            i, area, code, trie_at, len(node) // 2, first, rec_at, len(recs))
+    return (bytes(t15) + bytes(near) + bytes(t278) + bytes(body),
+            (addr(at), len(t15) // ALIGN), (addr(at278), len(t278) // ALIGN))
