@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Background tiles (sea and land, levels 2 and 1) for a region's cells, from an OSM
-coastline. Roads go in afterwards with rd_build.py; the lev_* tools import this module
-for load_land, clean_land and encode_level_fast to write the coarse levels 3-6.
-
-    ./bg_tiles.py --profile iceland TEMPLATE.DAT OUTDIR [CELL...]
-    ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] [--landuse PATH [--area-class KIND=LAYER:CLASS]] OUTDIR [CELL...]
-"""
+"""Background tiles (sea and land, levels 2 and 1) for a region's cells, from an OSM coastline. Roads go in afterwards with rd_build.py; lev_* tools reuse load_land, clean_land and encode_level_fast for levels 3-6."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shapely.geometry import box, LineString, MultiLineString
@@ -23,6 +17,7 @@ SEA = ''
 MARKERS = dict(areas=[], lines=[], points=[])
 LANDUSE = {'items': [], 'tree': None}   # [(polygon, layer, class)] and an STRtree, set by load_landuse
 LANDUSE_MIN = {1: 1e-7, 2: 4e-6}        # smallest land-use polygon drawn per level, in square degrees
+DROPPED = dict(sea_polys=0, coastl=0, landuse=0, empty_sea_label=0)   # silent drops, counted for the build log
 
 t0 = time.time()
 
@@ -80,7 +75,10 @@ def landuse_layers(level, rect, lon0, lat0, w, h, land=None):
             continue
         inter = poly.intersection(rect if land is None else land)
         for p in (inter.geoms if hasattr(inter, 'geoms') else [inter]):
-            if p.geom_type != 'Polygon' or p.area < LANDUSE_MIN.get(level, 0):
+            if p.geom_type != 'Polygon':
+                continue
+            if p.area < LANDUSE_MIN.get(level, 0):
+                DROPPED['landuse'] += 1
                 continue
             s = bg_encode.ring_shape(p.exterior, lon0, lat0, w, h, prefix | cls)
             if s:
@@ -140,6 +138,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                 sea_polys = [dict(type=L['seatype'], ref=0xffff,
                                   pts=bg_encode.densify([(0, 0), (0, 2047), (2047, 2047), (2047, 0), (0, 0)]))]
                 labels = [(0x4089, 0x2800, 1024, 1024, sea)]
+                if not sea: DROPPED['empty_sea_label'] += 1
             elif pl.contains(rect):
                 # all land: header-only record, so every parcel exists
                 out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
@@ -165,6 +164,8 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                     merged = linemerge(MultiLineString(pieces)) if len(pieces) > 1 else pieces[0]
                     coastl = bg_encode.line_shapes(merged, lon0, lat0, w, h, L['coasttype'])
                 # A group holds at most 255 shapes: keep the largest.
+                if len(sea_polys) > 255: DROPPED['sea_polys'] += len(sea_polys) - 255
+                if len(coastl) > 255: DROPPED['coastl'] += len(coastl) - 255
                 sea_polys = sorted(sea_polys, key=lambda s: -len(s['pts']))[:255]
                 coastl = sorted(coastl, key=lambda s: -len(s['pts']))[:255]
                 if polys:
@@ -172,6 +173,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                     rp = big.representative_point()
                     labels = [(0x4089, 0x2800, bg_encode.quant(rp.x, lon0, w),
                                bg_encode.quant(rp.y, lat0, h), sea)]
+                    if not sea: DROPPED['empty_sea_label'] += 1
             out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
                 level, y0, x0, row, col, sea_polys, coastl + extra_lines,
                 labels + extra_labels, area_polys=area_polys, extra_layers=extra)
@@ -235,6 +237,9 @@ def main():
         tile = build_cell(name, land, coast, tree, tmpl, P.bounds, version, road_section)
         open(f'{outdir}/{name}.DAT', 'wb').write(tile)
         print(name, len(tile), 'bytes')
+    dropped = dict(DROPPED, oversize_rings=bg_encode.to_parcel.oversize, short_rings=bg_encode.ring_shape.dropped)
+    if any(dropped.values()):
+        print('dropped silently:', ', '.join(f'{k} {v}' for k, v in dropped.items() if v))
 
 
 if __name__ == '__main__':

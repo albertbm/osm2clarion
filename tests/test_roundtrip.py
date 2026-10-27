@@ -1406,6 +1406,28 @@ class TestLevelTwoDirectoryBoundary(unittest.TestCase):
                          'the miss is counted even though the neighbour parcel key does not exist at all')
 
 
+class TestMergeNames(unittest.TestCase):
+    """rd_build.merge_names drops a background record's names section from an earlier pass
+    instead of keeping it alongside the new one: stale labels would pile up on a re-run."""
+
+    def test_replaces_instead_of_keeping(self):
+        old_section, _ = fa_encode.names_section(['Gamlavegur'], [[0] * 9])
+        plain, _ = background_record(1, 96, 898, 7, 9, sections={'names': old_section})
+        new_section, _ = fa_encode.names_section(['Nyjavegur'], [[0] * 9])
+        was = rd_build.merge_names.stale_replaced
+        out = rd_build.merge_names(plain, new_section)
+        r = clarion_bg.parse_record(out)
+        self.assertEqual(r['sections']['names'], new_section, 'the old pass is dropped, not merged in')
+        self.assertEqual(rd_build.merge_names.stale_replaced, was + 1, 'the drop is counted for the build log')
+
+    def test_a_fresh_tile_has_nothing_to_replace(self):
+        plain, _ = background_record(1, 96, 898, 7, 9)
+        new_section, _ = fa_encode.names_section(['Nyjavegur'], [[0] * 9])
+        was = rd_build.merge_names.stale_replaced
+        rd_build.merge_names(plain, new_section)
+        self.assertEqual(rd_build.merge_names.stale_replaced, was)
+
+
 class TestShapeIndex(unittest.TestCase):
     """Address records point at x words inside a 0x00fa record; the index fa_encode keeps must name the words parse_record finds."""
 
@@ -1735,6 +1757,62 @@ class TestAgainstBgEncode(unittest.TestCase):
         self.assertEqual([s['type'] for s in r['layers'][3]['shapes']], [0xc01a])
         self.assertEqual([s['type'] for s in r['layers'][7]['shapes']], [0xc015])
         self.assertEqual(clarion_bg.build_record(r), plain)
+
+    def test_short_rings_are_counted(self):
+        was = bg_encode.ring_shape.dropped
+        from shapely.geometry import LinearRing
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, 96, 898, 7, 9)
+        tiny = LinearRing([(lon0, lat0), (lon0 + w * 1e-9, lat0), (lon0, lat0)])
+        self.assertIsNone(bg_encode.ring_shape(tiny, lon0, lat0, w, h, 0))
+        self.assertEqual(bg_encode.ring_shape.dropped, was + 1)
+
+    def test_oversize_rings_are_counted(self):
+        import bg_tiles
+
+        from shapely.geometry import Point
+        was = bg_encode.to_parcel.oversize
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, 96, 898, 7, 9)
+        circle = list(Point(lon0 + w / 2, lat0 + h / 2).buffer(min(w, h) / 2, quad_segs=100).exterior.coords)
+        saved, bg_encode.MAX_VERTS = bg_encode.MAX_VERTS, 8
+        try:
+            bg_encode.to_parcel(circle, lon0, lat0, w, h, closed=True)
+        finally:
+            bg_encode.MAX_VERTS = saved
+        self.assertEqual(bg_encode.to_parcel.oversize, was + 1)
+
+    def test_landuse_min_drop_is_counted(self):
+        import json
+
+        from shapely.geometry import box
+
+        import bg_tiles
+        was = bg_tiles.DROPPED['landuse']
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, 96, 898, 7, 9)
+        speck = box(lon0, lat0, lon0 + w * 1e-5, lat0 + h * 1e-5)   # under LANDUSE_MIN[1]
+        fc = {'type': 'FeatureCollection', 'features': [
+            {'type': 'Feature', 'properties': {'kind': 'forest'}, 'geometry': speck.__geo_interface__}]}
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(fc, f)
+        try:
+            bg_tiles.load_landuse(f.name)
+            extra = bg_tiles.landuse_layers(1, box(lon0, lat0, lon0 + w, lat0 + h), lon0, lat0, w, h)
+        finally:
+            bg_tiles.LANDUSE.update(items=[], tree=None)
+            os.unlink(f.name)
+        self.assertEqual(extra, {})
+        self.assertEqual(bg_tiles.DROPPED['landuse'], was + 1)
+
+    def test_empty_sea_label_is_counted(self):
+        import bg_tiles
+        from shapely.geometry import box
+        from shapely.strtree import STRtree
+        was = bg_tiles.DROPPED['empty_sea_label']
+        yb, xb = clarion_bg.tile_cell('B60R080R')
+        cell = box(clarion_bg.mesh_to_lon(xb), clarion_bg.mesh_to_lat(yb),
+                   clarion_bg.mesh_to_lon(xb + 8), clarion_bg.mesh_to_lat(yb + 8))
+        no_land = box(0, 0, 0, 0)
+        bg_tiles.encode_level_fast(1, yb, xb, no_land, [], STRtree([]), cell, sea='')
+        self.assertGreater(bg_tiles.DROPPED['empty_sea_label'], was, 'every all-sea parcel in the mesh counts')
 
     def test_buildings_over_255_split_into_subgroups(self):
         import json
