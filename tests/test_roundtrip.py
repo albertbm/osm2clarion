@@ -842,13 +842,16 @@ class TestRoadShapes(unittest.TestCase):
         w = struct.unpack_from('>22H', plain, 0)
         return w, struct.unpack_from('>%dH' % (2 * w[8]), plain, 4 * w[7])
 
-    def shape_points(self, shape, chain):
+    def shape_points(self, shape, chain, fresh=None):
         """Walk a level-1 shape's words beside the chain that produced it: (role, x word,
-        y word) per point, in the roles the factory census counts."""
+        y word) per point, in the roles the factory census counts. fresh: per link, whether
+        it opens with a style word (defaults to the first link only, as build_record's own
+        default style leaves the rest unchanged)."""
+        if fresh is None: fresh = [n == 0 for n in range(len(chain))]
         p = 7                                       # the length word, 0x8000 | points, five header words
         out = [('start', shape[p], shape[p + 1])]; p += 2
         for n, (_, _, _, inner) in enumerate(chain):
-            p += 3 if n == 0 else 2                 # the link header
+            p += 3 if fresh[n] else 2                # the link header
             npts = len(inner) + 1
             for k in range(npts):
                 if k < npts - 1: role = 'first-of-link' if k == 0 else 'inner'
@@ -965,7 +968,20 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x4000], [1, 4],
                          '0x4000 on the first point of each link')
         self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x2000], [1],
-                         '0x2000 only in the first link')
+                         '0x2000 marks a link opened by a style word; with no styles given '
+                         'here, only the first link is one')
+
+    def test_a_restyled_later_link_carries_0x2000(self):
+        """V1: the factory sets 0x2000 on every link a style word opens, not only the first
+        one (478 of 479 restyled later links on B68R058R, a maxspeed change mid-chain)."""
+        styles = [fa_encode.STYLE, fa_encode.style_word(30)]
+        fresh = fa_encode.restyled(styles)
+        self.assertEqual(fresh, [True, True], 'both links open with their own style word')
+        pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES, styles=styles),
+                                self.CHAIN, fresh=fresh)
+        self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x4000], [1, 4])
+        self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x2000], [1, 4],
+                         'the second link is restyled too, so it carries 0x2000 as well')
 
     def test_oneway_bits_mark_every_y_of_the_link(self):
         """Factory ORs the one-way sense into bits 15-14 of every y of a link, start point
@@ -987,6 +1003,13 @@ class TestRoadShapes(unittest.TestCase):
             by_link[lid].add(w[k + 1] & 0xc000)
         self.assertEqual(by_link[1], {0x4000}, 'link 1 drawn with traffic')
         self.assertEqual(by_link[2], {0x8000}, 'link 2 drawn against traffic')
+
+    def test_level2_style_word_clears_bit12_for_oneway(self):
+        """V2: the factory clears bit 12 of the level-2 style word on a one-way first link,
+        the same rule as level 1 (94 of 126 one-way first links on B68R058R)."""
+        for dirs, want in (([1, -1], 0x001e), ([-1, 1], 0x001e), ([0, 0], 0x101e)):
+            shape = fa_encode.shape_words(self.CHAIN, self.NODES, level=2, dirs=dirs)
+            self.assertEqual(shape[9], want, dirs)   # length, npts, 5 header, 2 start point
 
     def test_a_two_point_shape_keeps_the_form_that_drew(self):
         """One link and no inner points: start, header, end point flagged 0x7000 with a plain
