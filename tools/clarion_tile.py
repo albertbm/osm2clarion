@@ -1,11 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Clarion X08-03-00 map tile: read the container into objects and write it back.
-
-Layout: 0x1000-byte header (strings, level table at 0x1ac, bbox table at 0x2ac,
-section table at 0x800), then per section a section table, directories and record
-blocks. Everything after the header is 256-byte aligned. Addresses are u32:
-(offset // 2048) << 8 | (offset % 2048) // 256.
-"""
+"""Clarion X08-03-00 map tile: read the container into objects and write it back. Header is 0x1000 bytes (strings, level table at 0x1ac, bbox table at 0x2ac, section table at 0x800); past it, each section has a table, directories and record blocks, all 256-byte aligned. Addresses are u32: (offset // 2048) << 8 | (offset % 2048) // 256."""
 import struct, zlib
 
 SLOTS = 32
@@ -48,7 +42,8 @@ def read_tile(d):
                 assert glen == 2 + 6*gcnt and gcnt == cnt, (glen, gcnt, cnt)
                 for k in range(gcnt):
                     y1, y0, x0, x1, z, tg = w[o+2+6*k:o+8+6*k]
-                    D = read_dir(d, addr_of((z << 16) | tg), box=(y1, y0, x0, x1), nslots=16 if level == 3 else SLOTS)
+                    D = read_dir(d, addr_of((z << 16) | tg), box=(y1, y0, x0, x1), nslots=16 if level == 3 else SLOTS,
+                                section=sid)
                     di = len(L['dirs']); L['dirs'].append(D)
                     t['order'].append((D['off'], 'dir', si, li, di))
                     if D['slots']:
@@ -60,9 +55,9 @@ def read_tile(d):
     t['order'].sort()
     return t
 
-def read_dir(d, off, box, nslots=SLOTS):
+def read_dir(d, off, box, nslots=SLOTS, section=1):
     kind, a, b, y, x, typ = struct.unpack_from('>HHHHHH', d, off)
-    body = 512 if kind == 0x2046 else 256
+    body = 512 if section == 1 else 256   # slot body size is per section, not per kind; 0x2146/0x2346 are section 1 too
     D = dict(off=off, kind=kind, ab=(a, b), y=y, x=x, typ=typ, box=box, body=body, slots={}, nslots=nslots)
     p = off + 12
     for i in range(nslots):
