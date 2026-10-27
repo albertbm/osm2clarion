@@ -321,8 +321,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         # the posted limit per link, from the way's own maxspeed only (no class default), and one-way
         styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
                   for g in groups]
+        dirs = [[L[k][10] for k in g] for g in groups]
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY)
+                                    styles=styles, country=COUNTRY, dirs=dirs)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
