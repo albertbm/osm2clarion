@@ -1,16 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The road-shape record (kind 0x00fa) that sits in the even pair of a level-1 background
-directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
-(w17, w18) = the tail table (8 header words plus one run item per 127 of shapes + links,
-padded to a dword; a 5-dword tail up to 254), w19 0x8104, w20 the ISO country code. Geometry unit: u16 count, twelve
-(u16 offset in dwords from the unit start, u16 shape count) layer pairs, a pad word, then the
-shapes. Roads sit in the layer their class belongs to (layer 7 for classes 1-2, 6 for 3-6,
-5 for 8, 4 for 9, 0 for ferries), and the class is the top nibble of shape word 2. A shape:
-u16 length in words (itself included), 0x8000 | point count, class << 12, 0x0004, 0x000c,
-0x8004, 0, then for each link of the chain (val, link id) and its points as (x | flags,
-y | flags), the chain's start point first.
-"""
+"""The road-shape record (kind 0x00fa) in the even pair of a level-1 background directory:
+header, a geometry unit of twelve layer pairs, then the shapes, one per drawn link chain."""
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
@@ -18,11 +9,7 @@ import clarion_bg
 STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
 
 def style_word(limit, oneway=False):
-    """Level-1 style word for a posted limit in the country's unit, or STYLE for none.
-    Bit 5 marks a limit and the low five bits n give (n + 1) * 5, so 5..160 in steps of 5.
-    Bit 12 clear marks a one-way link: clear on 34,118 of 43,845 factory one-way links and
-    on 6,330 of 1,521,536 two-way ones (B58R060R, B50R060R). The direction also carries in
-    section 2, and since 6d2f493 in section-1 y bits 15-14. Bit 6 is not understood."""
+    """Level-1 style word for a posted limit, or STYLE for none; bit 12 clear marks one-way."""
     w = STYLE if not limit or limit % 5 or not 5 <= limit <= 160 else 0x1020 | (limit // 5 - 1)
     return w & ~0x1000 if oneway else w
 
@@ -31,10 +18,7 @@ def limit_of(style):
     return ((style & 0x1f) + 1) * 5 if style & 0x20 else None
 
 def speed_limit(maxspeed, unit='km/h'):
-    """OSM maxspeed as a posted limit in unit ('km/h' or 'mph'), or None. A bare number is
-    km/h and '30 mph' is mph, as OSM tags them; a value in the other unit is converted and
-    kept only if it lands on a multiple of 5. Zone and keyword values ('IS:urban', 'none',
-    'walk', 'signals') give None, since no sign number is known for them."""
+    """OSM maxspeed as a posted limit in km/h or mph, or None when it isn't a multiple of 5."""
     if not maxspeed: return None
     parts = str(maxspeed).strip().lower().split(';')[0].split()
     try: v = float(parts[0])
@@ -45,9 +29,7 @@ def speed_limit(maxspeed, unit='km/h'):
     if src != unit: v = 5 * round(v / 5)
     return v if v % 5 == 0 and 5 <= v <= 160 else None
 
-# OSM highway -> (level-1 layer, level-1 class), level-2 class, level-3 class. Read off the
-# 2014 card: class follows road standard, not route prefix, so Iceland's Route 1 and
-# Reykjanesbraut are trunk and draw as through-roads.
+# OSM highway -> (level-1 layer, class), level-2 class, level-3 class; class follows road standard, not route prefix
 CLASSES = {
     'motorway':       ((7, 1), 1, 3),
     'motorway_link':  ((7, 1), 1, 3),
@@ -68,59 +50,19 @@ CLASSES = {
 DEFAULT = ((5, 8), 7, 7)
 
 def layer_class(hw, level, layer=None):
-    """(layer, class) for one OSM highway value at level 1 or 2. layer overrides the layer,
-    for callers that still want everything in one band."""
+    """(layer, class) for one OSM highway value at level 1 or 2."""
     (l1, c1), c2, _ = CLASSES.get(hw, DEFAULT)
     lay, cls = (l1, c1) if level == 1 else (7 if c2 in (1, 2) else 6, c2)
     return (layer if layer is not None else lay), cls
 
 def restyled(styles):
-    """Per link, whether its header carries a style word: the first link always, a later
-    one only where the word changes, as on every factory chain."""
+    """Per link, whether its header carries a style word: the first always, a later one only where it changes."""
     return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
 def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None):
-    """chain: [(link id, from node, to node, [inner points])]. The start node as
-    (x | 0x0800, y | 0x2800), then each link's header and its points, and one trailer word
-    at level 1. cls is the road class in the top nibble of word 2, which is what the
-    renderer widens by. styles: the level-1 style word per link (the posted limit), STYLE
-    for all when None.
-
-    The start y's 0x2000 means "a style word follows". Where the style changes along the
-    chain, the link end before the change carries 0x2000 on y too and the next link header
-    opens with the new word. Factory Norway and northern England do it this way on all
-    35,511 restyled links, and never repeat an unchanged word.
-
-    Level-1 x flags, counted over the factory tiles (docs/GEOMETRY.md):
-
-        0x4000  first point of a link
-        0x2000  in the first link
-        0x1000  the link goes on past this point
-        0x0800  this point does not end a link
-
-    A link end inside the chain clears 0x1000 and carries 0x0800 on its y instead; the
-    shape's last point keeps 0x1000 and a plain y. The firmware reads a clear 0x0800 as
-    "the link ends here" and takes the two words after it for a link header, so a build
-    that left it clear on inner points ended every link at its first point and drew a fan
-    of crossing lines. Tromso sets it on all 30,690 points that do not end a link and
-    clears it on all 13,338 that do, over 7,520 shapes, with no exceptions. 0x0c00 on a
-    link end's y is an earlier reading of the same mark: bit 10 belongs to the coordinate,
-    so that form drew the shape off the parcel.
-
-    Level 2 has no value word and no trailer, and writes the style word on the first link
-    only. Its first-of-link flag is 0x4000 on a link opened by a style word and 0x2000 on
-    one that is not; 0x1000 and 0x0800 mean what they do at level 1. Counted on 102,671
-    level-2 shapes of B58R060R and B50R060R (214-062), no exceptions in the forms written
-    here.
-
-    dirs: per link, the one-way sense in osm_roads.oneway()'s convention (1 drawn with the
-    chain's a->b direction, -1 against, 0 two-way; same convention as rd_encode.oneway_bits).
-    Factory ORs this into bits 15-14 of every y word of the link, including the point it
-    shares with the chain's header or the next link: 0x4000 with, 0x8000 against, uniform
-    along the whole link and matching on the chain's start point too (B50R060R, B58R060R,
-    both levels; a handful of links show two values, not followed here). A third factory
-    value, 0xc000, marks a link barred both ways; nothing in our OSM import can produce it,
-    so it is never written."""
+    """Section-1 shape words for one link chain: start point, then each link's header and
+    points, with x flags 0x4000/0x2000/0x1000/0x0800 marking link starts, style changes and
+    ends (docs/GEOMETRY.md), and the one-way sense OR'd into bits 15-14 of y."""
     if cls is None: cls = 8 if level == 1 else 7
     if styles is None or level != 1: styles = [STYLE] * len(chain)
     if dirs is None: dirs = [0] * len(chain)
@@ -135,17 +77,16 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
         if level == 1: out += [styles[n], 0x0100, lid] if fresh[n] else [0x0100, lid]
-        else: out += [0x101e, lid] if n == 0 else [lid]
+        else: out += [style_word(None, oneway=dirs[n] != 0), lid] if n == 0 else [lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
             first = k == 0; link_end = k == len(pts) - 1; chain_end = n == len(chain) - 1
             if level == 1:
-                xf = ((0x4000 if first else 0) | (0x2000 if first and n == 0 else 0)
+                xf = ((0x4000 if first else 0) | (0x2000 if first and fresh[n] else 0)
                       | (0 if link_end and not chain_end else 0x1000)
                       | (0 if link_end else 0x0800))
                 if link_end and not chain_end: y |= 0x2800 if fresh[n + 1] else 0x0800
             else:
-                # a link opened by a style word starts 0x4000, one without 0x2000
                 xf = ((0x4000 if n == 0 else 0x2000) if first else 0) \
                      | (0 if link_end and not chain_end else 0x1000) | (0 if link_end else 0x0800)
                 if link_end and not chain_end: y |= 0x0800
@@ -155,9 +96,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     return [len(body) + 1] + body
 
 def point_words(chain, level=1, styles=None):
-    """[(offset in the shape, link id, role)] for the x word of every point shape_words
-    writes. role: 'start' (the shape's first point), 'end' (a link's last point) or
-    'vertex' (inside a link). start and end are graph nodes."""
+    """[(word offset, link id, role)] for every point shape_words writes; role is start, end or vertex."""
     fresh = restyled(styles) if styles and level == 1 else [n == 0 and level == 1 for n in range(len(chain))]
     out = [(7, chain[0][0], 'start')]
     q = 9
@@ -168,11 +107,7 @@ def point_words(chain, level=1, styles=None):
     return out
 
 def item_words(shape, level=1, name_off=0xffff, country=None):
-    """Names sub-table item for a shape: 0x8000, its length in words, 0x8000 | 2*(points-2),
-    6, 0x0bc0, the ISO 3166 country code, then constants. Level 2 items end with (1, k, name
-    offset), k = 1 named, 0 unnamed. Word 5 is the country on every factory item read (578
-    Norway and 752 Sweden on B58R060R, 208, 276, 528 on B50R060R); until 19 Oct 2026 this
-    wrote 380 (Italy) at level 1 and 250 (France) at level 2."""
+    """Names sub-table item for a shape; word 5 is the ISO 3166 country code."""
     assert country, 'item_words needs the country code'
     npts = shape[1] & 0x3fff   # word 1 is 0x8000 | points
     if level == 1: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 0xe, 8, 0xd]
@@ -180,9 +115,7 @@ def item_words(shape, level=1, name_off=0xffff, country=None):
     return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 1, 1 if named else 0, name_off if named else 0]
 
 def tail_items(n):
-    """Level-1 tail run items for n = shapes + links: chunks of at most 127, each
-    (count << 8) | 1. Verified against 4,888 factory tails (B60R060R, B68R058R, B68R050R),
-    whose run items sum to exactly shapes + links. Inverse of tail_count."""
+    """Level-1 tail run items for n = shapes + links: chunks of at most 127, each (count << 8) | 1."""
     items = []
     while n > 0:
         take = min(127, n)
@@ -191,14 +124,11 @@ def tail_items(n):
     return items
 
 def tail_count(items):
-    """shapes + links from a tail's run items, the inverse of tail_items. Only counts
-    type-1 items (bit 15 clear); a factory tail with a bit-15 item is a different,
-    unhandled item type and is not a simple run tail."""
+    """shapes + links from a tail's run items; only type-1 items (bit 15 clear) are counted."""
     return sum(x >> 8 for x in items if not x & 0x8000 and x & 0xff == 1)
 
 def tail_of(plain):
-    """A built record's tail, read back the factory's way: (item count, items). Level 1
-    only; level 2 has no tail unit (w17, w18) == (0xffff, 0)."""
+    """A built record's tail: (item count, items). Level 1 only."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     off, cnt = w[17], w[18]
     tail = w[2 * off: 2 * off + 2 * cnt]
@@ -206,14 +136,7 @@ def tail_of(plain):
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
                  styles=None, country=None, dirs=None):
-    """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
-    OSM highway value, which picks the layer and class. styles: per chain, the level-1 style
-    word of each link (style_word), or None for no posted limit anywhere. Level 1 has twelve layer pairs and a
-    pad word, so its data starts at dword 13; level 2 has eleven pairs and starts at 11.
-    Shapes are grouped by layer and each layer's pair gives (offset in dwords, count).
-    country: ISO 3166 numeric, header word 20 and every names item; word 20 is the parcel's
-    country on every factory shape record read, both levels (B58R060R, B50R060R).
-    dirs: per chain, the one-way sense of each link (shape_words)."""
+    """A level-1 or level-2 road-shape record and its compressed form, shapes grouped by layer."""
     assert country, 'build_record needs the country code'
     if hws is None: hws = [None] * len(chains)
     lc = [layer_class(hw, level, layer) for hw in hws]
@@ -258,15 +181,8 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     return plain, comp
 
 def parse_record(plain, level=1):
-    """Shapes of a 0x00fa record, read with the factory's grammar (REPORT-kanren):
-    length word flags 0x2000 / 0x4000 add one / two header words to the base seven; a
-    point y with 0x2000 is followed by a style word, one with 0x1000 by an extra word
-    between val and id; an x with 0x1000 clear ends the link. Level 2 has eleven layer pairs
-    with no count word before them, no val word and no trailer (3,182 of 3,182 level-2
-    records of B48R068R-214-066 parse to the word). Returns (code, unit start,
-    [dict(at, length, layer, cls, name, points={x word: (role, link id)}, links, styles, ends,
-    ok)]); styles is the style word in force on each link, cls the class in the top nibble of
-    header word 2, ends each link's (first, last) point as (x, y)."""
+    """Shapes of a 0x00fa record, parsed with the factory's own grammar (REPORT-kanren).
+    Returns (code, unit start, [shape dicts])."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     assert w[2] == 0x00fa, hex(w[2])
     g = 2 * w[7]
@@ -305,9 +221,7 @@ def parse_record(plain, level=1):
     return (w[0], w[1]), g, shapes
 
 def names_section(labels, items):
-    """Names section holding road-label entries (in order) and one sub-table item per shape.
-    A label is the shipped `1=NAME;2=REF` form, either part on its own if the other is
-    missing. Returns (bytes, {label: word offset})."""
+    """Names section: road-label entries plus one sub-table item per shape. Returns (bytes, {label: word offset})."""
     import struct as _s
     body = b''; offs = {}
     for name in labels:
@@ -322,8 +236,7 @@ def names_section(labels, items):
     return hdr + body + sub, offs
 
 def chains_from_links(links, way_of, chain=False):
-    """One shape per link unless chain: then consecutive links of one way form a chain.
-    links [(i, j, length)] with ids 1.., way_of[lid] the way id."""
+    """One shape per link, or (chain=True) consecutive links of one way merged into a chain."""
     chains = []
     for lid, (i, j, _) in enumerate(links, start=1):
         if chain and chains and way_of.get(lid) == way_of.get(lid - 1) and chains[-1][-1][2] == i:
