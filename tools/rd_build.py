@@ -410,7 +410,11 @@ def main():
         if not lv['dirs'] and not (level == 2 and no_l2_graph):
             lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}))   # a tile declaring none hangs the first draw
         bydir = {(D['y'], D['x']): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
+        was_stale = merge_names.stale_replaced
         placed = place_shapes(recs, bydir)
+        if merge_names.stale_replaced > was_stale:
+            report.append(f'level {level}: {merge_names.stale_replaced - was_stale} stale road labels '
+                          f'from an earlier pass replaced, not kept')
         PW, PH = PSIZE[level]
         if recs and lv['dirs']:
             lats = [parcel_geo(level, *pc)[1] for pc in recs] + [parcel_geo(level, *pc)[1] + PH for pc in recs]
@@ -463,16 +467,19 @@ def main():
 
 
 def merge_names(plain, section):
-    """A background record with a road names section merged in, road labels first."""
+    """A background record with its road names section replaced (never kept: the names slot
+    only ever holds a prior rd_build pass's own labels, so keeping them would leave stale,
+    dead labels behind on a second run over the same tile)."""
     r = clarion_bg.parse_record(plain)
-    old = r['sections'].get('names'); keep = labels_unpadded(old[24:4 * struct.unpack_from('>H', old, 8)[0]] if struct.unpack_from('>H', old, 8)[0] != 0xffff else old[24:]) if old else b''
-    hdr = bytearray(section[:24]); nl = struct.unpack_from('>H', section, 2)[0]
-    sub_off = struct.unpack_from('>H', section, 8)[0]; labels = section[24:4 * sub_off]; sub = section[4 * sub_off:]
-    body = labels_unpadded(labels) + keep
-    while len(body) % 4: body += b'\0'
-    struct.pack_into('>H', hdr, 2, nl + count_labels(keep)); struct.pack_into('>H', hdr, 8, (24 + len(body)) // 4)
-    r['sections']['names'] = bytes(hdr) + body + sub
+    old = r['sections'].get('names')
+    if old:
+        sub_off = struct.unpack_from('>H', old, 8)[0]
+        stale = labels_unpadded(old[24:4 * sub_off] if sub_off != 0xffff else old[24:])
+        n = count_labels(stale)
+        if n: merge_names.stale_replaced += n
+    r['sections']['names'] = section
     return clarion_bg.build_record(r)
+merge_names.stale_replaced = 0
 
 
 def place_shapes(recs, bydir):

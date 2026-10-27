@@ -1,9 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Encode land polygons and coastline ways into Clarion background records and a tile.
-
-Level 2: directory per 4x4-mesh quadrant, parcel 7.5' x 5'. Level 1: directory per mesh,
-parcel 1.875' x 1.25'. Slot pair index = 2*col + 1; parcel coordinates are 0..2047.
-"""
+"""Land polygons and coastline ways into Clarion background records and a tile. Level 2 is one directory per 4x4-mesh quadrant (parcel 7.5' x 5'), level 1 one per mesh (parcel 1.875' x 1.25'); slot pair index = 2*col + 1, parcel coordinates run 0..2047."""
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shapely.geometry import box, LineString, MultiLineString, Polygon, MultiPolygon, GeometryCollection
@@ -53,15 +49,22 @@ def to_parcel(coords, lon0, lat0, w, h, closed=False):
         pts = [(max(0, min(UNITS - 1, round(x))), max(0, min(UNITS - 1, round(y)))) for x, y in simp]
         dedup = [pts[0]] + [p for a, p in zip(pts, pts[1:]) if p != a]
         out = densify(dedup)
-        if len(out) <= MAX_VERTS or tol > 64: return out
+        if len(out) <= MAX_VERTS or tol > 64:
+            if len(out) > MAX_VERTS: to_parcel.oversize += 1   # the unit stops filling it; we ship it anyway
+            return out
         tol *= 2
+to_parcel.oversize = 0
 
 def ring_shape(ring, lon0, lat0, w, h, typ):
     coords = list(ring.coords)
     if ring.is_ccw: coords.reverse()      # shipped sea polygons run clockwise
     pts = to_parcel(coords, lon0, lat0, w, h, closed=True)
     if pts[0] != pts[-1]: pts.append(pts[0])
-    return dict(type=typ, ref=0xffff, pts=pts) if len(pts) >= 4 else None
+    if len(pts) < 4:
+        ring_shape.dropped += 1
+        return None
+    return dict(type=typ, ref=0xffff, pts=pts)
+ring_shape.dropped = 0
 
 def line_shapes(geom, lon0, lat0, w, h, typ):
     lines = []
