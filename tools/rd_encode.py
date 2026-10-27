@@ -29,16 +29,13 @@ SPEED_KMH = {
 }
 DEFAULT_SPEED_KMH = 50
 
-def speed_of(hw, maxspeed=None):
-    """km/h for one link: the way's own maxspeed when it parses, else the class default."""
-    if maxspeed:
-        parts = str(maxspeed).strip().lower().split()
-        try:
-            v = int(parts[0])
-            if len(parts) > 1 and parts[1] == 'mph': v = round(v * 1.609344)
-            if 1 <= v <= 200: return v
-        except (ValueError, IndexError):
-            pass
+def speed_of(hw, maxspeed=None, unit='km/h'):
+    """km/h for one link: the way's own maxspeed (a bare number read in `unit`) when it
+    parses, else the class default. Shares its parsing with fa_encode.speed_limit."""
+    p = fa_encode.parse_speed(maxspeed, unit)
+    if p is not None:
+        v = round(fa_encode.to_kmh(*p))
+        if 1 <= v <= 200: return v
     return SPEED_KMH.get(hw, DEFAULT_SPEED_KMH)
 
 def scaled(q):

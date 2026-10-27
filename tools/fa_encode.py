@@ -17,13 +17,26 @@ def limit_of(style):
     """The posted limit a style word carries, or None."""
     return ((style & 0x1f) + 1) * 5 if style & 0x20 else None
 
-def speed_limit(maxspeed, unit='km/h'):
-    """OSM maxspeed as a posted limit in km/h or mph, or None when it isn't a multiple of 5."""
+def parse_speed(maxspeed, unit='km/h'):
+    """(value, unit) for the first ';'-part of an OSM maxspeed tag ('50', '50.0', '30 mph'): an
+    explicit 'mph' or 'km/h' suffix names its own unit, else it's posted in `unit`. None when it
+    does not parse. Shared with rd_encode.speed_of, which wants the raw km/h instead of a signed,
+    rounded limit."""
     if not maxspeed: return None
     parts = str(maxspeed).strip().lower().split(';')[0].split()
     try: v = float(parts[0])
     except (ValueError, IndexError): return None
-    src = 'mph' if len(parts) > 1 and parts[1] == 'mph' else 'km/h'
+    src = parts[1] if len(parts) > 1 and parts[1] in ('mph', 'km/h') else unit
+    return v, src
+
+def to_kmh(v, src):
+    return v * 1.609344 if src == 'mph' else v
+
+def speed_limit(maxspeed, unit='km/h'):
+    """OSM maxspeed as a posted limit in `unit`, or None when it isn't a multiple of 5."""
+    p = parse_speed(maxspeed, unit)
+    if p is None: return None
+    v, src = p
     if src != unit: v = v / 1.609344 if unit == 'mph' else v * 1.609344
     v = round(v)
     if src != unit: v = 5 * round(v / 5)
