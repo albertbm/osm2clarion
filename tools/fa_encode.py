@@ -78,7 +78,7 @@ def restyled(styles):
     one only where the word changes, as on every factory chain."""
     return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
-def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None):
     """chain: [(link id, from node, to node, [inner points])]. The start node as
     (x | 0x0800, y | 0x2800), then each link's header and its points, and one trailer word
     at level 1. cls is the road class in the top nibble of word 2, which is what the
@@ -110,14 +110,27 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
     only. Its first-of-link flag is 0x4000 on a link opened by a style word and 0x2000 on
     one that is not; 0x1000 and 0x0800 mean what they do at level 1. Counted on 102,671
     level-2 shapes of B58R060R and B50R060R (214-062), no exceptions in the forms written
-    here."""
+    here.
+
+    dirs: per link, the one-way sense in osm_roads.oneway()'s convention (1 drawn with the
+    chain's a->b direction, -1 against, 0 two-way; same convention as rd_encode.oneway_bits).
+    Factory ORs this into bits 15-14 of every y word of the link, including the point it
+    shares with the chain's header or the next link: 0x4000 with, 0x8000 against, uniform
+    along the whole link and matching on the chain's start point too (B50R060R, B58R060R,
+    both levels; a handful of links show two values, not followed here). A third factory
+    value, 0xc000, marks a link barred both ways; nothing in our OSM import can produce it,
+    so it is never written."""
     if cls is None: cls = 8 if level == 1 else 7
     if styles is None or level != 1: styles = [STYLE] * len(chain)
+    if dirs is None: dirs = [0] * len(chain)
     fresh = restyled(styles)
+    def dirbits(n):
+        d = dirs[n]
+        return 0x4000 if d > 0 else 0x8000 if d < 0 else 0
     if level == 1: out = [cls << 12, 0x0004, name_off, 0x8004, 0x0000]   # word 4: word offset of the name entry, 0xffff = none
     else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
-    out += [0x0800 | sx, 0x2800 | sy]
+    out += [0x0800 | sx, 0x2800 | sy | dirbits(0)]
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
         if level == 1: out += [styles[n], 0x0100, lid] if fresh[n] else [0x0100, lid]
@@ -135,7 +148,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None):
                 xf = ((0x4000 if n == 0 else 0x2000) if first else 0) \
                      | (0 if link_end and not chain_end else 0x1000) | (0 if link_end else 0x0800)
                 if link_end and not chain_end: y |= 0x0800
-            out += [xf | x, y]; npts += 1
+            out += [xf | x, y | dirbits(n)]; npts += 1
     if level == 1: out += [0x0000]
     body = [0x8000 | npts] + out
     return [len(body) + 1] + body
@@ -166,19 +179,21 @@ def item_words(shape, level=1, name_off=0xffff, country=None):
     return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 1, 1 if named else 0, name_off if named else 0]
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None, country=None):
+                 styles=None, country=None, dirs=None):
     """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
     OSM highway value, which picks the layer and class. styles: per chain, the level-1 style
     word of each link (style_word), or None for no posted limit anywhere. Level 1 has twelve layer pairs and a
     pad word, so its data starts at dword 13; level 2 has eleven pairs and starts at 11.
     Shapes are grouped by layer and each layer's pair gives (offset in dwords, count).
     country: ISO 3166 numeric, header word 20 and every names item; word 20 is the parcel's
-    country on every factory shape record read, both levels (B58R060R, B50R060R)."""
+    country on every factory shape record read, both levels (B58R060R, B50R060R).
+    dirs: per chain, the one-way sense of each link (shape_words)."""
     assert country, 'build_record needs the country code'
     if hws is None: hws = [None] * len(chains)
     lc = [layer_class(hw, level, layer) for hw in hws]
     if styles is None: styles = [None] * len(chains)
-    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i])
+    if dirs is None: dirs = [None] * len(chains)
+    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i])
               for i, c in enumerate(chains)]
     if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word

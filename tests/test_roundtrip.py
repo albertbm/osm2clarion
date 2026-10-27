@@ -967,6 +967,27 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x2000], [1],
                          '0x2000 only in the first link')
 
+    def test_oneway_bits_mark_every_y_of_the_link(self):
+        """Factory ORs the one-way sense into bits 15-14 of every y of a link, start point
+        included, uniform along the whole link (measured on B50R060R, B58R060R)."""
+        for dirs, want in (([1, -1], [0x4000] * 4 + [0x8000] * 2),
+                           ([0, 0], [0] * 6),
+                           ([-1, 1], [0x8000] * 4 + [0x4000] * 2)):
+            pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES, dirs=dirs), self.CHAIN)
+            self.assertEqual([y & 0xc000 for _, _, y in pts], want, dirs)
+
+    def test_oneway_bits_round_trip_through_parse_record(self):
+        import collections
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, [self.CHAIN],
+                                          hws=['residential'], country=352, dirs=[[1, -1]])
+        w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+        _, _, shapes = fa_encode.parse_record(plain)
+        by_link = collections.defaultdict(set)
+        for k, (role, lid) in shapes[0]['points'].items():
+            by_link[lid].add(w[k + 1] & 0xc000)
+        self.assertEqual(by_link[1], {0x4000}, 'link 1 drawn with traffic')
+        self.assertEqual(by_link[2], {0x8000}, 'link 2 drawn against traffic')
+
     def test_a_two_point_shape_keeps_the_form_that_drew(self):
         """One link and no inner points: start, header, end point flagged 0x7000 with a plain
         y, trailer. The atomised build wrote only this form, and 20,854 of its shapes were
