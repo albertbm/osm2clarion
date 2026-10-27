@@ -247,7 +247,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
-                                               speeds=[rd_encode.speed_of(l[5], l[7]) for l in P['links']],
+                                               speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
                                                dirs=[l[10] for l in P['links']], ids=ids,
                                                oneway_regs=oneway_regs)

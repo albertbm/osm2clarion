@@ -1116,12 +1116,27 @@ class TestSpeedLimits(unittest.TestCase):
         f = fa_encode.speed_limit
         self.assertEqual(f('50'), 50)
         self.assertEqual(f(' 80 '), 80)
+        self.assertEqual(f('50.0'), 50)
         self.assertEqual(f('30 mph'), 50, '48 km/h, signed in steps of 5')
         self.assertEqual(f('30 mph', 'mph'), 30)
-        self.assertEqual(f('50', 'mph'), 30)
+        self.assertEqual(f('50', 'mph'), 50, 'a bare number is posted in the profile unit, mph here')
+        self.assertEqual(f('50 km/h', 'mph'), 30, 'an explicit km/h suffix is not the profile unit')
         self.assertEqual(f('50;30'), 50)
         for v in (None, '', 'IS:urban', 'none', 'walk', 'signals', '52'):
             self.assertIsNone(f(v), v)
+
+    def test_speed_of_shares_the_parser(self):
+        f = rd_encode.speed_of
+        self.assertEqual(f('residential', '50'), 50)
+        self.assertEqual(f('residential', '50.0'), 50)
+        self.assertEqual(f('residential', '50;30'), 50, 'the first part only')
+        self.assertEqual(f('residential', '30 mph'), 48, 'converted to km/h regardless of the profile unit')
+        self.assertEqual(f('residential', '50', 'mph'), 80,
+                         'a bare number in an mph profile is 50 mph, not 50 km/h (the 1.6x bug)')
+        self.assertEqual(f('residential', None), rd_encode.SPEED_KMH['residential'], 'no tag, the class default')
+        self.assertEqual(f('made up class', None), rd_encode.DEFAULT_SPEED_KMH)
+        for v in ('IS:urban', 'none', 'walk', 'signals'):
+            self.assertEqual(f('residential', v), rd_encode.SPEED_KMH['residential'], v)
 
     def shape(self, limits):
         return fa_encode.shape_words(self.CHAIN, self.NODES, styles=[fa_encode.style_word(v) for v in limits])
