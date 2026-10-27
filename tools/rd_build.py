@@ -82,7 +82,7 @@ def build_graphs(ways, cell, level=1, chain=True):
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
             # parcels just outside the cell are built too, so a border edge node finds its twin
-            if not inside(pc) and not any(inside(neighbour(pc, sd)) for sd in SIDES): continue
+            if not inside(pc) and not any(inside(neighbour(pc, sd, level)) for sd in SIDES): continue
             P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter()))
             q = []
             for p in run:
@@ -179,14 +179,15 @@ def link_groups(links, chain=True):
             groups.append([k]); npts = n + 1
     return groups
 
-def neighbour(pc, side):
+def neighbour(pc, side, level=1):
     y, x, row, col = pc
+    m = DIRM[level]   # a directory spans m meshes, so a row/col wrap steps y/x by m, not 1
     dr, dc = {'top': (1, 0), 'bottom': (-1, 0), 'right': (0, 1), 'left': (0, -1)}[side]
     row += dr; col += dc
-    if row < 0: row, y = 31, y - 1
-    if row > 31: row, y = 0, y + 1
-    if col < 0: col, x = 31, x - 1
-    if col > 31: col, x = 0, x + 1
+    if row < 0: row, y = 31, y - m
+    if row > 31: row, y = 0, y + m
+    if col < 0: col, x = 31, x - m
+    if col > 31: col, x = 0, x + m
     return (y, x, row, col)
 
 UPPER_NAMES = False   # factory labels are upper case, accents kept (1=ÅRHUSVEJ)
@@ -237,12 +238,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         edges = {}
         for key, nd in P['nodes'].items():
             if not nd['edge']: continue
-            npc = neighbour(pc, nd['edge']); twin = None
+            npc = neighbour(pc, nd['edge'], level); twin = None
             if npc in parcels:
                 gx, gy = key
                 tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx, 0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
                 twin = parcels[npc]['index'].get(tw)   # a run that only grazes the neighbour leaves no twin
-                if twin is None: encode_parcels.no_twin += 1
+            if twin is None: encode_parcels.no_twin += 1
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],

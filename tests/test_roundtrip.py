@@ -1318,6 +1318,41 @@ class TestRoadChains(unittest.TestCase):
         self.assertEqual(xs[-1] & 0x0800, 0, 'the last point ends the link')
 
 
+class TestLevelTwoDirectoryBoundary(unittest.TestCase):
+    """A level-2 directory spans DIRM[2] = 4 meshes; neighbour must step by that, not by one mesh."""
+
+    def test_neighbour_steps_by_the_directory_size(self):
+        self.assertEqual(rd_build.neighbour((32, 904, 31, 4), 'top', level=2), (36, 904, 0, 4))
+        self.assertEqual(rd_build.neighbour((36, 904, 0, 4), 'bottom', level=2), (32, 904, 31, 4))
+        self.assertEqual(rd_build.neighbour((32, 904, 31, 4), 'top', level=1), (33, 904, 0, 4),
+                         'level 1 is one mesh per directory, so the old single-mesh step is still right')
+
+    def test_level2_graph_joins_across_a_directory_boundary(self):
+        # a two-point way at lon -19.45 crossing lat 24.0 (mesh 36), the review's reproduction
+        ways = [dict(id=1, hw='primary', name='A', ref=None, nodes=[(-19.45, 23.9), (-19.45, 24.1)], dir=0)]
+        parcels = rd_build.build_graphs(ways, 'B20R078R', level=2)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, level=2)
+        finally: rd_build.COUNTRY = was
+        south = clarion_rd.parse_record(recs[(32, 904, 31, 4)][0])
+        north = clarion_rd.parse_record(recs[(36, 904, 0, 4)][0])
+        south_edges = {e['cls'] & 0xe000 for nd in south['nodes'] for e in nd['entries'] if e['cls'] & 0x8000}
+        north_edges = {e['cls'] & 0xe000 for nd in north['nodes'] for e in nd['entries'] if e['cls'] & 0x8000}
+        self.assertIn(0x8000, south_edges, 'the south parcel gets a top edge entry into the next directory')
+        self.assertIn(0xc000, north_edges, 'the north parcel gets a bottom edge entry back')
+        self.assertEqual(rd_build.encode_parcels.no_twin, 0, 'both sides of the boundary found their twin')
+
+    def test_no_twin_is_counted_when_the_neighbour_parcel_was_never_built(self):
+        pc = (32, 904, 31, 4)
+        parcels = {pc: dict(nodes={(819, 2047): dict(geo=(0, 0), edge='top')},
+                            links=[], order=[(819, 2047)], index={(819, 2047): 0}, ring=False)}
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: rd_build.encode_parcels(parcels, level=2)
+        finally: rd_build.COUNTRY = was
+        self.assertEqual(rd_build.encode_parcels.no_twin, 1,
+                         'the miss is counted even though the neighbour parcel key does not exist at all')
+
+
 class TestShapeIndex(unittest.TestCase):
     """Address records point at x words inside a 0x00fa record; the index fa_encode keeps must name the words parse_record finds."""
 
