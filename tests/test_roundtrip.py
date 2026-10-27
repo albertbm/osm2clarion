@@ -1,16 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Roundtrip checks for the readers and encoders in tools/.
-
-Every input here is built in code, so this needs no card, no OSM extract and nothing
-proprietary. It checks two things: that decode(encode(x)) gives x back, and that the
-bytes in between match the layout docs/ records.
-
-    python3 -m unittest discover -s tests -v
-
-Only the standard library is imported at module level. The cases that need shapely are
-skipped without it, since shapely is needed to build geometry but not to encode a record.
-"""
+"""Roundtrip checks for the readers and encoders in tools/: decode(encode(x)) gives x back and the bytes match the docs/ layout. Built in code, so no card or OSM extract is needed; shapely-only cases skip without it."""
 import math
 import os
 import struct
@@ -45,10 +35,7 @@ except ImportError:                      # shapely absent
 UNITS = clarion_bg.UNITS                 # 2048 parcel units per side
 
 
-# ---- building inputs ----------------------------------------------------------------
-# A shape's vertices are int8 deltas, so a long edge has to be walked in steps of at most
-# 127 units. bg_encode.densify does this for real geometry; these two do it for the
-# handful of shapes built here, without pulling shapely in.
+# vertices are int8 deltas, so a long edge is walked in steps of at most 127 units (bg_encode.densify, without pulling shapely in here)
 
 def steps_to(start, end):
     """Points from start to end in steps of at most 127 units, end included."""
@@ -107,8 +94,7 @@ def background_record(level, y0, x0, row, col, sea=(), coast=(), sections=None):
 
 
 def background_dir(level, y0, x0, recs):
-    """A section-1 directory for clarion_tile.write_tile. Mirrors bg_encode.make_dir,
-    which cannot be imported without shapely; TestAgainstBgEncode checks they agree."""
+    """A section-1 directory for write_tile; mirrors bg_encode.make_dir, which needs shapely to import."""
     L = clarion_bg.LEVELS[level]
     body, nslots = L['body'], L['slots']
     npairs = body // 8
@@ -148,9 +134,7 @@ SEC2_LEVELS = [(5, 0x81), (4, 0x81), (2, 0x81), (1, 0x90)]
 
 
 def tile_header(dirs):
-    """A 0x1000 header: the strings, the level table at 0x1ac, the box table at 0x2ac and
-    a section table at 0x800. write_tile fills the two section addresses and relies on the
-    terminator after them already being there."""
+    """A 0x1000 header: strings, level table at 0x1ac, box table at 0x2ac, section table at 0x800."""
     h = bytearray(b'\xff' * clarion_tile.TABLE1_OFF)
     h[0:14] = 'CLARION'.encode('utf-16-be')
     lv = struct.pack('>H', 2) + bytes([1, len(SEC1_LEVELS)])
@@ -194,8 +178,6 @@ def iceland_tile():
     dirs[1] = [d1]
     return name, build_tile(dirs)
 
-
-# ---- the checks ---------------------------------------------------------------------
 
 class TestAddresses(unittest.TestCase):
     """The u32 address form of GEOMETRY.md: (off // 2048) << 8 | (off % 2048) // 256."""
@@ -241,7 +223,6 @@ class TestGrid(unittest.TestCase):
         self.assertAlmostEqual(clarion_bg.mesh_to_lat(96), 64.0)
 
     def test_declared_box_inside_predicted_cell(self):
-        """tile_grid reads a tile's own box out of its header and checks the formula."""
         name, blob = iceland_tile()
         with tempfile.TemporaryDirectory() as d:
             Path(d, name + '.DAT').write_bytes(blob)
@@ -255,8 +236,7 @@ class TestGrid(unittest.TestCase):
 
 
 class TestParcelCodes(unittest.TestCase):
-    """clarion_bg.parcel_code against the formulas written out in the docs. The docs give
-    them over the European box, where column >> 8 is 1 and supplies w0's top bit."""
+    """clarion_bg.parcel_code against the docs' formulas, over the European box where column >> 8 = 1 feeds w0's top bit."""
 
     @staticmethod
     def doc_level2(row, col):
@@ -291,13 +271,9 @@ class TestParcelCodes(unittest.TestCase):
         self.assertGreater(checked, 5000)
 
     def test_measured_code(self):
-        """BUILD-LOG.md records ac0c cb6c for a shipped open-sea level-1 parcel: mesh
-        (88, 918), parcel row 0 column 24."""
         self.assertEqual(clarion_bg.parcel_code(1, 88 * 32, 918 * 32 + 24), (0xac0c, 0xcb6c))
 
     def test_absolute_not_directory_local(self):
-        """The black-map bug: a code built from the directory-local row and column puts the
-        parcel near the equator. The absolute code must differ from the local one."""
         y0, x0 = 88, 918
         for row in range(2):
             for col in range(2):
@@ -337,14 +313,12 @@ class TestShapeGroups(unittest.TestCase):
         self.roundtrip(g)
 
     def test_several_sub_groups(self):
-        """The widened coarse file forced parse_group to handle layers with sub-groups."""
         g = dict(kind=0x80, shapes=[dict(type=0x8012, ref=0xffff, pts=closed_ring([(0, 0), (0, 300), (300, 300)]))],
                  more=[dict(kind=0x40, shapes=[dict(type=0x8007, ref=0xffff, pts=[(10, 10), (20, 20)])])])
         raw = self.roundtrip(g)
         self.assertEqual(struct.unpack_from('>HH', raw, 0), (2, 2 + 2 * 2 - 1))
 
     def test_vertex_delta_limit(self):
-        """A step wider than an int8 is refused rather than silently truncated."""
         g = dict(kind=0x40, shapes=[dict(type=0x5007, ref=0xffff, pts=[(0, 0), (0, 200)])])
         with self.assertRaises(AssertionError):
             clarion_bg.build_group(g)
@@ -406,7 +380,6 @@ class TestBackgroundRecords(unittest.TestCase):
         self.assertEqual(clarion_bg.build_record(rec), plain)
 
     def test_empty_record_has_no_geometry(self):
-        """A land-only parcel ships a header-only record."""
         plain, _ = background_record(2, 96, 896, 3, 5)
         self.assertEqual(len(plain), 44)
         w = struct.unpack_from('>22H', plain, 0)
@@ -416,7 +389,6 @@ class TestBackgroundRecords(unittest.TestCase):
         self.assertEqual(clarion_bg.build_record(rec), plain)
 
     def test_zlib_stream_shape(self):
-        """The shipped records are level 6 with an 8 KiB window, odd lengths zero padded."""
         plain, comp = background_record(1, 96, 896, 3, 5, [FULL_PARCEL_SEA])
         self.assertEqual(comp[:2], b'\x58\x85')
         self.assertEqual(len(comp) % 2, 0)
@@ -515,8 +487,7 @@ class TestGeometryRoundtrip(unittest.TestCase):
         self.assertEqual(len(got), len(want))
         for (lon_a, lat_a), (lon_b, lat_b) in zip(want, got):
             dx, dy = self.metres(lon_a, lat_a, lon_b, lat_b)
-            # half a parcel unit at level 1 is well under a metre; GEOMETRY.md
-            # records 1.3 m max over real coastline, which also carries simplify error
+            # half a parcel unit at level 1 is well under a metre; real coastline tops out at 1.3 m (GEOMETRY.md)
             self.assertLess(dx, 2.0)
             self.assertLess(dy, 2.0)
 
@@ -548,6 +519,41 @@ class TestGeometryRoundtrip(unittest.TestCase):
         gj = bg_decode.to_geojson(bg_decode.decode_tile(blob))
         kinds = sorted({f['geometry']['type'] for f in gj['features']})
         self.assertEqual(kinds, ['LineString', 'Polygon'])
+
+
+@unittest.skipIf(bg_encode is None, 'needs shapely')
+class TestSeaPolygonHoles(unittest.TestCase):
+    """An island that doesn't touch a parcel edge is a hole in the sea polygon; bg_encode.no_holes cuts it out so the island stays uncovered."""
+
+    def test_no_holes_uncovers_the_hole(self):
+        from shapely.geometry import Point, Polygon
+        outer = Polygon([(0, 0), (0, 10), (10, 10), (10, 0)])
+        hole = Polygon([(4, 4), (4, 6), (6, 6), (6, 4)])
+        water = outer.difference(hole)
+        pieces = bg_encode.no_holes(water)
+        self.assertTrue(all(len(p.interiors) == 0 for p in pieces), 'no returned piece keeps a hole')
+        self.assertTrue(all(not p.contains(Point(5, 5)) for p in pieces), 'the island stays uncovered')
+        self.assertAlmostEqual(sum(p.area for p in pieces), water.area, places=6)
+
+    def test_island_inside_a_sea_parcel_is_not_filled(self):
+        from shapely.geometry import LineString, Point, Polygon, box
+        from shapely.strtree import STRtree
+
+        import bg_tiles
+        level, y0, x0, row, col = 1, 96, 898, 7, 9
+        lon0, lat0, w, h = clarion_bg.parcel_geo(level, y0, x0, row, col)
+        rect = box(lon0, lat0, lon0 + w, lat0 + h)
+        island = box(lon0 + w * 0.4, lat0 + h * 0.4, lon0 + w * 0.6, lat0 + h * 0.6)
+        coast = LineString(list(island.exterior.coords))
+        recs = bg_tiles.encode_level_fast(level, y0, x0, island, [coast], STRtree([coast]), rect)
+        plain, _ = recs[row][col]
+        r = clarion_bg.parse_record(plain)
+        shapes = r['layers'][1]['shapes']
+        self.assertGreater(len(shapes), 1, 'the hole forces the sea into more than one ring')
+        cx = bg_encode.quant(lon0 + w * 0.5, lon0, w)
+        cy = bg_encode.quant(lat0 + h * 0.5, lat0, h)
+        for s in shapes:
+            self.assertFalse(Polygon(s['pts']).contains(Point(cx, cy)), 'the island centre stays sea-free')
 
 
 class TestRoadGraph(unittest.TestCase):
@@ -612,7 +618,6 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(got, [(4, 1), (4, 2), (8, 1)], 'ids restart per class; the class names the group')
 
     def test_class_words(self):
-        """The class word is class in the high byte then 0x90 | class, up to class 9."""
         for cls in range(1, 10):
             self.assertEqual(rd_encode.class_word(cls), cls << 8 | 0x90 | cls)
         self.assertEqual(rd_encode.class_word(0xa), 0xa8a)
@@ -630,7 +635,6 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(got, want, 'the low byte is the link class word')
 
     def test_oneway_bits(self):
-        """0x4000 where traffic leaves, 0x8000 where it arrives; nodes are stored sorted by x."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {2: (0xc000, 17)},
                                                 country=352, dirs=[1, -1, 0])
         self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
@@ -640,9 +644,6 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(rd_encode.oneway_bits(-1), (0x8000, 0x4000))
 
     def test_oneway_regulations(self):
-        """A one-way link's arriving end says no entry from anyone; every other entry at a
-        node with a leaving one-way is barred from it, the leaving entry itself included
-        (rd_encode.oneway_regulations)."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
                                                 country=352, dirs=[1, -1, 0])
         self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
@@ -662,9 +663,6 @@ class TestRoadGraph(unittest.TestCase):
                          (2, 0, 3, 0))
 
     def test_oneway_regulations_with_turns(self):
-        """A turn prohibition joins the one-way words on the same entry, once, in the
-        factory's order: by from-entry cyclically after the entry itself, so its own word
-        comes last. A turn onto an arriving one-way end is already covered and not written."""
         self.assertEqual(rd_encode.regulation_order([0x00ff, 0x20ff, 0x10ff], 1), [0x20ff, 0x00ff, 0x10ff])
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
                                                 country=352, dirs=[1, 0, 0], regs=[(0, 2, 0), (0, 2, 0), (1, 1, 0)])
@@ -676,7 +674,6 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(words[(900, 1)], [rd_check.NO_ENTRY])
 
     def test_parcel_edge_entry(self):
-        """A node on a parcel edge gets a last entry with the side in the top bits."""
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS,
                                                 {2: (0xc000, 17)}, country=352)
         rec = clarion_rd.parse_record(plain)
@@ -698,7 +695,6 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(struct.unpack_from('>HH', part_b, 54), (len(self.NODES), 0xa100))
 
     def test_entry_count_ceiling(self):
-        """The count shares its word with x, so 15 entries is the ceiling."""
         hub = [(10, 10)] + [(100 + 10 * i, 500) for i in range(16)]
         links = [(0, i, 100) for i in range(1, 17)]
         with self.assertRaises(AssertionError):
@@ -706,8 +702,7 @@ class TestRoadGraph(unittest.TestCase):
 
 
 class TestRoadHeader(unittest.TestCase):
-    """The section-2 header rule rd_check.py measured on factory tiles: one (nodes, link ends)
-    pair per node-class group, totals without edge connections, and the country at word 26."""
+    """The section-2 header rule: one (nodes, link ends) pair per node-class group, totals without edge connections, country at word 26."""
 
     NODES = [(100, 200), (900, 240), (1500, 1800), (300, 1000)]
     LINKS = [(0, 1, 850), (1, 2, 1600), (0, 3, 700)]
@@ -764,7 +759,7 @@ class TestRoadHeader(unittest.TestCase):
         self.assertEqual(rd_check.check(plain, country=380)[0], ['countries [352], want [380]'])
 
     def test_old_layout_is_refused(self):
-        """What rd_encode wrote until 18 Oct 2026: the whole record in u10, edges counted."""
+        """What rd_encode used to write: the whole record in u10, edges counted."""
         plain, _ = self.build({2: (0xc000, 17)}, hw=['primary'] * 3)
         w = list(struct.unpack('>%dH' % (len(plain) // 2), plain))
         u = 27
@@ -776,8 +771,7 @@ class TestRoadHeader(unittest.TestCase):
         self.assertIn('totals (4, 7), body gives (4, 6)', hp)
 
     def test_entry_extra_words(self):
-        """w5 bits 6-11 count regulation words and bits 0-3 more words after them; a reader
-        that took four bits and no low count lost its place on dense factory tiles."""
+        """w5 bits 6-11 count regulation words, bits 0-3 further words after them; a 4-bit-only reader loses its place on dense tiles."""
         regs = list(range(0x1001, 0x1001 + 20))
         unit = rd_encode.unit_head([8, 8], [1, 1]) + [
             1 << 12 | 100, 0x8000 | 200, 0, 1, 0, 20 << 6 | 2, 1, 0x898, 0x8010, 40] + regs + [0x20ff, 0x0410] + [
@@ -790,13 +784,11 @@ class TestRoadHeader(unittest.TestCase):
         self.assertEqual(rd_check.check(head + struct.pack('>%dH' % len(unit), *unit)), ([], []))
 
     def test_simplify_keeps_junctions(self):
-        """A vertex another way ends on stays, however straight the line through it is."""
         line = [(-21.75 + i * 0.0001, 64.12) for i in range(5)]
         self.assertEqual(rd_build.simplify(line, 2), [line[0], line[-1]])
         self.assertEqual(rd_build.simplify(line, 2, {line[2]}), [line[0], line[2], line[-1]])
 
     def test_components_join_across_parcel_edges(self):
-        """Two parcels joined by an edge entry make one piece; a link left alone makes two."""
         nodes, links = [(100, 100), (2047, 100), (500, 900), (600, 900)], [(0, 1, 50), (2, 3, 10)]
         west, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, nodes, links, {1: (0xa000, 0)}, country=352)
         east, _ = rd_encode.build_record_edges(1, 96, 898, 7, 10, [(0, 100), (900, 100)], [(0, 1, 50)],
@@ -806,7 +798,6 @@ class TestRoadHeader(unittest.TestCase):
         self.assertEqual(sorted(len(l) for l, _ in got), [1, 2])
 
     def test_edge_entries_answer_each_other(self):
-        """An edge entry and its partner across the edge name each other's node; a wrong far node is caught."""
         nodes, links = [(100, 100), (2047, 100), (500, 900), (600, 900)], [(0, 1, 50), (2, 3, 10)]
         west, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, nodes, links, {1: (0xa000, 0)}, country=352)
         east, _ = rd_encode.build_record_edges(1, 96, 898, 7, 10, [(0, 100), (900, 100)], [(0, 1, 50)],
@@ -829,8 +820,7 @@ class TestRoadHeader(unittest.TestCase):
 
 
 class TestRoadShapes(unittest.TestCase):
-    """fa_encode writes the record the renderer draws. These check the bytes against the
-    layout in GEOMETRY.md; TestShapeIndex reads them back with fa_encode.parse_record."""
+    """fa_encode writes the record the renderer draws, checked here against GEOMETRY.md's layout."""
 
     NODES = [(100, 200), (900, 240), (1500, 1800)]
     CHAIN = [(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])]
@@ -843,10 +833,7 @@ class TestRoadShapes(unittest.TestCase):
         return w, struct.unpack_from('>%dH' % (2 * w[8]), plain, 4 * w[7])
 
     def shape_points(self, shape, chain, fresh=None):
-        """Walk a level-1 shape's words beside the chain that produced it: (role, x word,
-        y word) per point, in the roles the factory census counts. fresh: per link, whether
-        it opens with a style word (defaults to the first link only, as build_record's own
-        default style leaves the rest unchanged)."""
+        """(role, x, y) per point of a level-1 shape, walked beside the chain that produced it; fresh marks which links open with a style word."""
         if fresh is None: fresh = [n == 0 for n in range(len(chain))]
         p = 7                                       # the length word, 0x8000 | points, five header words
         out = [('start', shape[p], shape[p + 1])]; p += 2
@@ -887,7 +874,6 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual((w[19], w[20]), (0, 352), 'word 20 is the country')
 
     def test_layer_pairs_point_at_the_shapes(self):
-        """Twelve pairs and a pad word at level 1, eleven and no count word at level 2."""
         for level, first, npairs in ((1, 1, 12), (2, 0, 11)):
             plain, _ = fa_encode.build_record(level, 96, 898, 7, 9, self.NODES, self.chains(),
                                               hws=['motorway', 'residential'], country=352)
@@ -935,18 +921,12 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual([lid for lid, _, _, _ in same_way[0]], [1, 2])
 
     def test_a_point_that_does_not_end_a_link_carries_0x0800(self):
-        """The firmware reads a clear bit 11 as "this link ends here" and takes the two words
-        after it for a link header. Leaving it clear on inner and first-of-link points cost a
-        card: every link ended at its first point and the shapes drew as crossing lines.
-        Factory Tromso sets it on all 30,690 points that do not end a link and clears it on
-        all 13,338 that do."""
+        """The firmware reads a clear bit 11 as the link ending there, and reads the next two words as a link header."""
         for role, x, _ in self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN):
             want = 0 if role in ('linkend', 'last') else 0x0800
             self.assertEqual(x & 0x0800, want, 'a %s point' % role)
 
     def test_flags_stay_out_of_the_coordinate(self):
-        """A coordinate is the low 11 bits, so bit 10 is not free for a flag. An earlier
-        link-end mark of 0x0c00 on y moved the point 1,024 units and drew off the parcel."""
         pts = self.shape_points(fa_encode.shape_words(self.CHAIN, self.NODES), self.CHAIN)
         want = ([self.NODES[0]] + self.CHAIN[0][3] + [self.NODES[1]]
                 + self.CHAIN[1][3] + [self.NODES[2]])
@@ -972,8 +952,6 @@ class TestRoadShapes(unittest.TestCase):
                          'here, only the first link is one')
 
     def test_a_restyled_later_link_carries_0x2000(self):
-        """V1: the factory sets 0x2000 on every link a style word opens, not only the first
-        one (478 of 479 restyled later links on B68R058R, a maxspeed change mid-chain)."""
         styles = [fa_encode.STYLE, fa_encode.style_word(30)]
         fresh = fa_encode.restyled(styles)
         self.assertEqual(fresh, [True, True], 'both links open with their own style word')
@@ -984,8 +962,6 @@ class TestRoadShapes(unittest.TestCase):
                          'the second link is restyled too, so it carries 0x2000 as well')
 
     def test_oneway_bits_mark_every_y_of_the_link(self):
-        """Factory ORs the one-way sense into bits 15-14 of every y of a link, start point
-        included, uniform along the whole link (measured on B50R060R, B58R060R)."""
         for dirs, want in (([1, -1], [0x4000] * 4 + [0x8000] * 2),
                            ([0, 0], [0] * 6),
                            ([-1, 1], [0x8000] * 4 + [0x4000] * 2)):
@@ -1005,16 +981,11 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual(by_link[2], {0x8000}, 'link 2 drawn against traffic')
 
     def test_level2_style_word_clears_bit12_for_oneway(self):
-        """V2: the factory clears bit 12 of the level-2 style word on a one-way first link,
-        the same rule as level 1 (94 of 126 one-way first links on B68R058R)."""
         for dirs, want in (([1, -1], 0x001e), ([-1, 1], 0x001e), ([0, 0], 0x101e)):
             shape = fa_encode.shape_words(self.CHAIN, self.NODES, level=2, dirs=dirs)
             self.assertEqual(shape[9], want, dirs)   # length, npts, 5 header, 2 start point
 
     def test_a_two_point_shape_keeps_the_form_that_drew(self):
-        """One link and no inner points: start, header, end point flagged 0x7000 with a plain
-        y, trailer. The atomised build wrote only this form, and 20,854 of its shapes were
-        bit-identical to the factory's two-point shapes."""
         shape = fa_encode.shape_words([(1, 0, 1, [])], self.NODES)
         self.assertEqual(shape[7:9], [0x0800 | 100, 0x2800 | 200])
         self.assertEqual(shape[12:14], [0x7000 | 900, 240])
@@ -1048,16 +1019,13 @@ class TestRoadShapes(unittest.TestCase):
             self.assertEqual(fa_encode.item_words(shape, level, country=578)[5], 578, 'word 5 is the country')
 
     def test_hws_must_match_the_chains(self):
-        """build_record indexes its shapes by the hws list, so a mismatch is a caller bug.
-        It is caught here rather than left to produce a short record."""
         with self.assertRaises(IndexError):
             fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains()[:1],
                                    hws=['motorway', 'residential'], country=352)
 
 
 class TestShapeTail(unittest.TestCase):
-    """The level-1 tail table: a count word plus one run item per 127 of shapes + links,
-    padded to a dword. See the review's factory counts (B60R060R)."""
+    """The level-1 tail table: a count word, then one run item per 127 of shapes + links, padded to a dword."""
 
     def test_counts(self):
         for n, want in ((0, []), (127, [0x7f01]), (128, [0x7f01, 0x0101]),
@@ -1069,8 +1037,6 @@ class TestShapeTail(unittest.TestCase):
             self.assertLessEqual(max([x >> 8 for x in got] or [0]), 127, 'no item over 127')
 
     def test_factory_examples(self):
-        """B60R060R, 79 shapes and 156 links: 0004 0002 ffff 0000 ffff 0000 ffff 0000 7f01
-        6c01. 42 shapes and 85 links: the same header, one item 7f01, padded with 0000."""
         self.assertEqual(fa_encode.tail_items(79 + 156), [0x7f01, 0x6c01])
         self.assertEqual(fa_encode.tail_items(42 + 85), [0x7f01])
 
@@ -1080,8 +1046,6 @@ class TestShapeTail(unittest.TestCase):
         self.assertEqual(fa_encode.tail_of(plain), (1, [0x0401]), 'shapes 2 + links 2')
 
     def test_round_trip_over_127(self):
-        """260 shapes + links (130 one-link chains): three run items, tail grows past the
-        5-dword size a record under 127 uses."""
         nodes = [(100, 200), (900, 240)]
         chains = [[(i, 0, 1, [])] for i in range(1, 131)]
         plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, nodes, chains,
@@ -1095,8 +1059,7 @@ class TestShapeTail(unittest.TestCase):
 
 
 class TestSpeedLimits(unittest.TestCase):
-    """The level-1 style word carries the posted limit. Factory Norway and northern England
-    restyle a chain where the limit changes instead of splitting the shape."""
+    """The level-1 style word carries the posted limit; factory Norway/England restyle a chain at a limit change instead of splitting it."""
 
     NODES = TestRoadShapes.NODES
     CHAIN = TestRoadShapes.CHAIN
@@ -1192,8 +1155,6 @@ class TestSpeedLimits(unittest.TestCase):
         self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'bit 12 clear on one-way links only')
 
     def test_dir_falls_back_to_oneway(self):
-        """A roads.json with only oneway (osm_roads.all_ways' and the old gen_roads_path's
-        shape) still gives one-way links, not the silent two-way wy.get('dir', 0) read."""
         pts = TestRoadChains.POINTS
         a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, oneway=True, nodes=pts[:3])
         b = dict(a, id=2, oneway=True, nodes=pts[2:][::-1])
@@ -1239,9 +1200,7 @@ class TestSpeedLimits(unittest.TestCase):
 
 
 class TestLinkNumbering(unittest.TestCase):
-    """Links are listed in section-1 drawing order (by layer) and numbered 1..n per class, with
-    the 0x2000 flag on the entry at the drawn last point, as every factory record pairs them
-    (REPORT-oneway-diag in leaf-is-map). rd_check.link_pairing holds the rule."""
+    """Links are numbered 1..n per class in section-1 drawing order, with 0x2000 on the entry at the drawn last point (rd_check.link_pairing)."""
 
     def parcel(self, level=1):
         pts = TestRoadChains.POINTS
@@ -1312,8 +1271,7 @@ class TestLinkNumbering(unittest.TestCase):
 
 
 class TestRoadChains(unittest.TestCase):
-    """rd_build turns ways into links that carry their own bends. A graph node at every bend
-    instead gives the matcher one two-point fragment per bend to project onto."""
+    """rd_build turns ways into links that carry their own bends, instead of a graph node at every bend."""
 
     CELL = 'B60R080R'
     POINTS = [(-21.900 + 0.002 * i, 64.130 + 0.0004 * i) for i in range(5)]   # one parcel
@@ -1337,8 +1295,6 @@ class TestRoadChains(unittest.TestCase):
         self.assertEqual(len(P['nodes']), 5)
 
     def test_a_junction_splits_the_link_and_not_the_shape(self):
-        """A way meeting a bend makes that point a node, so the run becomes two links. The
-        two still draw as one shape, because the factory chains through junctions."""
         side = dict(id=2, hw='service', name=None, ref=None,
                     nodes=[self.POINTS[2], (-21.896, 64.127)])
         P = self.parcel([self.WAY, side])
@@ -1363,8 +1319,7 @@ class TestRoadChains(unittest.TestCase):
 
 
 class TestShapeIndex(unittest.TestCase):
-    """Address records point at x words inside a 0x00fa record (REPORT-kanren in
-    leaf-is-map); the index fa_encode keeps must name the words parse_record finds."""
+    """Address records point at x words inside a 0x00fa record; the index fa_encode keeps must name the words parse_record finds."""
 
     NODES = [(100, 200), (900, 240), (1500, 1800), (1600, 1900)]
     CHAINS = [[(1, 0, 1, [(300, 210), (600, 225)]), (2, 1, 2, [(1100, 900)])], [(3, 2, 3, [])]]
@@ -1381,7 +1336,6 @@ class TestShapeIndex(unittest.TestCase):
             self.assertEqual(got['points'], {w: (role, lid) for w, lid, role in S['points']})
 
     def test_offsets_follow_kanren(self):
-        """K = shape start + 7 - 22 for a shape's first link, I - K = 2N + 1 for N points."""
         plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.CHAINS[1:], hws=['residential'], country=352)
         S = fa_encode.build_record.last_index['shapes'][0]
         k, i = S['points'][0][0] - 22, S['points'][-1][0] - 22
@@ -1420,7 +1374,6 @@ class TestRoadClasses(unittest.TestCase):
             self.assertEqual((l1, cls1, cls2, cls3), (layer, c1, c2, c3), hw)
 
     def test_level1_bands(self):
-        """Layer 7 takes classes 1-2, layer 6 takes 3-7, layer 5 class 8, layer 4 class 9."""
         for hw in self.DOC:
             layer, cls = fa_encode.layer_class(hw, 1)
             band = {7: (1, 2), 6: (3, 7), 5: (8, 8), 4: (9, 9)}[layer]
@@ -1468,8 +1421,7 @@ class TestRetarget(unittest.TestCase):
 
 
 class TestDirectoryIndex(unittest.TestCase):
-    """make_drstr builds DRSTR001.DAT; this reads it back per FORMAT.md. The tree is
-    made of empty files, so nothing off a card is needed."""
+    """make_drstr builds DRSTR001.DAT; this reads it back per FORMAT.md, over a tree of empty files."""
 
     DIR_REC, CHILD_REC = 0x28, 0x20
 
@@ -1565,8 +1517,7 @@ class TestDirectoryIndex(unittest.TestCase):
         self.assertEqual(sizes['MMAIN001.DAT'], 4096)
 
     def test_directory_size_truncates_to_32_bits(self):
-        """MAPAL001 really holds 5,162,906,624 bytes and the field reads 867,939,328. The
-        .ind header declares the size, so this needs no large file."""
+        """MAPAL001 really holds 5,162,906,624 bytes and the field reads 867,939,328; the .ind header declares the size, no large file needed."""
         with tempfile.TemporaryDirectory() as root:
             p = Path(root, 'MAPAL001')
             p.mkdir()
@@ -1636,9 +1587,7 @@ class TestProfiles(unittest.TestCase):
 
 @unittest.skipIf(bg_encode is None, 'needs shapely')
 class TestAgainstBgEncode(unittest.TestCase):
-    """bg_encode is the encoder the chain runs. It needs shapely to import, so the cases
-    above build their records and directories with local copies of its two pure helpers.
-    These check the copies have not drifted."""
+    """Checks the local copies above against bg_encode (which needs shapely to import) for drift."""
 
     def test_parcel_record_matches(self):
         sea = [dict(type=clarion_bg.LEVELS[1]['seatype'], ref=0xffff, pts=FULL_PARCEL_SEA)]
@@ -1801,7 +1750,6 @@ class AddreTrie(unittest.TestCase):
         self.assertEqual(nroot, 3)                      # A, H and Thorn
 
     def test_prefix_key_gets_an_own_count(self):
-        """A key that is a prefix of another lives in the node's own-count byte."""
         from addre_io import build_trie
         keys = self.keys(1, ['BERG', 'BERGSTADIR'])
         blob, _, _ = build_trie(keys, 12, 1)
@@ -1828,9 +1776,7 @@ class AddreTrie(unittest.TestCase):
         self.assertEqual(int.from_bytes(out[0x101a:0x101c], 'big'), 8)
 
     def test_zcode_writes_its_own_record_block_address(self):
-        """0x1012 is the record block's sector address, exact on all 36 factory ZCODE
-        files. A donor prefix carries the donor's value, which on a smaller file points
-        past the end - what crashed the postcode screen on DKL-IS-addr3."""
+        """0x1012 is the record block's sector address (exact on 36 factory files); a donor value can point past a smaller file's end, which crashed the postcode screen."""
         from addre_io import addr, unaddr
         from zcode_io import assemble
         codes = ['101', '113', '200', '800']
@@ -1845,8 +1791,6 @@ class AddreTrie(unittest.TestCase):
         self.assertLess(unaddr(struct.unpack_from('>I', out, 0x1012)[0]), len(out))
 
     def test_zcode_record_carries_each_code_own_area(self):
-        """A postcode record is the (country, region, town) ladder, 0xff for the rest,
-        and two zero bytes - the shape ZCODE002 and ZCODE013 both have."""
         from zcode_io import ZREC, assemble
         codes = ['101', '800']
         levels = {'101': (12, 20, 0), '800': (12, 22, 0)}
@@ -1862,10 +1806,6 @@ class AddreTrie(unittest.TestCase):
             self.assertEqual(r[14:], b'\x00\x00')
 
     def test_assemble_fills_its_own_header_fields(self):
-        """assemble() must return a complete file by itself - the gap that let the
-        addr()/header-write logic live in build_iceland.py instead of here. Checks
-        the fields REPORT-addre-fields.md verified exact on all seven factory files:
-        0x1012, A, B, C, P, Q and the slot-7 address at 0x82a."""
         from addre_io import Addre, addr, assemble
         keys = self.keys(1, ['AZEGLIO', 'BATTISTI', 'BELLO'])
         srecs = [b'\x7f\x7f\x00\x00' + b'\xff' * 18 for _ in range(5)]
@@ -1892,9 +1832,7 @@ class AddreTrie(unittest.TestCase):
         self.assertEqual(a.ntier, 1)
 
     def test_street_records_found_without_a_7f7f_relation(self):
-        """Denmark and Norway lead with records carrying a street ID where the others
-        carry 7f7f, so a search for the first 7f7f lands two records late. 0x1012
-        gives the block outright."""
+        """Denmark and Norway lead with a street-ID record instead of 7f7f, so a 7f7f search lands two records late; 0x1012 gives the block outright."""
         from addre_io import Addre, assemble
         keys = self.keys(1, ['BERG', 'DALUR'])
         srecs = [b'\x00\x00\x40\x00' + b'\xff' * 18,          # no 7f7f on the first two
@@ -1911,21 +1849,19 @@ class AddreTrie(unittest.TestCase):
         self.assertEqual(a.srec_pre, srec_pre)
 
     def test_fold_key_strips_the_diacritic_and_keeps_the_letter(self):
-        """Every pair here was read off a factory ADDRE file: the key beside the display
-        name it belongs to. One letter for one letter, never an expansion."""
         from addre_io import fold_key
-        for name, key in [('FRANÇOIS', 'FRANCOIS'),        # Andorra
+        for name, key in [('FRANÇOIS', 'FRANCOIS'),
                           ('CAMÍ DE CANÒLICH', 'CAMI DE CANOLICH'),
-                          ('TVÆRVEJ', 'TVARVEJ'),          # Denmark: AE -> A
+                          ('TVÆRVEJ', 'TVARVEJ'),          # AE -> A
                           ('AGERSØ', 'AGERSO'),
-                          ('AARSÆTHERVEGEN', 'AARSATHERVEGEN'),   # Norway
-                          ('MÜNCHNER', 'MUNCHNER'),        # Germany
-                          ('KAČIĆ', 'KACIC'),              # Croatia
-                          ('ĐAKOVO', 'DAKOVO'),            # Croatia: D-stroke -> D
-                          ('DŰLŐ', 'DULO'),                # Hungary
-                          ('ŁĄKOWA', 'LAKOWA'),            # Poland
-                          ('MUÑOZ', 'MUNOZ'),              # Spain
-                          ('AĞAÇ', 'AGAC'),                # Turkey
+                          ('AARSÆTHERVEGEN', 'AARSATHERVEGEN'),
+                          ('MÜNCHNER', 'MUNCHNER'),
+                          ('KAČIĆ', 'KACIC'),
+                          ('ĐAKOVO', 'DAKOVO'),            # D-stroke -> D
+                          ('DŰLŐ', 'DULO'),
+                          ('ŁĄKOWA', 'LAKOWA'),
+                          ('MUÑOZ', 'MUNOZ'),
+                          ('AĞAÇ', 'AGAC'),
                           ('AGGER-THYBORØN', 'AGGER THYBORON'),
                           ('AA. LOUIS', 'AA LOUIS')]:
             self.assertEqual(fold_key(name), key, name)
@@ -1940,8 +1876,6 @@ class AddreTrie(unittest.TestCase):
         self.assertTrue(fold_key('ÞORLÁKSGEISLI', extra).isascii())
 
     def test_assemble_leaves_unresolved_fields_unless_given(self):
-        """D (df+0x32) and the name-width hint (df+0x63) have no known formula
-        (REPORT-addre-fields.md section 5) - assemble() must not guess at them."""
         from addre_io import assemble
         keys = self.keys(1, ['BERG'])
         srecs = [b'\x7f\x7f\x00\x00' + b'\xff' * 18]
@@ -1966,12 +1900,7 @@ class AddreTrie(unittest.TestCase):
 
 
 class AddreRecords(unittest.TestCase):
-    """The ADDRE name and street records, and the area ladder they carry.
-
-    The expected bytes are the first records of ADDRE002 (Andorra), copied out of the
-    factory file. Andorra is the file with house numbers and the three-level ladder
-    COUNTRY / PARROQUIA / SETTLEMENT, which is the shape Iceland uses.
-    """
+    """The ADDRE name and street records and the area ladder they carry; expected bytes are Andorra's ADDRE002, whose three-level ladder (COUNTRY/PARROQUIA/SETTLEMENT) matches Iceland's shape."""
 
     ANDORRA_NAME_0 = bytes.fromhex(
         'c02106 0c 9feccecd 02402 13b 03402143'.replace(' ', '')
@@ -2084,8 +2013,6 @@ class IcodeTree(unittest.TestCase):
                          (1).to_bytes(4, 'big'))        # the row count
 
     def test_name_field_width_is_kept_on_a_rename(self):
-        """A rename into a factory row must not change the row size, so the shorter
-        name is padded out - PANTELLERIA's twelve-byte field holding REYKJAVIK."""
         import icode_io
         r = icode_io.pack_row('REYKJAVIK', 5, 6, 13, width=6)
         self.assertEqual(len(r), 12 + 12)

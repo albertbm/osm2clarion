@@ -1,21 +1,11 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Background tiles for a region's cells, from an OSM coastline. Sea and land only.
-
-One .DAT per cell, levels 2 and 1. The header comes from a template tile taken off the
-base card or, with --data-version, is written from nothing by tile_header.py, so no
-existing tile is read. Roads go in afterwards with rd_build.py. The coarse levels 3 to 6 live in LEV3456R.DAT
-and are handled by the lev_* tools, which import this module for load_land, clean_land
-and encode_level_fast.
+"""Background tiles (sea and land, levels 2 and 1) for a region's cells, from an OSM
+coastline. Roads go in afterwards with rd_build.py; the lev_* tools import this module
+for load_land, clean_land and encode_level_fast to write the coarse levels 3-6.
 
     ./bg_tiles.py --profile iceland TEMPLATE.DAT OUTDIR [CELL...]
     ./bg_tiles.py --profile iceland --data-version 14/11/17/01 [--no-road-section] [--landuse PATH [--area-class KIND=LAYER:CLASS]] OUTDIR [CELL...]
-
---no-road-section writes section 1 alone, with no empty section 2 declared.
---landuse adds the polygons of an extract_landuse.py file to levels 2 and 1, each kind in its
-clarion_bg.AREA_CLASSES layer, under the roads (which sit in their own records).
---area-class KIND=LAYER:CLASS (repeatable, hex class) adds or overrides a kind's layer and class,
-e.g. building=5:020 for a trial of OSM buildings.
 """
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -29,14 +19,10 @@ from clarion_bg import LEVELS, tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 BOUNDS = clarion_profile.EUROPE_BOUNDS
 LAND = dict(clarion_profile.LAND)
 SEA = ''
-# Extra features drawn into every level. areas: (polygon, label); lines: LineString;
-# points: (lon, lat, text). Empty for a coastline-only build.
+# extra features drawn into every level: areas (polygon, label), lines (LineString), points (lon, lat, text)
 MARKERS = dict(areas=[], lines=[], points=[])
-# Land use: [(polygon, layer, class)] and an STRtree over the polygons, set by load_landuse.
-LANDUSE = {'items': [], 'tree': None}
-# Smallest land-use polygon drawn per level, in square degrees (1e-6 is about 0.5 ha at 64N),
-# so that garden-sized bits do not speckle the wider zooms
-LANDUSE_MIN = {1: 1e-7, 2: 4e-6}
+LANDUSE = {'items': [], 'tree': None}   # [(polygon, layer, class)] and an STRtree, set by load_landuse
+LANDUSE_MIN = {1: 1e-7, 2: 4e-6}        # smallest land-use polygon drawn per level, in square degrees
 
 t0 = time.time()
 
@@ -82,9 +68,8 @@ def load_landuse(path, classes=None):
 
 
 def landuse_layers(level, rect, lon0, lat0, w, h, land=None):
-    """{layer: shapes} of the land use inside one parcel. Outer rings only: a hole (a
-    clearing in a wood) is not representable, and a lake on top draws in a later layer.
-    land, when given, is the parcel's land: OSM woods and parks that run out over the sea are cut to it."""
+    """{layer: shapes} of the land use inside one parcel, outer rings only. land, when
+    given, cuts woods and parks that run out over the sea to the parcel's actual land."""
     if LANDUSE['tree'] is None:
         return {}
     prefix = LEVELS[level]['seatype'] & 0xf000
@@ -104,10 +89,8 @@ def landuse_layers(level, rect, lon0, lat0, w, h, land=None):
 
 
 def clean_land(land, level):
-    """Land, coast lines and their index for one level, drawn from the outline itself.
-
-    Islands below the level's area floor are dropped and the rest simplified, because the
-    shipped map shows skerries only when zoomed in close."""
+    """Land, coast lines and their index for one level; islands below the level's area
+    floor are dropped and the rest simplified."""
     min_area, tol = LAND[level]
     polys = [p.simplify(tol) for p in (land.geoms if hasattr(land, 'geoms') else [land])
              if p.area >= min_area]
@@ -158,7 +141,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                                   pts=bg_encode.densify([(0, 0), (0, 2047), (2047, 2047), (2047, 0), (0, 0)]))]
                 labels = [(0x4089, 0x2800, 1024, 1024, sea)]
             elif pl.contains(rect):
-                # All land. A header-only record, so that every parcel exists.
+                # all land: header-only record, so every parcel exists
                 out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
                     level, y0, x0, row, col, [], extra_lines, extra_labels, area_polys=area_polys, extra_layers=extra)
                 continue
@@ -167,9 +150,10 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                 polys = [p for p in (water.geoms if hasattr(water, 'geoms') else [water])
                          if p.geom_type == 'Polygon' and not p.is_empty]
                 for p in polys:
-                    s = bg_encode.ring_shape(p.exterior, lon0, lat0, w, h, L['seatype'])
-                    if s:
-                        sea_polys.append(s)
+                    for piece in bg_encode.no_holes(p):
+                        s = bg_encode.ring_shape(piece.exterior, lon0, lat0, w, h, L['seatype'])
+                        if s:
+                            sea_polys.append(s)
                 pieces = []
                 for i in tree.query(rect):
                     inter = coast[i].intersection(rect)

@@ -1,11 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Encode land polygons and coastline ways into Clarion background records and a tile.
 
-Parcel grids (all within a tile cell of 8x8 first-level meshes; a mesh is 1 deg x 40'):
-  level 2: directory per 4x4-mesh quadrant, parcel = 7.5' x 5'   (32 cols x 32 rows)
-  level 1: directory per mesh,              parcel = 1.875' x 1.25' (32 cols x 32 rows)
-Directory slot = parcel row, slot pair index = 2*col + 1 for the background record.
-Coordinates inside a parcel are 0..2047 from the south-west corner.
+Level 2: directory per 4x4-mesh quadrant, parcel 7.5' x 5'. Level 1: directory per mesh,
+parcel 1.875' x 1.25'. Slot pair index = 2*col + 1; parcel coordinates are 0..2047.
 """
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,6 +15,20 @@ ZWBITS = 13   # 8 KiB window, as in the shipped files
 
 def quant(v, v0, span):
     return max(0, min(UNITS - 1, int(round((v - v0) / span * UNITS))))
+
+def no_holes(p):
+    """Hole-free pieces of a polygon: ring_shape fills only an exterior."""
+    if not p.interiors:
+        return [p]
+    x = p.interiors[0].centroid.x
+    a, b, c, d = p.bounds
+    out = []
+    for half in (box(a - 1, b - 1, x, d + 1), box(x, b - 1, c + 1, d + 1)):
+        g = p.intersection(half)
+        for q in (g.geoms if hasattr(g, 'geoms') else [g]):
+            if q.geom_type == 'Polygon' and not q.is_empty:
+                out += no_holes(q)
+    return out
 
 def densify(pts):
     """Insert points so every step fits an int8 delta."""
@@ -32,7 +43,7 @@ def densify(pts):
 MAX_VERTS = 600   # shipped sea polygons never exceed 677; the unit stops filling long ones
 
 def to_parcel(coords, lon0, lat0, w, h, closed=False):
-    """Quantise to parcel units, simplifying until the shape fits the vertex budget."""
+    """Quantise to parcel units; simplify until it fits the vertex budget."""
     from shapely.geometry import LineString, LinearRing
     units = [((lon - lon0) / w * UNITS, (lat - lat0) / h * UNITS) for lon, lat in coords]
     tol = 0.7
@@ -82,8 +93,7 @@ def labels_in(labels, lon0, lat0, w, h):
     return out
 
 def name_section(labels):
-    """labels: list of (type, flags, x, y, text). Header is six (offset, count) pairs
-    in 4-byte units from the section start; only the first pair is used here."""
+    """labels: list of (type, flags, x, y, text)."""
     body = bytearray()
     for lab in labels:
         typ, flags, x, y, text = lab[:5]
@@ -99,8 +109,7 @@ def name_section(labels):
     return bytes(out)
 
 def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlayers=26, area_polys=(), extra_layers=None):
-    """(y0, x0) is the directory's south-west mesh, (row, col) the parcel inside it.
-    extra_layers: {layer: polygon shapes}, land use from bg_tiles.landuse_layers."""
+    """(y0, x0) the directory's south-west mesh, (row, col) the parcel inside it."""
     L = LEVELS[level]
     if level in (4, 5):   # code units are 20'/30' (2 per mesh); parcels are 2 (level 4) or 8 (level 5) meshes
         m = {4: 2, 5: 8}[level]
@@ -145,20 +154,19 @@ def encode_level(level, y0, x0, land, coast_lines, coverage, sea_name):
             polys = sea.geoms if hasattr(sea, 'geoms') else [sea]
             for p in polys:
                 if not isinstance(p, Polygon) or p.is_empty: continue
-                s = ring_shape(p.exterior, lon0, lat0, w, h, L['seatype'])
-                if s: sea_polys.append(s)
-                # holes (islets) are not representable here; they are dropped
+                for piece in no_holes(p):
+                    s = ring_shape(piece.exterior, lon0, lat0, w, h, L['seatype'])
+                    if s: sea_polys.append(s)
             coast = []
             for way in coast_lines:
                 if way.intersects(rect):
                     coast += line_shapes(way.intersection(rect), lon0, lat0, w, h, L['coasttype'])
             labels = []
             if sea_polys and sea_name:
-                # put the label on the largest sea polygon's representative point
                 big = max((p for p in polys if isinstance(p, Polygon)), key=lambda p: p.area)
                 rp = big.representative_point()
                 labels.append((0x4089, 0x2800, quant(rp.x, lon0, w), quant(rp.y, lat0, h), sea_name))
-            if not sea_polys and not coast: continue   # nothing to draw: no record
+            if not sea_polys and not coast: continue
             out.setdefault(row, {})[col] = build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels)
     return out
 
@@ -211,12 +219,8 @@ def build_tile(name, template, land, coast_lines, coverage, sea_name, db_bounds=
     return assemble_tile(name, template, dirs, db_bounds)
 
 def assemble_tile(name, template, dirs, db_bounds=None, data_version=None, road_section=True):
-    """Header tables, section tables and container for directories built by make_dir
-    (dirs = {2: [...], 1: [...]}, each dir carrying its '_recs').
-
-    With a template its 0x1000 header is reused. With template None the header is written
-    by tile_header from data_version, db_bounds and this tile's own tables, so no existing
-    tile is read. road_section False leaves section 2 out of the tile altogether."""
+    """Header, section tables and container for directories from make_dir. With a
+    template its 0x1000 header is reused; with None, tile_header writes one."""
     sec1 = dict(id=1, count=0, levels=[dict(level=l, typ=t, dirs=dirs.get(l, [])) for l, t in tile_header.LEVELS[1]])
     sec2 = dict(id=2, count=0, levels=[dict(level=l, typ=t, dirs=[]) for l, t in tile_header.LEVELS[2]])
     t = dict(sections=[sec1, sec2] if road_section else [sec1])
