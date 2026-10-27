@@ -1032,6 +1032,45 @@ class TestRoadShapes(unittest.TestCase):
                                    hws=['motorway', 'residential'], country=352)
 
 
+class TestShapeTail(unittest.TestCase):
+    """The level-1 tail table: a count word plus one run item per 127 of shapes + links,
+    padded to a dword. See the review's factory counts (B60R060R)."""
+
+    def test_counts(self):
+        for n, want in ((0, []), (127, [0x7f01]), (128, [0x7f01, 0x0101]),
+                        (255, [0x7f01, 0x7f01, 0x0101]), (256, [0x7f01, 0x7f01, 0x0201]),
+                        (819, [0x7f01] * 6 + [0x3901])):
+            got = fa_encode.tail_items(n)
+            self.assertEqual(got, want, n)
+            self.assertEqual(fa_encode.tail_count(got), n, n)
+            self.assertLessEqual(max([x >> 8 for x in got] or [0]), 127, 'no item over 127')
+
+    def test_factory_examples(self):
+        """B60R060R, 79 shapes and 156 links: 0004 0002 ffff 0000 ffff 0000 ffff 0000 7f01
+        6c01. 42 shapes and 85 links: the same header, one item 7f01, padded with 0000."""
+        self.assertEqual(fa_encode.tail_items(79 + 156), [0x7f01, 0x6c01])
+        self.assertEqual(fa_encode.tail_items(42 + 85), [0x7f01])
+
+    def test_round_trip_under_127(self):
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, TestRoadShapes.NODES, TestRoadShapes().chains(),
+                                          hws=['motorway', 'residential'], country=352)
+        self.assertEqual(fa_encode.tail_of(plain), (1, [0x0401]), 'shapes 2 + links 2')
+
+    def test_round_trip_over_127(self):
+        """260 shapes + links (130 one-link chains): three run items, tail grows past the
+        5-dword size a record under 127 uses."""
+        nodes = [(100, 200), (900, 240)]
+        chains = [[(i, 0, 1, [])] for i in range(1, 131)]
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, nodes, chains,
+                                          hws=['residential'] * 130, country=352)
+        w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+        self.assertEqual(w[18], 6, 'tail grows to 6 dwords past 254')
+        count, items = fa_encode.tail_of(plain)
+        self.assertEqual(count, 3)
+        self.assertEqual(items, fa_encode.tail_items(260))
+        self.assertEqual(fa_encode.tail_count(items), 260)
+
+
 class TestSpeedLimits(unittest.TestCase):
     """The level-1 style word carries the posted limit. Factory Norway and northern England
     restyle a chain where the limit changes instead of splitting the shape."""
@@ -1128,6 +1167,52 @@ class TestSpeedLimits(unittest.TestCase):
         _, _, shapes = fa_encode.parse_record(rec[2])
         styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
         self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'bit 12 clear on one-way links only')
+
+    def test_dir_falls_back_to_oneway(self):
+        """A roads.json with only oneway (osm_roads.all_ways' and the old gen_roads_path's
+        shape) still gives one-way links, not the silent two-way wy.get('dir', 0) read."""
+        pts = TestRoadChains.POINTS
+        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, oneway=True, nodes=pts[:3])
+        b = dict(a, id=2, oneway=True, nodes=pts[2:][::-1])
+        c = dict(id=3, hw='service', name=None, ref=None, oneway=False, nodes=[pts[1], (-21.896, 64.127)])
+        ways = [a, b, c]
+        rd_build.derive_dir(ways)
+        self.assertEqual([w['dir'] for w in ways], [1, 1, 0], 'oneway True/False gives dir 1/0')
+        parcels = rd_build.build_graphs(ways, TestRoadChains.CELL, 1, True)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        (pc, rec), = recs.items()
+        self.assertEqual(rd_check.check(rec[0], 1, 352), ([], []))
+        g = clarion_rd.parse_record(rec[0])
+        ow, bad = rd_check.oneway_links(g)
+        self.assertEqual(bad, [])
+        split = rd_build.quant(pts[2], pc)[0]
+        got = sorted(('a' if max(g['nodes'][i]['x'], g['nodes'][j]['x']) <= split else 'b',
+                      g['nodes'][j]['x'] > g['nodes'][i]['x']) for i, j, _ in ow)
+        self.assertEqual(got, [('a', True), ('a', True), ('b', False)], 'a eastbound, b westbound')
+        _, _, shapes = fa_encode.parse_record(rec[2])
+        styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
+        self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'section 1 bit 12 clear on the one-way chain')
+
+    def test_warns_on_bare_fast_roads(self):
+        import io, contextlib
+        ways = [dict(id=1, hw='trunk', name=None, ref=None, nodes=TestRoadChains.POINTS[:2]),
+                dict(id=2, hw='residential', name=None, ref=None, nodes=TestRoadChains.POINTS[:2])]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err): rd_build.derive_dir(ways)
+        self.assertIn('WARNING', err.getvalue())
+        self.assertIn('1 of them', err.getvalue())
+        self.assertEqual([w['dir'] for w in ways], [0, 0])
+
+    def test_no_warning_when_fields_present(self):
+        import io, contextlib
+        ways = [dict(id=1, hw='trunk', name=None, ref=None, dir=1, nodes=TestRoadChains.POINTS[:2]),
+                dict(id=2, hw='residential', name=None, ref=None, oneway=True, nodes=TestRoadChains.POINTS[:2])]
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err): rd_build.derive_dir(ways)
+        self.assertEqual(err.getvalue(), '')
+        self.assertEqual([w['dir'] for w in ways], [1, 1])
 
 
 class TestLinkNumbering(unittest.TestCase):

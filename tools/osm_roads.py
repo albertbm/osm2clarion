@@ -2,24 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py.
 
-    ./osm_roads.py EXTRACT.osm.pbf ROADS_OUT
-    ./osm_roads.py EXTRACT.osm.pbf ROADS_OUT --public [--relations ID,ID | --box W,S,E,N]
-                   [--buffer METRES] [--turns turns.json TURNS_OUT]
-
-With no flags, every way of the KEEP classes, as the whole-country builds have read it.
-
---public keeps the drivable public roads only: motorway to tertiary, unclassified,
-residential, living_street and every _link; service roads only when they carry a name and
-are none of parking_aisle, driveway, drive-through or parking, since a named service road
-is usually a public street and the others are car parks and private drives; nothing closed
-to cars (access, motor_vehicle or motorcar no/private) and no areas.
-
---relations or --box limits the ways to a region: the union of OSM boundary relations
-(admin areas, read as osmium areas) or a box. Ways are clipped to it: a way that leaves the
-region keeps its inside runs, each ending on a point where it crosses the boundary, and
-its own points are kept as they are, so two ways that shared a point still share it.
---buffer grows the region first. --turns keeps the restrictions of osm_turns.py whose from
-and to ways are both in the output.
+--public keeps drivable public roads only, named service roads included, nothing closed to
+cars or tagged as an area. --relations or --box clips ways to a region, adding a point where
+a way crosses the boundary so two ways sharing a point still share it after clipping.
 """
 import json, math, sys
 
@@ -28,7 +13,6 @@ KEEP = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified',
 
 
 def all_ways(pbf):
-    """Every KEEP way, unfiltered and unclipped: what this tool wrote before the flags."""
     import osmium
     out = []
     class H(osmium.SimpleHandler):
@@ -38,7 +22,8 @@ def all_ways(pbf):
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
             if len(pts) < 2: return
             out.append(dict(id=w.id, hw=hw, name=w.tags.get('name'), ref=w.tags.get('ref'),
-                            oneway=w.tags.get('oneway') == 'yes', maxspeed=w.tags.get('maxspeed'), nodes=pts))
+                            oneway=w.tags.get('oneway') == 'yes', dir=oneway(w.tags),
+                            maxspeed=w.tags.get('maxspeed'), nodes=pts))
     H().apply_file(pbf, locations=True)
     return out
 
@@ -50,7 +35,7 @@ NOCAR = {'no', 'private'}
 
 
 def keep(tags):
-    """Why a way with these tags is left out, or None to keep it."""
+    """Why a way is left out, or None to keep it."""
     hw = tags.get('highway')
     if hw == 'service':
         if not tags.get('name'): return 'service, unnamed'
@@ -64,8 +49,7 @@ def keep(tags):
 
 
 def oneway(tags):
-    """1 one-way along the way, -1 against it, 0 both ways. Roundabouts and motorways are
-    one-way unless tagged otherwise; reversible and alternating roads count as two-way."""
+    """1 one-way along the way, -1 against it, 0 both ways."""
     ow = tags.get('oneway')
     if ow in ('yes', '1', 'true'): return 1
     if ow == '-1': return -1
@@ -76,9 +60,7 @@ def oneway(tags):
 
 
 def clip(pts, inside, cross):
-    """Inside runs of a polyline. inside(p) tests a point; cross(a, b) gives the point where
-    the segment a-b crosses the boundary. Original points are kept as they are, so two ways
-    that shared a point still share it."""
+    """Inside runs of a polyline; cross(a, b) gives the crossing point of segment a-b."""
     runs, cur = [], []
     for i, p in enumerate(pts):
         ins = inside(p)

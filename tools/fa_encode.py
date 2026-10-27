@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) that sits in the even pair of a level-1 background
 directory. Header: parcel code, 0x00fa, 347a 2aef, 0, 0, (w7, w8) = geometry unit at dword 11,
-(w17, w18) = a 5-dword tail table, w19 0x8104, w20 the ISO country code. Geometry unit: u16 count, twelve
+(w17, w18) = the tail table (8 header words plus one run item per 127 of shapes + links,
+padded to a dword; a 5-dword tail up to 254), w19 0x8104, w20 the ISO country code. Geometry unit: u16 count, twelve
 (u16 offset in dwords from the unit start, u16 shape count) layer pairs, a pad word, then the
 shapes. Roads sit in the layer their class belongs to (layer 7 for classes 1-2, 6 for 3-6,
 5 for 8, 4 for 9, 0 for ferries), and the class is the top nibble of shape word 2. A shape:
@@ -20,8 +21,8 @@ def style_word(limit, oneway=False):
     """Level-1 style word for a posted limit in the country's unit, or STYLE for none.
     Bit 5 marks a limit and the low five bits n give (n + 1) * 5, so 5..160 in steps of 5.
     Bit 12 clear marks a one-way link: clear on 34,118 of 43,845 factory one-way links and
-    on 6,330 of 1,521,536 two-way ones (B58R060R, B50R060R). The direction is only in section
-    2. Bit 6 is not understood."""
+    on 6,330 of 1,521,536 two-way ones (B58R060R, B50R060R). The direction also carries in
+    section 2, and since 6d2f493 in section-1 y bits 15-14. Bit 6 is not understood."""
     w = STYLE if not limit or limit % 5 or not 5 <= limit <= 160 else 0x1020 | (limit // 5 - 1)
     return w & ~0x1000 if oneway else w
 
@@ -178,6 +179,31 @@ def item_words(shape, level=1, name_off=0xffff, country=None):
     named = name_off != 0xffff
     return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 1, 1 if named else 0, name_off if named else 0]
 
+def tail_items(n):
+    """Level-1 tail run items for n = shapes + links: chunks of at most 127, each
+    (count << 8) | 1. Verified against 4,888 factory tails (B60R060R, B68R058R, B68R050R),
+    whose run items sum to exactly shapes + links. Inverse of tail_count."""
+    items = []
+    while n > 0:
+        take = min(127, n)
+        items.append((take << 8) | 1)
+        n -= take
+    return items
+
+def tail_count(items):
+    """shapes + links from a tail's run items, the inverse of tail_items. Only counts
+    type-1 items (bit 15 clear); a factory tail with a bit-15 item is a different,
+    unhandled item type and is not a simple run tail."""
+    return sum(x >> 8 for x in items if not x & 0x8000 and x & 0xff == 1)
+
+def tail_of(plain):
+    """A built record's tail, read back the factory's way: (item count, items). Level 1
+    only; level 2 has no tail unit (w17, w18) == (0xffff, 0)."""
+    w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+    off, cnt = w[17], w[18]
+    tail = w[2 * off: 2 * off + 2 * cnt]
+    return tail[1], list(tail[8:8 + tail[1]])
+
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
                  styles=None, country=None, dirs=None):
     """name_offs: per-chain name entry offsets (words), overriding name_off. hws: per-chain
@@ -209,11 +235,13 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
     code = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
     nlinks = sum(len(c) for c in chains)
-    tail = [0x0004, 0x0001, 0xffff, 0x0000, 0xffff, 0x0000, 0xffff, 0x0000, ((len(shapes) + nlinks) & 0xff) << 8 | 1, 0x0000]
+    items = tail_items(len(shapes) + nlinks)
+    tail = [0x0004, len(items), 0xffff, 0x0000, 0xffff, 0x0000, 0xffff, 0x0000] + items
+    if len(tail) % 2: tail.append(0)
     if level == 1:
         w = [code[0], code[1], 0x00fa, 0x347a, 0x2aef, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
-             11 + len(unit) // 2, 5, 0x8104, country, 0]
-        plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>10H', *tail)
+             11 + len(unit) // 2, len(tail) // 2, 0x8104, country, 0]
+        plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>%dH' % len(tail), *tail)
     else:
         w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
              0xffff, 0, 0, country, 0]

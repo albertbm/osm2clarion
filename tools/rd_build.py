@@ -3,43 +3,19 @@
 """Section-2 level-1 records for every parcel of a tile cell, from OSM ways.
 
     ./rd_build.py --profile iceland TILE_IN TILE_OUT CELL [roads.json]
-    --skip service,living_street   OSM classes left out altogether
-    --simplify METRES              Douglas-Peucker tolerance
-    --l2-simplify METRES           the same for level 2, level 1's when unset
-    --l2-classes wide|narrow|a,b,c which roads reach level 2
-    --no-l2-graph                  leave out the section-2 level-2 directories
-    --no-l2-names                  level-2 shapes without names
-    --no-chain                     a graph node at every point, two points per shape
-    --turn-restrictions turns.json turn prohibitions from osm_turns.py; none unless given
-    --no-oneway-regs               one-way links with the w5 bits only, without the factory's
-                                   regulation records (rd_encode.oneway_regulations)
-    --upper-names                  street names in upper case, as every factory label is;
-                                   address records name streets the same way
-    --shape-index OUT.json         where each level-1 drawn shape and point sits, checked
-                                   against the written tile (shape_index.py)
-    --country N                    ISO 3166 numeric code for the road records, if the
-                                   profile has none
 
-roads.json: [{id, hw, name, ref, nodes: [[lon, lat], ...]}, ...]. Ways are cut at parcel
-edges; the cut points become edge nodes in both parcels, connected through a pseudo-entry
-whose "other node" is the point's index in the neighbour's x-sorted node list. The drawn
-shape's layer and class come from the OSM highway value through `fa_encode.CLASSES`, which is
-what the renderer takes its road width from. Links are listed in section-1 drawing order
-(layer_order) and numbered 1..n within each class (link_ids), so a link is named by (class,
-id) in both sections. Directories are added per mesh, the level table and the box table
-updated.
+Ways are cut at parcel edges into edge nodes linked through a pseudo-entry across parcels.
 """
 import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 
-PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # parcel size in degrees per level
-DIRM = {1: 1, 2: 4}                                             # meshes per directory
+PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # degrees per parcel
+DIRM = {1: 1, 2: 4}
 SIDES = {'top': 0x8000, 'right': 0xa000, 'bottom': 0xc000, 'left': 0xe000}
 
-# South-west mesh of the database grid. Only the remainder modulo the directory size matters,
-# so this is what keeps level-2 directories on the grid the card already uses.
+# keeps level-2 directories on the card's existing grid (only the remainder mod directory size matters)
 ORIGIN = (32, 904)
 COUNTRY = None     # ISO 3166 numeric code for every section-2 record, from the profile
 SPEED_UNIT = 'km/h'   # the unit the country's signs are posted in, from the profile
@@ -66,7 +42,6 @@ def cut(pts, level=1):
     out = []; cur = None; run = []
     for a, b in zip(pts, pts[1:]):
         seg = [a]
-        # split the segment at every parcel boundary it crosses (longitude and latitude lines)
         crossings = []
         for k in range(1, 200):
             lon = math.floor(min(a[0], b[0]) / PW) * PW + k * PW
@@ -96,23 +71,17 @@ def dist(a, b):
     m = math.radians((a[1] + b[1]) / 2)
     return math.hypot((b[0] - a[0]) * 111320 * math.cos(m), (b[1] - a[1]) * 111320)
 
-MAX_INNER = 40    # interior points a link may carry; a longer run gets a graph node here
-MAX_POINTS = 64   # points per shape; a chain breaks at a link boundary before exceeding it
+MAX_INNER = 40    # longer runs get a graph node instead of riding inside the link
+MAX_POINTS = 64
 
 def build_graphs(ways, cell, level=1, chain=True):
-    """Per parcel: nodes {key: ...} and links [(from key, to key, length, way id, name, hw,
-    ref, maxspeed, inner points, chain id, one-way)]; one-way is the way's dir (osm_roads.oneway)
-    in the link's own from-to sense. With chain, a point is a graph node only where ways meet
-    or end and the bends between nodes ride inside the link as its inner points, which is
-    how the factory writes them. Without, every point is a node and every link two points,
-    so the matcher sees a junction at every bend."""
+    """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)]."""
     yb, xb = tile_cell(cell)
     def inside(pc): return yb <= pc[0] < yb + 8 and xb <= pc[1] < xb + 8
     parcels = {}
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
-            # the ring of parcels just outside the cell is built too, so an edge node on the
-            # cell's border finds its twin in the next tile; only the cell's own are written
+            # parcels just outside the cell are built too, so a border edge node finds its twin
             if not inside(pc) and not any(inside(neighbour(pc, sd)) for sd in SIDES): continue
             P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter()))
             q = []
@@ -130,8 +99,8 @@ def build_graphs(ways, cell, level=1, chain=True):
             for i in range(1, len(q)):
                 if chain and touch[q[i][0]] < 2 and i - start <= MAX_INNER: continue
                 seg = q[start:i + 1]; start = i
-                # a run that closes on itself is split in two, so no link joins a node to itself
-                parts = [seg[:len(seg) // 2 + 1], seg[len(seg) // 2:]] if seg[0][0] == seg[-1][0] and len(seg) > 2 else [seg]
+                # split a run that closes on itself, so no link joins a node to itself
+                parts =[seg[:len(seg) // 2 + 1], seg[len(seg) // 2:]] if seg[0][0] == seg[-1][0] and len(seg) > 2 else [seg]
                 for part in parts:
                     if part[0][0] == part[-1][0]: continue
                     for key, p in (part[0], part[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
@@ -142,7 +111,6 @@ def build_graphs(ways, cell, level=1, chain=True):
         del P['runs'], P['touch']
         if chain: P['links'] = chain_links(P['links'])
         P['links'] = layer_order(P['links'], level)
-    # edge nodes: coordinate on a parcel border; find the twin in the neighbour
     for pc, P in parcels.items():
         y, x, row, col = pc
         for key, nd in P['nodes'].items():
@@ -161,16 +129,12 @@ def own(parcels):
     return {pc: P for pc, P in parcels.items() if not P['ring']}
 
 def chain_links(links):
-    """Reorder links so the ones drawn as one shape are consecutive, and renumber their chain
-    ids. A way's run through the parcel is one chain, junctions included, as the factory's
-    are. Where a chain ends at a node that exactly one other chain of the same class, name
-    and ref also ends at, the two are joined, so an OSM way split at an attribute change
-    draws on as one road. A chain never closes on itself."""
+    """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
     def key(c): return (c[0][5], c[0][4], c[0][6])
     def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) for l in reversed(c)]
-    ends = collections.defaultdict(list)                     # node -> [(chain id, 'a' start | 'b' end)]
+    ends = collections.defaultdict(list)
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
         bykey = collections.defaultdict(list)
@@ -179,8 +143,8 @@ def chain_links(links):
         if len(pairs) != 1: continue                         # one road, two ends, nothing ambiguous
         (ca, sa), (cb, sb) = pairs[0]
         A, B = chains[ca], chains[cb]
-        if sa == 'a': A = flip(A)                            # A must end at the node
-        if sb == 'b': B = flip(B)                            # B must start there
+        if sa == 'a': A = flip(A)
+        if sb == 'b': B = flip(B)
         if A[0][0] == B[-1][1]: continue                     # joining would close the loop
         chains[ca] = A + B; del chains[cb]
         ends[A[0][0]] = [(ca, 'a') if c in (ca, cb) else (c, s) for c, s in ends[A[0][0]]]
@@ -193,17 +157,11 @@ def chain_links(links):
     return out
 
 def layer_order(links, level=1):
-    """Links in section-1 drawing order: by layer, chains kept whole and in their order.
-    fa_encode.build_record groups shapes by layer the same way, so the link list, the shapes
-    and the graph entries then all run in one order."""
+    """Links in section-1 drawing order: by layer, chains kept whole."""
     return sorted(links, key=lambda l: fa_encode.layer_class(l[5], level)[0])
 
 def link_ids(links, level=1):
-    """The link id per link: 1..n within each class, counted in list order. 6,683 of 6,683
-    class groups of the factory tile B48R068R-214-066 number their links this way (6,647 in
-    drawing order); until 20 Oct 2026 we numbered 1..N over the parcel, so only single-class
-    records agreed (REPORT-oneway-diag in leaf-is-map). A link id is unique within its class
-    only, so a link is named by (class, id)."""
+    """The link id per link: 1..n within each class; a link is named by (class, id)."""
     n = collections.Counter(); out = []
     for l in links:
         cls = fa_encode.layer_class(l[5], level)[1]
@@ -211,8 +169,7 @@ def link_ids(links, level=1):
     return out
 
 def link_groups(links, chain=True):
-    """Link positions grouped into shapes: consecutive links of one way run, broken where
-    the next link would take the shape past MAX_POINTS."""
+    """Link positions grouped into shapes, broken before a group passes MAX_POINTS."""
     groups = []; npts = 0
     for k, l in enumerate(links):
         n = len(l[8]) + 1
@@ -232,7 +189,7 @@ def neighbour(pc, side):
     if col > 31: col, x = 0, x + 1
     return (y, x, row, col)
 
-UPPER_NAMES = False   # --upper-names: factory labels are upper case, accents kept (1=ÅRHUSVEJ)
+UPPER_NAMES = False   # factory labels are upper case, accents kept (1=ÅRHUSVEJ)
 
 def label(name, ref):
     """The shipped label text: `1=NAME;2=REF`, either part alone when the other is missing."""
@@ -241,13 +198,7 @@ def label(name, ref):
     return ';'.join(parts)
 
 def map_turns(parcels, turns, level=1):
-    """OSM turn restrictions as {parcel: [(node index, from link index, to link index)]}, and
-    a Counter of what was dropped and why.
-
-    The regulation record needs link numbers at one node of one parcel, so a restriction is
-    used only when its via point quantises onto a graph node and each of its two ways has
-    exactly one link there. A way that runs straight through the node has two, and the
-    approach direction is then ambiguous, so it is dropped rather than guessed."""
+    """{parcel: [(node index, from link index, to link index)]} and a Counter of drops."""
     out = {}; stats = collections.Counter(); inc = {}
     for pc, P in parcels.items():
         m = {}
@@ -270,8 +221,7 @@ def map_turns(parcels, turns, level=1):
     return out, stats
 
 def chains_of(links, idx, chain=True, ids=None, groups=None):
-    """Shapes as [(link id, from index, to index, inner points)] chains over link_groups.
-    ids: the link id per link (link_ids); positions 1..N when None."""
+    """Shapes as [(link id, from index, to index, inner points)] chains over link_groups."""
     if groups is None: groups = link_groups(links, chain)
     return [[(ids[k] if ids else k + 1, idx[links[k][0]], idx[links[k][1]], links[k][8]) for k in g] for g in groups]
 
@@ -291,11 +241,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if npc in parcels:
                 gx, gy = key
                 tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx, 0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
-                # only the node at the mirrored point: a nearest-node fallback joined two nodes
-                # to one across the edge, which then answered only one of them (18 of 2,266
-                # level-1 edge entries on the capital area); a run that only grazes the
-                # neighbour leaves no twin there, and that end stays a dead end
-                twin = parcels[npc]['index'].get(tw)
+                twin = parcels[npc]['index'].get(tw)   # a run that only grazes the neighbour leaves no twin
                 if twin is None: encode_parcels.no_twin += 1
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
@@ -306,7 +252,6 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                                oneway_regs=oneway_regs)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
-        # drawn geometry: one shape per chain of links, each pointing at its street's label entry
         groups = link_groups(P['links'], chain)
         chains = chains_of(P['links'], idx, chain, ids, groups)
         L = P['links']
@@ -315,10 +260,8 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         labels = []
         for n in label_of:
             if n and n not in labels: labels.append(n)
-        # offsets first (the section layout only depends on the labels and the item count)
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(n, 0xffff) for n in label_of]
-        # the posted limit per link, from the way's own maxspeed only (no class default), and one-way
         styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
@@ -331,8 +274,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
     return out
 
 def shape_index_record(level, pc, ix, groups, ids, links, label_of, no_names):
-    """One record of the shape index (shape_index.py): where each chain's points landed.
-    groups: link positions per chain (link_groups), ids the link id per position."""
+    """One record of the shape index (shape_index.py): where each chain's points landed."""
     lon0, lat0, w, h = parcel_geo(level, *pc)
     def geo(k): return [round(lon0 + k[0] / 2048 * w, 7), round(lat0 + k[1] / 2048 * h, 7)]
     shapes = []
@@ -350,9 +292,7 @@ def shape_index_record(level, pc, ix, groups, ids, links, label_of, no_names):
                 box=[lon0, lat0, w, h], shapes=shapes)
 
 def simplify(pts, tol, junctions=frozenset()):
-    """Douglas-Peucker in metres, endpoints kept, and every point in junctions: a vertex two
-    ways share is where they meet, and dropping it from one cuts the graph there. Before 18
-    Oct 2026 it was dropped, which left the Þorláksgeisli address link in a piece of its own."""
+    """Douglas-Peucker in metres; endpoints and every shared-way junction point are kept."""
     if len(pts) < 3: return pts
     lat = math.radians(pts[0][1]); kx, ky = 111320 * math.cos(lat), 111320
     def d2(p, a, b):
@@ -384,6 +324,19 @@ def count_labels(b):
         typ, flags = struct.unpack_from('>HH', b, p); q = p + 8 + (2 if flags & 0x4000 else 0)
         ln = struct.unpack_from('>H', b, q)[0]; p = q + 2 + ln; n += 1
     return n
+
+FAST_CLASSES = {'motorway', 'trunk', 'motorway_link', 'trunk_link', 'primary_link',
+                'secondary_link', 'tertiary_link'}
+
+def derive_dir(ways):
+    """Fill in a missing dir from oneway, in place; warns when a fast way has neither field."""
+    bare = [w for w in ways if 'dir' not in w and 'oneway' not in w]
+    fast = [w for w in bare if w['hw'] in FAST_CLASSES]
+    if fast:
+        print('WARNING: %d ways have neither dir nor oneway, %d of them motorway/trunk/*_link '
+              '(treated as two-way)' % (len(bare), len(fast)), file=sys.stderr)
+    for w in ways:
+        if 'dir' not in w: w['dir'] = 1 if w.get('oneway') else 0
 
 def main():
     argv = sys.argv[1:]
@@ -424,6 +377,7 @@ def main():
     if not rpath:
         raise SystemExit('no road set: set source.roads in the profile or pass roads.json')
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
+    derive_dir(ways)
     if tol:
         shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
         junctions = {p for p, n in shared.items() if n > 1}
@@ -438,8 +392,6 @@ def main():
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
     boxes = {}; report = []
     for level, subset in ((1, ways), (2, ways2)):
-        # both levels chain: a graph node only where roads meet, the bends inside the links,
-        # as factory level-2 shapes are (median 3 points, 24% multi-link on B58R060R/B50R060R)
         chain = not no_chain
         parcels = build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
@@ -455,13 +407,11 @@ def main():
         for (y, x), rows in sorted(per_dir.items()):
             if not (level == 2 and no_l2_graph): lv['dirs'].append(rd_encode.make_dir(level, y, x, rows))
         if not lv['dirs'] and not (level == 2 and no_l2_graph):
-            # once any tile on the card has roads, a tile that declares none at this level
-            # hangs the first map draw; one directory with no records is enough
-            lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}))
+            lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}))   # a tile declaring none hangs the first draw
         bydir = {(D['y'], D['x']): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
         placed = place_shapes(recs, bydir)
         PW, PH = PSIZE[level]
-        if recs and lv['dirs']:   # the box table only advertises levels that have road directories
+        if recs and lv['dirs']:
             lats = [parcel_geo(level, *pc)[1] for pc in recs] + [parcel_geo(level, *pc)[1] + PH for pc in recs]
             lons = [parcel_geo(level, *pc)[0] for pc in recs] + [parcel_geo(level, *pc)[0] + PW for pc in recs]
             boxes[level] = (math.ceil(max(lats) * 60), math.floor(min(lats) * 60),
@@ -473,7 +423,7 @@ def main():
         report.append(f'level {level}: {len(recs)} parcels in {len(lv["dirs"])} dirs, '
                       f'{sum(len(Q["nodes"]) for Q in parcels.values())} nodes, shapes placed {placed}, '
                       f'nodes/parcel median {counts[len(counts)//2]} max {counts[-1]}')
-        if shapes:   # how far the chaining got: two points and one link per shape is none of it
+        if shapes:
             pts = sorted(1 + sum(len(inner) + 1 for _, _, _, inner in c) for c in shapes)
             multi = sum(1 for c in shapes if len(c) > 1)
             report.append(f'  shapes {len(shapes)}: points/shape median {pts[len(pts)//2]} '
@@ -512,8 +462,7 @@ def main():
 
 
 def merge_names(plain, section):
-    """A background record with a road names section merged in: the road labels first, then
-    the labels it already had, and the road section's sub-table, one item per shape."""
+    """A background record with a road names section merged in, road labels first."""
     r = clarion_bg.parse_record(plain)
     old = r['sections'].get('names'); keep = labels_unpadded(old[24:4 * struct.unpack_from('>H', old, 8)[0]] if struct.unpack_from('>H', old, 8)[0] != 0xffff else old[24:]) if old else b''
     hdr = bytearray(section[:24]); nl = struct.unpack_from('>H', section, 2)[0]
@@ -526,8 +475,7 @@ def merge_names(plain, section):
 
 
 def place_shapes(recs, bydir):
-    """Road-shape records into the even pairs of the background directories, names into the
-    background records (road names first, then whatever was there)."""
+    """Road-shape records into the even pairs of the background directories, names merged in."""
     placed = 0
     for (y, x, row, col), (plain, comp, fplain, fcomp, section) in recs.items():
         D = bydir.get((y, x))

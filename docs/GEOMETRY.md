@@ -196,8 +196,10 @@ separate geometry, and the background records carry no road lines.
 directory (`2*col`, kind `0x00fa`, earlier mistaken for ferry routes) exists for exactly the
 parcels that have a road graph (37 of 37 on Pantelleria, 42,077 of 45,154 in the Paris tile).
 `tools/fa_encode.py` writes it. Header: parcel code, `0x00fa`, `347a 2aef`, 0, 0, then
-`(w7, w8)` = geometry unit at dword 11 (length in dwords), `(w17, w18)` = a 5-dword tail
-(`0004 0001 ffff 0000 x3 NN01 0000`, NN = shapes + links), w19 `0x8104`, w20 `0x017c`. The
+`(w7, w8)` = geometry unit at dword 11 (length in dwords), `(w17, w18)` = the tail table:
+`0004 N ffff 0000 x3` then N run items, each `(count << 8) | 1` with count at most 127
+(shapes + links chunked at 127, factory's own rule), padded to a dword - a 5-dword tail
+while shapes + links stays at or under 254, longer above that. w19 `0x8104`, w20 `0x017c`. The
 geometry unit: u16 (unknown count), twelve `(offset in dwords from the unit start, shape
 count)` layer pairs, a pad word, the shapes. Layer 5 holds roads, layer 0 ferries. A shape
 is a chain of consecutive link ids along one way: `u16 length in words (itself included)`,
