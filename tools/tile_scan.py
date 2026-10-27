@@ -1,22 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Walk a map tile without loading it.
-
-`clarion_tile.read_tile` builds the whole container as objects so it can be edited
-and written back. That costs roughly seven times the file size, because every
-record keeps its bytes and its words as Python ints. Fine for our Iceland tiles at
-a few MB; fatal on a factory tile, where B48R060R is 477 MB and the obvious scan
-reached 45 GB and drove the machine into swap.
-
-This reads the same structure through mmap and yields one record at a time. Use it
-for counting, tallying and searching. Use `clarion_tile` when you need to write.
-
-    from tile_scan import TileScan
-    with TileScan('B48R060R.DAT') as t:
-        for r in t.records(section=1, even_only=True):
-            if r.is_zlib:
-                plain = r.plain()        # decompressed only when asked
-"""
+"""Walk a map tile without loading it. `clarion_tile.read_tile` builds the whole container as objects, costing roughly seven times the file size; on the factory tile B48R060R (477 MB) the obvious scan reached 45 GB and swapped the machine. This walks the same structure through mmap, one record at a time, for counting, tallying and searching; use `clarion_tile` to write."""
 import mmap, struct, zlib
 
 SLOTS = 32
@@ -124,8 +108,7 @@ class TileScan:
         for sid, lev, doff, nslots in self._dirs(section):
             if level is not None and lev != level:
                 continue
-            kind = struct.unpack_from('>H', self.m, doff)[0]
-            body = 512 if kind == 0x2046 else 256
+            body = 512 if sid == 1 else 256   # slot body size is per section, not per kind; 0x2146/0x2346 are section 1 too
             p = doff + 12
             for slot in range(nslots):
                 tag = struct.unpack_from('>I', self.m, p)[0]

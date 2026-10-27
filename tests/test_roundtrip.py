@@ -26,6 +26,7 @@ import rd_check
 import rd_encode
 import tile_grid
 import tile_retarget
+import tile_scan
 
 try:
     import bg_encode
@@ -461,6 +462,43 @@ class TestTileContainer(unittest.TestCase):
                                              'the slot pair records the inflated word count')
                             n += 1
         self.assertEqual(n, 3)
+
+
+class TestDirectoryKindVariants(unittest.TestCase):
+    """Slot body size is per section (measured on B58R060R: 512 for section 1's 0x2046/0x2146/0x2346
+    directories alike, 256 for section 4's 0x1046/0x1146/0x1346), not keyed off the directory kind."""
+
+    def patched(self, blob, kind):
+        """The fixture's section-1 level-1 directory, its on-disk kind word changed."""
+        doff = self.level1_dir(clarion_tile.read_tile(blob))['off']
+        out = bytearray(blob)
+        struct.pack_into('>H', out, doff, kind)
+        return bytes(out)
+
+    def level1_dir(self, t):
+        return [L for L in t['sections'][0]['levels'] if L['level'] == 1][0]['dirs'][0]
+
+    def test_read_dir_keys_body_on_section_not_kind(self):
+        _, blob = iceland_tile()
+        want = self.level1_dir(clarion_tile.read_tile(blob))
+        self.assertEqual(want['kind'], 0x2046)
+        for kind in (0x2146, 0x2346, 0x2446):
+            got = self.level1_dir(clarion_tile.read_tile(self.patched(blob, kind)))
+            self.assertEqual(got['body'], 512)
+            self.assertEqual({k: s['recs'] for k, s in got['slots'].items()},
+                             {k: s['recs'] for k, s in want['slots'].items()},
+                             'same bytes land in the same slots regardless of the kind word')
+
+    def test_section_four_keeps_the_256_byte_body(self):
+        D = clarion_tile.read_dir(b'\0' * 12 + b'\xff' * (4 + 256) * 4, 0, box=(0, 0, 0, 0), nslots=4, section=4)
+        self.assertEqual(D['body'], 256)
+
+    def test_tile_scan_matches_clarion_tile_on_a_variant_kind(self):
+        _, blob = iceland_tile()
+        patched = self.patched(blob, 0x2346)
+        want = [(r.section, r.level, r.off, r.n, r.raw()) for r in tile_scan.TileScan(blob).records()]
+        got = [(r.section, r.level, r.off, r.n, r.raw()) for r in tile_scan.TileScan(patched).records()]
+        self.assertEqual(got, want)
 
 
 class TestGeometryRoundtrip(unittest.TestCase):
