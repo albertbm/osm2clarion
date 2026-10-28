@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Section-2 level-1 records for every parcel of a tile cell, from OSM ways.
-
-    ./rd_build.py --profile iceland TILE_IN TILE_OUT CELL [roads.json]
-
-Ways are cut at parcel edges into edge nodes linked through a pseudo-entry across parcels.
-"""
+"""Section-2 level-1 records for every parcel of a tile cell, from OSM ways. Ways are cut at parcel edges into edge nodes linked through a pseudo-entry across parcels."""
 import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index
+import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index, osm_roads
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 
 PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # degrees per parcel
@@ -330,14 +325,16 @@ FAST_CLASSES = {'motorway', 'trunk', 'motorway_link', 'trunk_link', 'primary_lin
                 'secondary_link', 'tertiary_link'}
 
 def derive_dir(ways):
-    """Fill in a missing dir from oneway, in place; warns when a fast way has neither field."""
-    bare = [w for w in ways if 'dir' not in w and 'oneway' not in w]
+    """Fill in a missing dir with osm_roads.oneway_dir, the same rule the extractors use, so a
+    way missing dir is not silently flattened to two-way; warns when a fast way has neither field."""
+    bare = [w for w in ways if 'dir' not in w and 'oneway' not in w and 'junction' not in w]
     fast = [w for w in bare if w['hw'] in FAST_CLASSES]
     if fast:
-        print('WARNING: %d ways have neither dir nor oneway, %d of them motorway/trunk/*_link '
+        print('WARNING: %d ways have neither dir, oneway nor junction, %d of them motorway/trunk/*_link '
               '(treated as two-way)' % (len(bare), len(fast)), file=sys.stderr)
     for w in ways:
-        if 'dir' not in w: w['dir'] = 1 if w.get('oneway') else 0
+        if 'dir' not in w:
+            w['dir'] = osm_roads.oneway_dir(w.get('oneway'), w.get('junction'), w['hw'])
 
 def main():
     argv = sys.argv[1:]

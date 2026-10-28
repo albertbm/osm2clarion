@@ -1249,6 +1249,17 @@ class TestSpeedLimits(unittest.TestCase):
         styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
         self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'section 1 bit 12 clear on the one-way chain')
 
+    def test_dir_falls_back_to_the_full_oneway_rule(self):
+        pts = TestRoadChains.POINTS[:2]
+        ways = [dict(id=1, hw='residential', name=None, ref=None, oneway='-1', nodes=pts),
+                dict(id=2, hw='residential', name=None, ref=None, junction='roundabout', nodes=pts),
+                dict(id=3, hw='motorway', name=None, ref=None, nodes=pts),
+                dict(id=4, hw='residential', name=None, ref=None, junction='roundabout', oneway='no', nodes=pts)]
+        rd_build.derive_dir(ways)
+        self.assertEqual([w['dir'] for w in ways], [-1, 1, 1, 0],
+                         '-1 against the way, roundabout and motorway implied one-way, '
+                         'an explicit no overrides the roundabout')
+
     def test_warns_on_bare_fast_roads(self):
         import io, contextlib
         ways = [dict(id=1, hw='trunk', name=None, ref=None, nodes=TestRoadChains.POINTS[:2]),
