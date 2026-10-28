@@ -221,7 +221,7 @@ def chains_of(links, idx, chain=True, ids=None, groups=None):
     if groups is None: groups = link_groups(links, chain)
     return [[(ids[k] if ids else k + 1, idx[links[k][0]], idx[links[k][1]], links[k][8]) for k in g] for g in groups]
 
-def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True):
+def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.index = {}
     for pc, P in parcels.items():
@@ -240,12 +240,14 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                 twin = parcels[npc]['index'].get(tw)   # a run that only grazes the neighbour leaves no twin
             if twin is None: encode_parcels.no_twin += 1
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
+        # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
+        l2_flags = [P['nodes'][k]['geo'] in l2_geo for k in keys] if l2_geo is not None else None
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
                                                dirs=[l[10] for l in P['links']], ids=ids,
-                                               oneway_regs=oneway_regs)
+                                               oneway_regs=oneway_regs, l2_twin=l2_flags)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         groups = link_groups(P['links'], chain)
@@ -388,13 +390,16 @@ def main():
         for w in ways2: w['nodes'] = simplify(w['nodes'], tol2, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
+    # level 2 is needed before level 1 is encoded, so a level-1 node at the same point can carry 0x2000
+    l2_parcels = build_graphs(ways2, cell, 2, not no_chain)
+    l2_geo = {nd['geo'] for P in l2_parcels.values() for nd in P['nodes'].values()}
     boxes = {}; report = []
     for level, subset in ((1, ways), (2, ways2)):
         chain = not no_chain
-        parcels = build_graphs(subset, cell, level, chain)
+        parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
-                              oneway_regs=oneway_regs)
+                              oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None))
         if level == 1: index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
         parcels = own(parcels)
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]

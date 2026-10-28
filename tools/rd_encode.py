@@ -150,9 +150,11 @@ def regulation_order(words, k):
     return sorted(words, key=lambda w: ((w >> 12) - k - 1) % 16)
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
-                       speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True):
+                       speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
+                       l2_twin=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
-    Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table."""
+    Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table.
+    l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000)."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else [default] * len(links)
     ncls = node_classes(nodes, links, [c & 0xf for c in cls_of])
@@ -194,7 +196,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         if not ents: continue
         # the entry count shares its word with x, so 15 is the ceiling; above it x is corrupted
         assert len(ents) <= 15, 'node %r has %d entries, too many for the count nibble' % (nodes[old], len(ents))
-        body += [(len(ents) << 12) | x, ncls[old] << 12 | y, 0]
+        flag = END_FLAG if l2_twin and l2_twin[old] else 0
+        body += [(len(ents) << 12) | x, ncls[old] << 12 | y, flag]
         for k, (other, lid, cls, a, length, ow) in enumerate(ents):
             ex = regulation_order(extras.get((old, k), ()), k)
             body += [other, 0, ow | len(ex) << 6, lid, cls, a, length] + ex

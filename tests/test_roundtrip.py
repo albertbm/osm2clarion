@@ -655,6 +655,17 @@ class TestRoadGraph(unittest.TestCase):
         got = sorted({(e['cls'] & 0xf, e['id'] & 0x1fff) for n in rec['nodes'] for e in n['entries']})
         self.assertEqual(got, [(4, 1), (4, 2), (8, 1)], 'ids restart per class; the class names the group')
 
+    def test_twin_flag_marks_a_node_shared_with_level_2(self):
+        # a level-1 node also present at level 2 carries 0x2000 in its flag word (GEOMETRY.md)
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {}, country=352,
+                                                classes=['trunk', 'trunk', 'residential'],
+                                                l2_twin=[True, False, False, False])
+        rec = clarion_rd.parse_record(plain)
+        flags = {(n['x'], n['y']): n['nflags'] for n in rec['nodes']}
+        self.assertEqual(flags[self.NODES[0]], 0x2000)
+        for n in self.NODES[1:]:
+            self.assertEqual(flags[n], 0)
+
     def test_class_words(self):
         for cls in range(1, 10):
             self.assertEqual(rd_encode.class_word(cls), cls << 8 | 0x90 | cls)
@@ -1397,6 +1408,32 @@ class TestRoadChains(unittest.TestCase):
         self.assertEqual([x & 0x0800 for x in xs[:-1]], [0x0800] * 4,
                          'the start and every point the link goes on past')
         self.assertEqual(xs[-1] & 0x0800, 0, 'the last point ends the link')
+
+
+class TestLevelTwoTwin(unittest.TestCase):
+    """encode_parcels flags a level-1 node that coincides with a level-2 node."""
+
+    CELL = TestRoadChains.CELL
+    WAY = TestRoadChains.WAY
+
+    def test_shared_endpoints_flagged_bend_is_not(self):
+        side = dict(id=2, hw='service', name=None, ref=None,
+                    nodes=[self.WAY['nodes'][2], (-21.896, 64.127)])
+        l1 = rd_build.build_graphs([self.WAY, side], self.CELL, 1, True)
+        l2 = rd_build.build_graphs([self.WAY], self.CELL, 2, True)   # the side road never reaches level 2
+        l2_geo = {nd['geo'] for P in l2.values() for nd in P['nodes'].values()}
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(l1, 1, l2_geo=l2_geo)
+        finally: rd_build.COUNTRY = was
+        plain, _, _, _, _ = next(iter(recs.values()))
+        rec = clarion_rd.parse_record(plain)
+        by_geo = {(nd['x'], nd['y']): nd['nflags'] for nd in rec['nodes']}
+        P = next(iter(l1.values()))
+        for key, nd in P['nodes'].items():
+            self.assertEqual(by_geo[key], 0x2000 if nd['geo'] in l2_geo else 0,
+                             'node at %r should %sbe flagged' % (nd['geo'], '' if nd['geo'] in l2_geo else 'not '))
+        self.assertTrue(any(f == 0x2000 for f in by_geo.values()), 'the way endpoints are shared with level 2')
+        self.assertTrue(any(f == 0 for f in by_geo.values()), 'the junction and the side road are level-1 only')
 
 
 class TestLevelTwoDirectoryBoundary(unittest.TestCase):
