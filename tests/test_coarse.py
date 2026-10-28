@@ -154,6 +154,15 @@ class TestAreaRoads(unittest.TestCase):
         self.assertEqual(osm_roads.oneway({'highway': 'motorway'}), 1)
         self.assertEqual(osm_roads.oneway({'highway': 'motorway_link', 'oneway': 'no'}), 0)
         self.assertEqual(osm_roads.oneway({'highway': 'trunk', 'oneway': 'reversible'}), 0)
+
+    def test_oneway_dir_is_the_shared_function(self):
+        d = osm_roads.oneway_dir
+        self.assertEqual(d('-1', None, None), -1)
+        self.assertEqual(d(None, 'roundabout', None), 1)
+        self.assertEqual(d(None, None, 'motorway'), 1)
+        self.assertEqual(d('no', 'roundabout', None), 0, 'an explicit no overrides the roundabout')
+        self.assertEqual(d(True, None, None), 1, 'a legacy collapsed bool reads as oneway=yes/absent')
+        self.assertEqual(d(False, 'roundabout', None), 0, 'same legacy bool loses the roundabout implication')
         self.assertEqual(fa_encode.style_word(50, oneway=True), 0x0029)
 
     def test_clip_keeps_points_and_adds_crossings(self):

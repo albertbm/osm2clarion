@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py.
-
---public keeps drivable public roads only, named service roads included, nothing closed to
-cars or tagged as an area. --relations or --box clips ways to a region, adding a point where
-a way crosses the boundary so two ways sharing a point still share it after clipping.
-"""
+"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping."""
 import json, math, sys
 
 KEEP = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential',
@@ -22,7 +17,7 @@ def all_ways(pbf):
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
             if len(pts) < 2: return
             out.append(dict(id=w.id, hw=hw, name=w.tags.get('name'), ref=w.tags.get('ref'),
-                            oneway=w.tags.get('oneway') == 'yes', dir=oneway(w.tags),
+                            oneway=w.tags.get('oneway'), junction=w.tags.get('junction'), dir=oneway(w.tags),
                             maxspeed=w.tags.get('maxspeed'), nodes=pts))
     H().apply_file(pbf, locations=True)
     return out
@@ -48,15 +43,21 @@ def keep(tags):
     return None
 
 
-def oneway(tags):
-    """1 one-way along the way, -1 against it, 0 both ways."""
-    ow = tags.get('oneway')
+def oneway_dir(ow, junction, hw):
+    """1 one-way along the way, -1 against it, 0 both ways, from the raw tag values. The
+    legacy bool form of `ow` (no junction/-1 info left) is read as oneway=yes/absent."""
+    if isinstance(ow, bool): return 1 if ow else 0
     if ow in ('yes', '1', 'true'): return 1
     if ow == '-1': return -1
     if ow is not None: return 0
-    if tags.get('junction') in ('roundabout', 'circular'): return 1
-    if tags.get('highway') in ('motorway', 'motorway_link'): return 1
+    if junction in ('roundabout', 'circular'): return 1
+    if hw in ('motorway', 'motorway_link'): return 1
     return 0
+
+
+def oneway(tags):
+    """1 one-way along the way, -1 against it, 0 both ways."""
+    return oneway_dir(tags.get('oneway'), tags.get('junction'), tags.get('highway'))
 
 
 def clip(pts, inside, cross):
@@ -125,7 +126,8 @@ def select(pbf, inside, cross, public=True):
             if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
             ow = oneway(t)
             for r in runs:
-                out.append(dict(id=w.id, hw=t['highway'], name=t.get('name'), ref=t.get('ref'), oneway=ow == 1,
+                out.append(dict(id=w.id, hw=t['highway'], name=t.get('name'), ref=t.get('ref'),
+                                oneway=t.get('oneway'), junction=t.get('junction'),
                                 dir=ow, maxspeed=t.get('maxspeed'), nodes=[list(p) for p in r]))
     H().apply_file(pbf, locations=True)
     return out, why
