@@ -241,7 +241,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if twin is None: encode_parcels.no_twin += 1
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
-        l2_flags = [P['nodes'][k]['geo'] in l2_geo for k in keys] if l2_geo is not None else None
+        l2_flags = [tuple(P['nodes'][k]['geo']) in l2_geo for k in keys] if l2_geo is not None else None
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
@@ -392,7 +392,7 @@ def main():
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
     # level 2 is needed before level 1 is encoded, so a level-1 node at the same point can carry 0x2000
     l2_parcels = build_graphs(ways2, cell, 2, not no_chain)
-    l2_geo = {nd['geo'] for P in l2_parcels.values() for nd in P['nodes'].values()}
+    l2_geo = {tuple(nd['geo']) for P in l2_parcels.values() for nd in P['nodes'].values()}
     boxes = {}; report = []
     for level, subset in ((1, ways), (2, ways2)):
         chain = not no_chain

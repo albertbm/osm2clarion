@@ -1417,11 +1417,13 @@ class TestLevelTwoTwin(unittest.TestCase):
     WAY = TestRoadChains.WAY
 
     def test_shared_endpoints_flagged_bend_is_not(self):
+        # points as lists, like osm_roads.py's own JSON output - a tuple-only path missed this once
+        way = dict(self.WAY, nodes=[list(p) for p in self.WAY['nodes']])
         side = dict(id=2, hw='service', name=None, ref=None,
-                    nodes=[self.WAY['nodes'][2], (-21.896, 64.127)])
-        l1 = rd_build.build_graphs([self.WAY, side], self.CELL, 1, True)
-        l2 = rd_build.build_graphs([self.WAY], self.CELL, 2, True)   # the side road never reaches level 2
-        l2_geo = {nd['geo'] for P in l2.values() for nd in P['nodes'].values()}
+                    nodes=[list(self.WAY['nodes'][2]), [-21.896, 64.127]])
+        l1 = rd_build.build_graphs([way, side], self.CELL, 1, True)
+        l2 = rd_build.build_graphs([way], self.CELL, 2, True)   # the side road never reaches level 2
+        l2_geo = {tuple(nd['geo']) for P in l2.values() for nd in P['nodes'].values()}
         was, rd_build.COUNTRY = rd_build.COUNTRY, 352
         try: recs = rd_build.encode_parcels(l1, 1, l2_geo=l2_geo)
         finally: rd_build.COUNTRY = was
@@ -1430,8 +1432,9 @@ class TestLevelTwoTwin(unittest.TestCase):
         by_geo = {(nd['x'], nd['y']): nd['nflags'] for nd in rec['nodes']}
         P = next(iter(l1.values()))
         for key, nd in P['nodes'].items():
-            self.assertEqual(by_geo[key], 0x2000 if nd['geo'] in l2_geo else 0,
-                             'node at %r should %sbe flagged' % (nd['geo'], '' if nd['geo'] in l2_geo else 'not '))
+            flagged = tuple(nd['geo']) in l2_geo
+            self.assertEqual(by_geo[key], 0x2000 if flagged else 0,
+                             'node at %r should %sbe flagged' % (nd['geo'], '' if flagged else 'not '))
         self.assertTrue(any(f == 0x2000 for f in by_geo.values()), 'the way endpoints are shared with level 2')
         self.assertTrue(any(f == 0 for f in by_geo.values()), 'the junction and the side road are level-1 only')
 
