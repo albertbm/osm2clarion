@@ -672,6 +672,23 @@ class TestRoadGraph(unittest.TestCase):
         got = {e['cls'] & 0xff | (e['cls'] & 0xf) << 8 for n in rec['nodes'] for e in n['entries']}
         self.assertEqual(got, want, 'the low byte is the link class word')
 
+    def test_cost_words_bit15_by_class(self):
+        for cls in range(1, 8):
+            a, _ = rd_encode.cost_words(100, 50, cls)
+            self.assertEqual(a & 0x8000, 0, 'main-road classes clear the time word bit 15')
+        for cls in (8, 9, 12, None):
+            a, _ = rd_encode.cost_words(100, 50, cls)
+            self.assertEqual(a & 0x8000, 0x8000, 'local/service classes keep it set')
+
+    def test_per_link_bit15_matches_factory_tier(self):
+        plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
+                                                classes=['trunk', 'primary', 'service'], country=352)
+        rec = clarion_rd.parse_record(plain)
+        by_class = {e['cls'] & 0xf: e['a'] & 0x8000 for n in rec['nodes'] for e in n['entries']}
+        self.assertEqual(by_class[4], 0, 'trunk (class 4) is a main-road tier')
+        self.assertEqual(by_class[5], 0, 'primary (class 5) is a main-road tier')
+        self.assertEqual(by_class[9], 0x8000, 'service (class 9) keeps the local-tier flag')
+
     def test_oneway_bits(self):
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {2: (0xc000, 17)},
                                                 country=352, dirs=[1, -1, 0])
