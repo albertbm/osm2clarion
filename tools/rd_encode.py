@@ -1,11 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Encode a section-2 (road) level-1 record and directory from a node/link graph.
-
-Graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. The per-entry words `a`
-(travel time) and `b` (length) are KIWI scaled values (KIWI 1.22 10.10.2): bits 14-12 a
-multiplier m, bits 11-0 the value, unit 4**m -- 0.1 s for time, 1 m for length.
-"""
+"""Encode a section-2 (road) level-1 record and directory from a node/link graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. Per-entry words `a` (time) and `b` (length) are KIWI 1.22 scaled values: bits 14-12 a multiplier m, bits 11-0 the value, unit 4**m -- 0.1 s for time, 1 m for length."""
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg, fa_encode
@@ -47,12 +42,17 @@ def scaled(q):
         assert m <= 7, 'quantity %r does not fit the three-bit multiplier' % q
     return m, v
 
-def cost_words(length_m, kmh):
-    """The entry's (travel time, length) word pair; bit 15 of the time word is left set (KIWI RESERVED, set on every road link)."""
+MAIN_ROAD_CLASSES = range(1, 8)   # factory clears the time word's bit 15 on these, sets it on 8/9/12
+
+def cost_words(length_m, kmh, cls=None):
+    """The entry's (travel time, length) word pair. Bit 15 of the time word is a class-tier
+    flag, measured off factory tiles: clear on classes 1-7, set on 8, 9, 12. `cls=None` keeps
+    it set, for callers that do not track class."""
     secs = length_m / (kmh / 3.6)
     mt, t = scaled(secs * 10)
     mb, b = scaled(length_m)
-    return 0x8000 | (mt << 12) | t, (mb << 12) | b
+    bit15 = 0 if cls in MAIN_ROAD_CLASSES else 0x8000
+    return bit15 | (mt << 12) | t, (mb << 12) | b
 
 def class_word(cls):
     """The link class word: class in the high byte, then 0x90 | class (0x80 | class above 9)."""
@@ -162,7 +162,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     slot = {}
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
-        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH)
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, cls_of[k] >> 8)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
