@@ -1410,6 +1410,82 @@ class TestRoadChains(unittest.TestCase):
         self.assertEqual(xs[-1] & 0x0800, 0, 'the last point ends the link')
 
 
+class TestBoundaryJunctionIsNotMistakenForACrossing(unittest.TestCase):
+    """A junction that only quantizes onto the parcel line by coincidence (nothing continues
+    past it into the next parcel) must not be flagged as an edge node: the review found 18
+    such junctions carrying no edge-crossing entry at all, because the old code classified
+    a node purely by its coordinate sitting on 0 or 2047."""
+
+    CELL = TestRoadChains.CELL
+    POINTS = TestRoadChains.POINTS
+
+    def test_junction_on_the_line_is_nudged_off_it(self):
+        pc = rd_build.parcel_of(*self.POINTS[0], 1)
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, *pc)
+        on_edge = (lon0 + w * 0.4, lat0 + h)   # exactly the parcel's north edge
+        a = dict(id=1, hw='residential', name='A', ref=None,
+                 nodes=[(lon0 + w * 0.1, lat0 + h * 0.5), on_edge])
+        b = dict(id=2, hw='residential', name='B', ref=None,
+                 nodes=[on_edge, (lon0 + w * 0.7, lat0 + h * 0.5)])
+        c = dict(id=3, hw='service', name='C', ref=None,
+                 nodes=[on_edge, (lon0 + w * 0.4, lat0 + h * 0.2)])
+        parcels = rd_build.build_graphs([a, b, c], self.CELL, 1, True)
+        self.assertEqual(len(parcels), 1)
+        P = next(iter(parcels.values()))
+        key = rd_build.quant(on_edge, pc, 1)
+        self.assertEqual(key[1], 2047, 'the point still quantizes onto the top line')
+        self.assertNotIn(key, P['nodes'], 'the junction must not keep the on-the-line key')
+        nk = (key[0], 2046)
+        self.assertIn(nk, P['nodes'], 'it is pulled one unit inside the parcel instead')
+        self.assertIsNone(P['nodes'][nk]['edge'], 'a nudged junction is not a parcel-edge node')
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        self.assertEqual(rd_build.encode_parcels.no_twin, 0, 'no edge lookup is attempted for it')
+        plain, _, _, _, _ = next(iter(recs.values()))
+        rec = clarion_rd.parse_record(plain)
+        onb = [(n['x'], n['y']) for n in rec['nodes'] if n['x'] in (0, 2047) or n['y'] in (0, 2047)]
+        self.assertEqual(onb, [], 'nothing in the written record sits on the parcel line')
+
+
+class TestDeadEndOnTheLineIsNotMistakenForACrossing(unittest.TestCase):
+    """A way that just ends near a parcel edge can still quantize exactly onto the line, with
+    nothing at all on the other side: a plain dead end, not a crossing. The earlier junction
+    fix leaves this alone (touch is 2, same as a real crossing); only checking the neighbour's
+    own node table, once it has been built, tells the two apart."""
+
+    CELL = TestRoadChains.CELL
+    POINTS = TestRoadChains.POINTS
+
+    def test_dead_end_on_the_line_is_nudged_off_it(self):
+        pc = rd_build.parcel_of(*self.POINTS[0], 1)
+        lon0, lat0, w, h = clarion_bg.parcel_geo(1, *pc)
+        on_edge = (lon0 + w, lat0 + h * 0.5)   # exactly the parcel's right edge
+        dead_end = dict(id=1, hw='residential', name='DeadEnd', ref=None,
+                        nodes=[(lon0 + w * 0.3, lat0 + h * 0.5), on_edge])
+        # a second way, elsewhere in the next parcel, so that parcel is built at all but
+        # has nothing near the mirrored point
+        elsewhere = dict(id=2, hw='residential', name='Other', ref=None,
+                         nodes=[(lon0 + w * 1.3, lat0 + h * 0.5), (lon0 + w * 1.7, lat0 + h * 0.7)])
+        parcels = rd_build.build_graphs([dead_end, elsewhere], self.CELL, 1, True)
+        self.assertEqual(len(parcels), 2, 'both the dead end\'s parcel and its neighbour are built')
+        P = parcels[pc]
+        key = rd_build.quant(on_edge, pc, 1)
+        self.assertEqual(key[0], 2047, 'the dead end still quantizes onto the right edge')
+        self.assertNotIn(key, P['nodes'], 'a dead end with no twin must not keep the on-the-line key')
+        nk = (2046, key[1])
+        self.assertIn(nk, P['nodes'], 'it is pulled one unit inside the parcel instead')
+        self.assertIsNone(P['nodes'][nk]['edge'], 'a nudged dead end is not a parcel-edge node')
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        self.assertEqual(rd_build.encode_parcels.no_twin, 0, 'no edge lookup is attempted for it')
+        plain, _, _, _, _ = recs[pc]
+        rec = clarion_rd.parse_record(plain)
+        onb = [(n['x'], n['y']) for n in rec['nodes'] if n['x'] in (0, 2047) or n['y'] in (0, 2047)]
+        self.assertEqual(onb, [], 'nothing in the written record sits on the parcel line')
+
+
 class TestLevelTwoTwin(unittest.TestCase):
     """encode_parcels flags a level-1 node that coincides with a level-2 node."""
 

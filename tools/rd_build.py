@@ -89,6 +89,27 @@ def build_graphs(ways, cell, level=1, chain=True):
             for key, _ in q[1:-1]: P['touch'][key] += 1
     for pc, P in parcels.items():
         touch = P['touch']
+        # a junction that only lands on the parcel line by quantization coincidence (not a
+        # real crossing, since something besides its own run also touches that point) is
+        # pulled 1 unit inward, so it can't be taken for an edge-crossing node with a twin
+        nudge = {}
+        for key, n in touch.items():
+            gx, gy = key
+            if n > 2 and (gx in (0, 2047) or gy in (0, 2047)):
+                nk = (1 if gx == 0 else 2046 if gx == 2047 else gx,
+                      1 if gy == 0 else 2046 if gy == 2047 else gy)
+                if nk != key: nudge[key] = nk
+        if nudge:
+            for k, nk in nudge.items(): touch[nk] = touch.pop(k)
+            kept = []
+            for q, wy in P['runs']:
+                for i, (key, p) in enumerate(q):
+                    if key in nudge: q[i] = (nudge[key], p)
+                dedup = [q[0]]
+                for item in q[1:]:
+                    if item[0] != dedup[-1][0]: dedup.append(item)
+                if len(dedup) >= 2: kept.append((dedup, wy))
+            P['runs'] = kept
         for rid, (q, wy) in enumerate(P['runs']):
             start = 0
             for i in range(1, len(q)):
@@ -112,6 +133,28 @@ def build_graphs(ways, cell, level=1, chain=True):
             gx, gy = key
             side = 'right' if gx == 2047 else 'left' if gx == 0 else 'top' if gy == 2047 else 'bottom' if gy == 0 else None
             if side: nd['edge'] = side
+    # a node on the line with nothing at the mirrored point in an already-built neighbour was
+    # never a real crossing either (typically a dead end that just happens to quantize onto
+    # the line) -- nudge it off the line rather than leave it looking like a crossing with no
+    # edge entry; a neighbour that was never built at all (genuinely outside this run) is left
+    # alone, since that is the ordinary tile-edge case, not this defect
+    for pc, P in parcels.items():
+        renames = {}
+        for key, nd in P['nodes'].items():
+            if not nd['edge']: continue
+            npc = neighbour(pc, nd['edge'], level)
+            if npc not in parcels: continue
+            gx, gy = key
+            tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx,
+                  0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
+            if tw in parcels[npc]['nodes']: continue
+            nk = (1 if gx == 0 else 2046 if gx == 2047 else gx,
+                  1 if gy == 0 else 2046 if gy == 2047 else gy)
+            if nk != key and nk not in P['nodes']: renames[key] = nk
+        for key, nk in renames.items():
+            nd = P['nodes'].pop(key); nd['edge'] = None; P['nodes'][nk] = nd
+        if renames:
+            P['links'] = [(renames.get(l[0], l[0]), renames.get(l[1], l[1])) + l[2:] for l in P['links']]
     for pc, P in parcels.items():
         keys = sorted(P['nodes'], key=lambda k: (k[0], k[1]))
         P['order'] = keys; P['index'] = {k: i for i, k in enumerate(keys)}
