@@ -910,7 +910,7 @@ class TestRoadShapes(unittest.TestCase):
                 if k < npts - 1: role = 'first-of-link' if k == 0 else 'inner'
                 else: role = 'last' if n == len(chain) - 1 else 'linkend'
                 out.append((role, shape[p], shape[p + 1])); p += 2
-        self.assertEqual(shape[p], 0x0000, 'the trailer word ends the shape')
+        self.assertEqual(shape[p], 0xffff, 'the trailer word defaults to no-twin')
         self.assertEqual((shape[0], len(shape)), (p + 1, p + 1), 'the length word counts itself')
         self.assertEqual(shape[1] & 0x3fff, len(out))
         return out
@@ -1084,6 +1084,53 @@ class TestRoadShapes(unittest.TestCase):
         for level in (1, 2):
             self.assertEqual(fa_encode.item_words(shape, level, country=578)[5], 578, 'word 5 is the country')
 
+    def key_slot_abs(self, chain_i, last_index, chains, nodes, styles=None):
+        """(slot, x-word) absolute offsets per occurrence of one already-built chain, from
+        the shape's real placement (last_index) rather than hand computed arithmetic."""
+        at = next(s['at'] for s in last_index['shapes'] if s['chain'] == chain_i) - 2 * 11
+        return [(at + slot, at + xoff, nid) for slot, xoff, nid in fa_encode.key_slots(chains[chain_i], styles)]
+
+    def test_identical_node_keys(self):
+        """Node 1 is shared between two shapes (the end of one, the start of the other):
+        SECTION4-draft.md section 7's identical-node chain must link each occurrence to the
+        other's x word (not to its key slot), and a solo node (0 and 2) must read 0xffff."""
+        chains = self.chains(chain=False)   # [(1,0,1,[]])], [(2,1,2,[])]: node 1 is shared
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, chains,
+                                          hws=['motorway', 'residential'], country=352)
+        w, unit = self.unit_words(plain)
+        ix = fa_encode.build_record.last_index
+        a_slot, a_x, _ = self.key_slot_abs(0, ix, chains, self.NODES)[-1]    # chain 0's tail: node 1
+        b_slot, b_x, _ = self.key_slot_abs(1, ix, chains, self.NODES)[0]     # chain 1's start: node 1
+        a0_slot, _, _ = self.key_slot_abs(0, ix, chains, self.NODES)[0]      # chain 0's start: node 0, solo
+        b1_slot, _, _ = self.key_slot_abs(1, ix, chains, self.NODES)[-1]     # chain 1's tail: node 2, solo
+        self.assertEqual(unit[a0_slot], 0xffff, 'node 0 has no twin')
+        self.assertEqual(unit[b1_slot], 0xffff, 'node 2 has no twin')
+        # record order decides which of the two node-1 occurrences is "first" (-> wraps to last)
+        if a_slot < b_slot: first, second = (a_slot, a_x), (b_slot, b_x)
+        else: first, second = (b_slot, b_x), (a_slot, a_x)
+        self.assertEqual(unit[first[0]], second[1], 'the earlier occurrence wraps to the later one')
+        self.assertEqual(unit[second[0]], first[1], 'the later occurrence points at the earlier one')
+
+    def test_identical_node_keys_three_way_ring_points_backward(self):
+        """Three shapes meet at one node (a junction of three roads). Measured on real
+        factory parcels (a73c d34c, a8ef cd6c): each occurrence's key is the x word of the
+        one just BEFORE it in record order, and the first wraps to the LAST. Different
+        layers keep the three shapes in a known record order (service, trunk, motorway)."""
+        nodes = self.NODES + [(500, 500)]
+        a, b, c = [(1, 0, 3, [])], [(2, 3, 1, [])], [(3, 3, 2, [])]   # node 3 shared by all
+        chains = [a, b, c]
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, nodes, chains,
+                                          hws=['service', 'trunk', 'motorway'], country=352)
+        w, unit = self.unit_words(plain)
+        ix = fa_encode.build_record.last_index
+        a_slot, a_x, _ = self.key_slot_abs(0, ix, chains, nodes)[-1]   # a's tail: node 3
+        b_slot, b_x, _ = self.key_slot_abs(1, ix, chains, nodes)[0]    # b's start: node 3
+        c_slot, c_x, _ = self.key_slot_abs(2, ix, chains, nodes)[0]    # c's start: node 3
+        self.assertLess(a_slot, b_slot); self.assertLess(b_slot, c_slot)   # ascending layer == record order
+        self.assertEqual(unit[a_slot], c_x, 'the first occurrence wraps to the last')
+        self.assertEqual(unit[b_slot], a_x, 'the second points at the one before it')
+        self.assertEqual(unit[c_slot], b_x, 'the third (last) points at the one before it')
+
     def test_hws_must_match_the_chains(self):
         with self.assertRaises(IndexError):
             fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, self.chains()[:1],
@@ -1182,7 +1229,7 @@ class TestSpeedLimits(unittest.TestCase):
         pts = len(self.CHAIN[0][3]) + 1
         end = 9 + 3 + 2 * pts                     # one past the first link's last point
         self.assertEqual(sh[end - 1] & 0xf800, 0x2800, 'the link end announces a style word')
-        self.assertEqual(sh[end:end + 3], [0x1025, 0x0100, 2])
+        self.assertEqual(sh[end:end + 3], [0x1025, 0xffff, 2])
 
     def test_record_reads_back(self):
         CH = TestShapeIndex.CHAINS

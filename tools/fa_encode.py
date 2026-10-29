@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) in the even pair of a level-1 background directory:
 header, a geometry unit of twelve layer pairs, then the shapes, one per drawn link chain."""
-import os, struct, sys, zlib
+import collections, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
 
@@ -89,7 +89,9 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     out += [0x0800 | sx, 0x2800 | sy | dirbits(0)]
     npts = 1
     for n, (lid, a, b, inner) in enumerate(chain):
-        if level == 1: out += [styles[n], 0x0100, lid] if fresh[n] else [0x0100, lid]
+        # key placeholder: build_record overwrites it once it knows every node's other
+        # occurrences in the record; 0xffff here matches a node with no twin at all
+        if level == 1: out += [styles[n], 0xffff, lid] if fresh[n] else [0xffff, lid]
         else: out += [style_word(None, oneway=dirs[n] != 0), lid] if n == 0 else [lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
@@ -104,7 +106,8 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
                      | (0 if link_end and not chain_end else 0x1000) | (0 if link_end else 0x0800)
                 if link_end and not chain_end: y |= 0x0800
             out += [xf | x, y | dirbits(n)]; npts += 1
-    if level == 1: out += [0x0000]
+    # tail word: the chain's last node's key (build_record fills it in); 0xffff default = no twin
+    if level == 1: out += [0xffff]
     body = [0x8000 | npts] + out
     return [len(body) + 1] + body
 
@@ -117,6 +120,51 @@ def point_words(chain, level=1, styles=None):
         q += 3 if fresh[n] else 2
         for k in range(len(inner) + 1):
             out.append((q, lid, 'end' if k == len(inner) else 'vertex')); q += 2
+    return out
+
+def key_slots(chain, styles=None):
+    """Level-1 only. Per node occurrence in one shape chain: (key slot offset, x-word
+    offset, node index), both relative to the shape's own word 0 (its length word). The
+    key slot is where a ring pointer gets WRITTEN (one per link header, the link's start
+    node, plus one for the chain's last node, landing on the shape's trailer word); the
+    x-word offset is what a pointer TO this occurrence must read (the card points at a
+    node's coordinate pair, not at another node's key slot -- SECTION4-draft.md section 7's
+    worked example, key 02bc -> w722, lands on w722's x word). len(chain)+1 entries, in the
+    order the firmware would read them off the card."""
+    fresh = restyled(styles) if styles else [n == 0 for n in range(len(chain))]
+    q = 9; px = 7; slots = []
+    for n, (lid, a, b, inner) in enumerate(chain):
+        slots.append((q + (1 if fresh[n] else 0), px, a))
+        q += (3 if fresh[n] else 2) + 2 * (len(inner) + 1)
+        px = q - 2   # this link's end point (the next occurrence's x word)
+    slots.append((q, px, chain[-1][2]))
+    return slots
+
+def identical_node_keys(chains, styles, at, order):
+    """{absolute word offset in `unit`: key value} for every node-record key slot across a
+    whole level-1 0x00fa record (measured on factory parcels a40c d03e, a73c d34c, a8ef
+    cd6c: a ring in every case, 222,878 of 222,878 three-member groups and 27,827 of 27,827
+    larger ones checked over two factory tiles). Each occurrence of a node points at the
+    x word of the occurrence just before it in record word order; the first occurrence
+    wraps to the last. 0xffff when a node has no other occurrence in this record (true for
+    every parcel-edge node: the factory links those across the tile boundary into the
+    neighbouring record, which we don't do here). at[i] is each chain's shape offset within
+    `unit`; order is the chain indices in the sequence build_record actually laid them out
+    in (ascending by layer, not by chain index, so it is not the same as sorted(at))."""
+    occ = []   # (slot abs offset, x-word abs offset, node index), true record order
+    for i in order:
+        for slot, xoff, nid in key_slots(chains[i], styles[i] if styles[i] else None):
+            occ.append((at[i] + slot, at[i] + xoff, nid))
+    by_node = collections.defaultdict(list)
+    for k, (_, _, nid) in enumerate(occ):
+        by_node[nid].append(k)
+    out = {}
+    for nid, ks in by_node.items():
+        if len(ks) == 1:
+            out[occ[ks[0]][0]] = 0xffff
+        else:
+            for p, k in enumerate(ks):
+                out[occ[k][0]] = occ[ks[p - 1]][1]   # previous occurrence's x word; p=0 wraps to the last
     return out
 
 def item_words(shape, level=1, name_off=0xffff, country=None):
@@ -168,6 +216,9 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
         if len(unit) % 2: unit.append(0)   # a group of odd word count is padded, as shipped units are
         order += grp
     if len(unit) % 2: unit.append(0)
+    if level == 1:   # identical-node key chain, computed with the whole record in view
+        for off, key in identical_node_keys(chains, styles, at, order).items():
+            unit[off] = key
     per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
     code = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
     nlinks = sum(len(c) for c in chains)
