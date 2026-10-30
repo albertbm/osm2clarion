@@ -70,20 +70,40 @@ def _class_rank(hw):
     return CLASS_RANK.index(base) if base in CLASS_RANK else len(CLASS_RANK)
 
 
-def _leads_to(way, end, idx, visited):
-    """Named roads reached by walking the chain of links onward from one end of `way`."""
+def _reachable(way, point, away):
+    """True if `point` is an end of `way` and it can be driven past that end: away from it
+    (`away=True`, for leads-to) or into it from the other end (`away=False`, for trails-from).
+    A two-way way always qualifies."""
+    d = way.get('dir', 0)
+    if tuple(way['nodes'][0]) == point: return d != (-1 if away else 1)
+    if tuple(way['nodes'][-1]) == point: return d != (1 if away else -1)
+    return False
+
+
+def _chain(way, end, idx, visited, away):
+    """Named roads reached by walking the chain of links from one end of `way`, either
+    onward in its travel direction (`away=True`) or backward against it (`away=False`)."""
     point = tuple(way['nodes'][end])
     visited = visited | {way['id']}
     found = []
     for other in idx.get(point, ()):
-        if other['id'] in visited: continue
+        if other['id'] in visited or not _reachable(other, point, away): continue
         if other['hw'] in LINK:
-            for oi in (0, -1):
-                if tuple(other['nodes'][oi]) == point:
-                    found.extend(_leads_to(other, 0 if oi == -1 else -1, idx, visited))
+            oi = 0 if tuple(other['nodes'][0]) == point else -1
+            found.extend(_chain(other, 0 if oi == -1 else -1, idx, visited, away))
         elif other.get('name'):
             found.append((other['name'], other['hw']))
     return found
+
+
+def _leads_to(way, end, idx, visited):
+    """Named roads reached by walking the chain of links onward from one end of `way`."""
+    return _chain(way, end, idx, visited, away=True)
+
+
+def _trails_from(way, end, idx, visited):
+    """Named roads that could have driven into one end of `way`, walking the link chain back."""
+    return _chain(way, end, idx, visited, away=False)
 
 
 def _pick(candidates):
@@ -104,7 +124,7 @@ def ramp_name(way, idx):
     ends = (-1,) if d == 1 else (0,) if d == -1 else (0, -1)
     name = _pick([c for e in ends for c in _leads_to(way, e, idx, set())])
     if name or d == 0: return name
-    return _pick(_leads_to(way, 0 if ends[0] == -1 else -1, idx, set()))
+    return _pick(_trails_from(way, 0 if ends[0] == -1 else -1, idx, set()))
 
 
 def name_ramps(ways):

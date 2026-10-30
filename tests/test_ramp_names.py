@@ -84,6 +84,40 @@ class TestRampNames(unittest.TestCase):
         osm_roads.name_ramps(ways)
         self.assertIsNone(ways[0]['name'])
 
+    def test_link_entered_against_its_flow_is_not_followed(self):
+        # S flows foo -> P (dir=1); R also ends at P. Driving R to P and on into S would
+        # mean driving S backward, which its oneway forbids, so R must stay unnamed.
+        foo = way(1, 'secondary', [(-2, 0), (-1, 0)], name='Foo')
+        s = way(2, 'secondary_link', [(-1, 0), (0, 0)], dir=1)
+        ramp = way(3, 'primary_link', [(1, 0), (0, 0)], dir=1)
+        ways = [foo, s, ramp]
+        osm_roads.name_ramps(ways)
+        self.assertIsNone(ways[2]['name'])
+
+    def test_named_road_arriving_is_not_taken_as_leads_to(self):
+        # Bar is oneway and terminates at P; R cannot drive away from P onto Bar.
+        bar = way(1, 'primary', [(-1, 0), (0, 0)], name='Bar', dir=1)
+        ramp = way(2, 'secondary_link', [(1, 0), (0, 0)], dir=1)
+        ways = [bar, ramp]
+        osm_roads.name_ramps(ways)
+        self.assertIsNone(ways[1]['name'])
+
+    def test_trails_from_skips_a_oneway_leaving_the_entry(self):
+        # trail's oneway leaves (0, 0), so nothing could have driven from it into the ramp.
+        trail = way(1, 'residential', [(0, 0), (-1, 0)], name='Leaving', dir=1)
+        ramp = way(2, 'tertiary_link', [(0, 0), (1, 0)], dir=1)
+        ways = [trail, ramp]
+        osm_roads.name_ramps(ways)
+        self.assertIsNone(ways[1]['name'])
+
+    def test_trails_from_takes_a_oneway_arriving_at_the_entry(self):
+        # trail's oneway arrives at (0, 0), so it could have driven straight into the ramp.
+        trail = way(1, 'residential', [(-1, 0), (0, 0)], name='Arriving', dir=1)
+        ramp = way(2, 'tertiary_link', [(0, 0), (1, 0)], dir=1)
+        ways = [trail, ramp]
+        osm_roads.name_ramps(ways)
+        self.assertEqual(ways[1]['name'], 'Arriving')
+
     def test_a_loop_does_not_hang(self):
         a = way(1, 'motorway_link', [(0, 0), (1, 0)], dir=0)
         b = way(2, 'motorway_link', [(1, 0), (0, 0)], dir=0)
