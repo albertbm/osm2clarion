@@ -1,7 +1,7 @@
 # Tests
 
 ```
-python3 -m unittest discover -s tests          # both files
+python3 -m unittest discover -s tests          # all files
 python3 -m unittest discover -s tests -v       # case by case
 ```
 
@@ -33,6 +33,15 @@ It checks that decode(encode(x)) gives x back, and that the bytes in between mat
 Seven cases need `shapely`, and skip without it. Six compare `bg_encode`, which cannot be
 imported without shapely, against the two local copies of its record and directory builders
 that the other cases use. If those drift apart, those six fail.
+
+## test_signposts.py
+
+Section 4 signposts: `sec4_write.encode` against the record layout in SECTION4-draft.md, the
+G words `fa_encode.shape_words` puts in a node record, a synthetic parcel with a ramp built
+the way `rd_build.py --signposts` builds it and checked by `sec4_check.py`, and the
+country-only record staying the 56-byte form. Three cases decode factory records and write
+them back byte for byte; they need `OSM2CLARION_FACTORY_TILE` pointing at a tile with a
+section 4 (`B48R060R.DAT`, 6,810 records) and skip without it.
 
 ## test_reproduce.py
 

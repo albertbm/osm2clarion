@@ -243,7 +243,12 @@ The x word carries four flags, not three:
 | `0x0800` | this point does not end a link |
 
 A link end inside the chain clears `0x1000` and carries `0x0800` on its y instead; the
-shape's last point keeps `0x1000` and a plain y. Counted over every level-1 shape of the
+shape's last point keeps `0x1000` and a plain y. The y flags announce the node record that
+follows a start point or a link end: `0x2000` a style word, `0x1000` a guidance word G after
+the key, `0x0800` the record itself (`[style] key [G] id`). The last point's node record is
+the trailer: its key, then G when its y carries `0x1000`. G is the link-word index of the
+node's sub-record in the parcel's section-4 record; `rd_build.py --signposts` writes it and
+`sec4_check.py` walks both ways (SECTION4-draft.md in leaf-is-map has the measurements). Counted over every level-1 shape of the
 Tromso tile `B68R058R.DAT`, 7,520 shapes, `0x0800` is set on 7,520 start, 7,373 first-of-link
 and 15,797 inner points, and clear on 5,818 link ends and 7,520 last points, with no
 exceptions. The German tile `B48R060R.DAT`, 1,344,744 shapes, agrees to within 0.1%, and
