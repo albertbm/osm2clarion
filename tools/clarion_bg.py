@@ -69,7 +69,10 @@ def parse_shapes(d, p, kind, n):
     for _ in range(n):
         if kind == 0:
             typ, ref, x, y = struct.unpack_from('>HHHH', d, p); p += 8
-            shapes.append(dict(type=typ, ref=ref, pts=[(x, y)]))
+            s = dict(type=typ, ref=ref, pts=[(x, y & 0x7fff)])
+            if y & 0x8000:   # bit 15 of y: a halfword index into the record's point side section follows
+                s['idx'] = struct.unpack_from('>H', d, p)[0]; p += 2
+            shapes.append(s)
         else:
             cnt, typ, ref, x, y = struct.unpack_from('>HHHHH', d, p); p += 10
             pts = [(x, y)]
@@ -80,15 +83,16 @@ def parse_shapes(d, p, kind, n):
     return p, shapes
 
 def parse_group(d, p, end):
-    """A layer: sub-group count, header word count, then per sub-group a kind byte, count
-    byte and (all but the last) the word offset where it ends; extras kept as 'more'."""
+    """A layer: sub-group count, header word count, then per sub-group a header word (kind
+    in the top two bits, count in the rest: a level-2 point group runs past 255) and (all but
+    the last) the word offset where it ends; extras kept as 'more'."""
     start = p
     nsub, hw = struct.unpack_from('>HH', d, p)
     if nsub == 0 or nsub > 8 or hw != 2 + 2 * nsub - 1:
         return dict(raw=d[p:end])
     q = p + 4; subs = []
     for i in range(nsub):
-        kind, n = d[q], d[q+1]; q += 2
+        kind, n = d[q] & 0xc0, struct.unpack_from('>H', d, q)[0] & 0x3fff; q += 2
         stop = None
         if i < nsub - 1: stop = start + 2 * struct.unpack_from('>H', d, q)[0]; q += 2
         subs.append((kind, n, stop))
@@ -98,7 +102,7 @@ def parse_group(d, p, end):
             q, shapes = parse_shapes(d, q, kind, n)
             if stop is not None and q != stop: return dict(raw=d[start:end], note='sub-group length mismatch')
             parsed.append(dict(kind=kind, shapes=shapes))
-    except struct.error:
+    except (struct.error, IndexError):
         return dict(raw=d[start:end], note='truncated')
     pad = d[q:end]
     if len(pad) >= 4 or any(pad):
@@ -112,7 +116,10 @@ def build_shapes(kind, shapes):
     for s in shapes:
         pts = s['pts']
         if kind == 0:
-            out += struct.pack('>HHHH', s['type'], s['ref'], pts[0][0], pts[0][1])
+            if 'idx' in s:
+                out += struct.pack('>HHHHH', s['type'], s['ref'], pts[0][0], 0x8000 | pts[0][1], s['idx'])
+            else:
+                out += struct.pack('>HHHH', s['type'], s['ref'], pts[0][0], pts[0][1])
         else:
             out += struct.pack('>HHHHH', len(pts), s['type'], s['ref'], pts[0][0], pts[0][1])
             for (x0, y0), (x1, y1) in zip(pts, pts[1:]):
@@ -129,7 +136,8 @@ def build_group(g):
     out = bytearray(struct.pack('>HH', len(subs), hw))
     pos = 2 * hw
     for i, (s, body) in enumerate(zip(subs, bodies)):
-        out += bytes([s['kind'], len(s['shapes'])])
+        assert len(s['shapes']) < 0x4000
+        out += struct.pack('>H', s['kind'] << 8 | len(s['shapes']))
         pos += len(body)
         if i < len(subs) - 1: out += struct.pack('>H', pos // 2)
     for body in bodies: out += body
