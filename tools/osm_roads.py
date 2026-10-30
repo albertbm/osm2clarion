@@ -77,7 +77,8 @@ def _reachable(way, point, away):
     d = way.get('dir', 0)
     if tuple(way['nodes'][0]) == point: return d != (-1 if away else 1)
     if tuple(way['nodes'][-1]) == point: return d != (1 if away else -1)
-    return False
+    # OSM often leaves a road unsplit where a ramp joins; it runs both into and out of an interior node
+    return point in map(tuple, way['nodes'])
 
 
 def _chain(way, end, idx, visited, away):
@@ -89,8 +90,12 @@ def _chain(way, end, idx, visited, away):
     for other in idx.get(point, ()):
         if other['id'] in visited or not _reachable(other, point, away): continue
         if other['hw'] in LINK:
-            oi = 0 if tuple(other['nodes'][0]) == point else -1
-            found.extend(_chain(other, 0 if oi == -1 else -1, idx, visited, away))
+            if tuple(other['nodes'][0]) == point: nxt = (-1,)
+            elif tuple(other['nodes'][-1]) == point: nxt = (0,)
+            else:
+                d = other.get('dir', 0)
+                nxt = (0, -1) if d == 0 else (-1,) if (d == 1) == away else (0,)
+            for e in nxt: found.extend(_chain(other, e, idx, visited, away))
         elif other.get('name'):
             found.append((other['name'], other['hw']))
     return found

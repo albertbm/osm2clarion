@@ -126,6 +126,21 @@ class TestRampNames(unittest.TestCase):
         self.assertIsNone(ways[0]['name'])
         self.assertIsNone(ways[1]['name'])
 
+    def test_road_unsplit_at_the_merge_node_is_taken(self):
+        ramp = way(1, 'trunk_link', [(0, 0), (1, 0)], dir=1)
+        road = way(2, 'trunk', [(1, -1), (1, 0), (1, 1)], name='Reykjanesbraut', dir=1)
+        ways = [ramp, road]
+        osm_roads.name_ramps(ways)
+        self.assertEqual(ways[0]['name'], 'Reykjanesbraut')
+
+    def test_link_unsplit_at_the_merge_node_is_followed(self):
+        ramp = way(1, 'trunk_link', [(0, 0), (1, 0)], dir=1)
+        feeder = way(2, 'trunk_link', [(1, -1), (1, 0), (1, 1)], dir=1)
+        road = way(3, 'trunk', [(1, 1), (1, 2)], name='Sæbraut', dir=1)
+        ways = [ramp, feeder, road]
+        osm_roads.name_ramps(ways)
+        self.assertEqual(ways[0]['name'], 'Sæbraut')
+
 
 if __name__ == '__main__':
     unittest.main()
