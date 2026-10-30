@@ -46,9 +46,13 @@ section 4 (`B48R060R.DAT`, 6,810 records) and skip without it.
 ## test_pois.py
 
 Facility icons and POINT search records. The in-code cases check the position words (x
-first), the mixed 8/10-byte layer-25 group with its side section, the slot-15 nearby tree,
-`extract_pois` tag rules and `poi_point.merge` on a POINT file built in the test (nothing
-added gives the file back). Six cases compare against factory data and skip without it:
+first), the mixed 8/10-byte layer-25 group with its side section and `clarion_bg.add_point`
+(a dealer or camera point joining the icons), the slot-15 nearby tree, the SUB-CATEGORY entry
+layout, the within-key record order, name collation (upper-cased, Þ and Ð sorted by their
+folding), the factory's key cutting (`word_keys`), `extract_pois` tag rules and dedupe,
+`poi_point.merge` on a POINT file built in the test (nothing added gives the file back; the
++0x3c hint guard trips on a third ref) and `poi_check` on that output, including a cleared
+slot 279. Eight cases compare against factory data and skip without it:
 
 ```
 OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_FACTORY_POINT=POINT018.DAT python3 -m unittest tests.test_pois
@@ -57,8 +61,11 @@ OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_FACTORY_POINT=POINT018.DAT pyt
 The tile is read one record at a time (never `read_tile`); POINT018.DAT is REFER001's
 Luxembourg file, inflated. Checked there: every data and name record rebuilds byte for byte,
 Luxembourg's towns land on their centres only with x read first, all 56 nearby category
-blocks rebuild byte for byte, and the level-1 and level-2 records over Luxembourg Gare (178
-and 553 points, 166 and 521 with side entries) parse and rebuild byte for byte.
+blocks rebuild byte for byte, the whole slot-279 SUB-CATEGORY region (table, 42 tries, 42
+record runs, 712,192 bytes) rebuilds byte for byte from the main keys, the same within-key
+order gives 52 of the 56 CATEGORY record runs (main order 35), and the level-1 and level-2
+records over Luxembourg Gare (178 and 553 points, 166 and 521 with side entries) parse and
+rebuild byte for byte.
 
 ## test_reproduce.py
 

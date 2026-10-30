@@ -336,6 +336,24 @@ class TestPoiPoint(unittest.TestCase):
         keys = point_io.trie_keys(out, table[1]['trie_at'], 12, 1)
         self.assertEqual([k for k, s, n in keys], [b'FRAKKAR', b'THRIR FRAKKAR'], 'one-byte key units, the fold applied')
         self.assertEqual({point_io.parse_data_record(out[table[1]['rec_at'] + 40 * i:][:40])['name_idx'] for i in range(2)}, {4})
+        import poi_check
+        problems, stats = [], {}
+        poi_check.check_point(out, self.FOLD, problems, stats)
+        self.assertEqual(problems, [])
+        self.assertEqual((stats['facilities'], stats['slot 278 entries'], stats['slot 279 entries']), (3, 3, 2))
+
+    def test_sub_category_frame_missing_is_reported(self):
+        out, _cats = poi_point.merge(self.base_file(), [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD)
+        import poi_check
+        problems = []
+        poi_check.check_point(out, self.FOLD, problems, {})
+        self.assertEqual(problems, [])
+        broken = bytearray(out)
+        struct.pack_into('>IH', broken, 0x800 + 6 * 279, 0xffffffff, 0)
+        problems = []
+        poi_check.check_point(bytes(broken), self.FOLD, problems, {})
+        self.assertTrue(any(p.startswith('slot 279:') for p in problems), problems)
+
     def test_hint_guard(self):
         """A facility record with a third ref would raise the +0x3c hint merge does not recompute."""
         d = self.base_file()
@@ -507,6 +525,22 @@ class TestAddPoint(unittest.TestCase):
         rec['layers'][25] = dict(raw=b'\0' * 8)
         with self.assertRaises(AssertionError):
             clarion_bg.add_point(rec, 0x806c, 1, 1)
+
+
+class TestPoiCheck(unittest.TestCase):
+    def test_parcel_arithmetic_agrees_with_the_writer(self):
+        import poi_check
+        for level, rows, cols in ((1, range(2800, 3300, 37), range(28000, 29000, 53)), (2, range(700, 820, 7), range(7000, 7250, 11))):
+            for row in rows:
+                for col in cols:
+                    self.assertEqual(poi_check.rowcol(level, *clarion_bg.parcel_code(level, row, col)), (row, col))
+        self.assertEqual(poi_check.tile_box('B48R060R'), (48.0, 160 / 3, 4, 12))
+        self.assertEqual(poi_check.tile_box('B60R080R'), (64.0, 208 / 3, -28, -20))
+
+    def test_folded_words(self):
+        import poi_check
+        self.assertEqual(poi_check.folded_words("PLACE D'ARMES", None), ("PLACE D'ARMES", [0, 6, 8]))
+        self.assertEqual(poi_check.folded_words('Þrír Frakkar', TestPoiPoint.FOLD), ('THRIR FRAKKAR', [0, 6]))
 
 
 if __name__ == '__main__':
