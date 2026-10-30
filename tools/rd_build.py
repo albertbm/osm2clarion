@@ -296,10 +296,13 @@ def find_signposts(L, nodes, idx, groups, signs, upper=False):
     out = []
     for k, l in enumerate(L):
         if not l[5].endswith('_link') or not signs.get(l[3]): continue
+        text = sec4_write.sign_text(signs[l[3]], upper)
+        if text is None: continue   # blank destination tags name nothing; skip at the source
         a, b = idx[l[0]], idx[l[1]]
         if l[10] > 0: J, fwd = a, True
         elif l[10] < 0: J, fwd = b, False
         else:   # a two-way ramp: the end that meets a road, when only one does
+            if pos[k][1] != 0: continue   # not the chain's first link: its far end is the merge, not a departure
             ends = [(n, f) for n, f in ((a, True), (b, False)) if roads_at(n, k)]
             if len(ends) != 1: continue
             J, fwd = ends[0]
@@ -316,8 +319,7 @@ def find_signposts(L, nodes, idx, groups, signs, upper=False):
         _, kk, into_fwd = best
         ie, ne = pos[k]; ia, na = pos[kk]
         out.append(dict(exit=(ie, ne if fwd else ne + 1), approach=(ia, na if into_fwd else na + 1),
-                        bits=sec4_write.APPROACH_FWD if into_fwd else sec4_write.APPROACH_BWD,
-                        text=sec4_write.sign_text(signs[l[3]], upper)))
+                        bits=sec4_write.APPROACH_FWD if into_fwd else sec4_write.APPROACH_BWD, text=text))
     return out
 
 def signpost_subs(found, occ_words):

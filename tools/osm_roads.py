@@ -55,18 +55,28 @@ def dest_tags(t):
     return d or None
 
 
+def _travel_start(w):
+    """The node a way departs from in its travel direction (reversed for oneway=-1)."""
+    return tuple(w['nodes'][-1] if w.get('dir', 0) == -1 else w['nodes'][0])
+
+
+def _travel_end(w):
+    """The node a way arrives at in its travel direction (reversed for oneway=-1)."""
+    return tuple(w['nodes'][0] if w.get('dir', 0) == -1 else w['nodes'][-1])
+
+
 def inherit_dest(ways):
     """Give an untagged link way the destination of the one tagged link way it feeds into,
     walking back along link-only chains up to four hops, so the sign stands where the ramp
     leaves the road rather than at a split further down. Returns how many ways gained one."""
     at_end = {}
     for w in ways:
-        if w['hw'].endswith('_link'): at_end.setdefault(tuple(w['nodes'][-1]), []).append(w)
+        if w['hw'].endswith('_link'): at_end.setdefault(_travel_end(w), []).append(w)
     gained = 0
     for w in [w for w in ways if w['hw'].endswith('_link') and w.get('dest')]:
         cur = w
         for _ in range(4):
-            feeders = [f for f in at_end.get(tuple(cur['nodes'][0]), []) if f is not cur]
+            feeders = [f for f in at_end.get(_travel_start(cur), []) if f is not cur]
             if len(feeders) != 1 or feeders[0].get('dest') or feeders[0].get('dir', 0) < 0: break
             feeders[0]['dest'] = w['dest']; gained += 1; cur = feeders[0]
     return gained

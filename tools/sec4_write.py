@@ -38,7 +38,7 @@ TEMPLATE = bytes.fromhex(
 DIR_KIND, DIR_TYPE, SLOTS, PAIRS = 0x1046, 0x93, 32, 32
 ABSENT = struct.pack('>II', 0x7fffffff, 0x7fffffff)   # factory fill, not ffffffff
 FIRST_L = 11          # the first sub-record's link word
-GROUP_HDR = 0x14      # group header high byte: the factory mode (986 of 8,045 groups on B48R060R), meaning open
+GROUP_HDR = 0x14      # group header high byte: one of 14 near-equal values on B48R060R (1,669-2,122 each); meaning unsettled
 FLAG = 0x0140         # the (flag, ref) flag of a one-link approach: 6,692 of 6,692 single-pair entries
 APPROACH_FWD = 0x0800  # dir bits 11-10: the approach travels the link string in storage order (ref before the node)
 APPROACH_BWD = 0x0400  # against storage order (ref after the node); 13,284 of 13,286 factory entries fit
@@ -267,6 +267,7 @@ def load_signs(path):
         subs = P['subs']
         for s in subs:
             for g in s.get('groups', ()):
+                g['entries'] = [e for e in g['entries'] if e['text'] is not None]   # a blank sign names nothing
                 for e in g['entries']:
                     e['pairs'] = [tuple(p) for p in e['pairs']]
                     e['text'] = e['text'].encode('utf-8')

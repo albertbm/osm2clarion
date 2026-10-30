@@ -8,12 +8,12 @@ road-shape record, and the offsets that tie the two together.
 The factory cases need a tile with section 4; set OSM2CLARION_FACTORY_TILE to one (B48R060R.DAT
 is the one the spec was measured on) or they skip. Nothing from it is written anywhere.
 """
-import os, struct, sys, unittest, zlib
+import json, os, struct, sys, tempfile, unittest, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-import fa_encode, sec4_write, sec4_check, rd_build
+import fa_encode, sec4_write, sec4_check, rd_build, osm_roads
 
 TILE_ENV = 'OSM2CLARION_FACTORY_TILE'
 
@@ -70,6 +70,36 @@ class TestRecordLayout(unittest.TestCase):
         self.assertEqual(f({'junction:ref': '23', 'destination': 'Vík'}), '0=Vík;4=23')
         self.assertEqual(f({'destination': 'a;b;c;d;e;f;g;h'}), '0=a\x1fb\x1fc\x1fd\x1fe\x1ff', 'six names at most')
         self.assertIsNone(f({'destination': ' ; '}))
+
+    def test_load_signs_drops_a_null_text_entry(self):
+        # an older sidecar can still hold a blank sign written before rd_build skipped them
+        side = dict(cell='x', country=352, parcels=[dict(y=0, x=0, row=0, col=0, subs=[
+            dict(key=1, groups=[dict(hdr=sec4_write.GROUP_HDR,
+                                      entries=[dict(dir=0x2800, pairs=[[0x0140, 5]], text=None)])])])])
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(side, f); path = f.name
+        try:
+            _, out = sec4_write.load_signs(path)
+            self.assertEqual(out[(0, 0)][(0, 0)][0]['groups'][0]['entries'], [])
+        finally:
+            os.unlink(path)
+
+
+class TestInheritDest(unittest.TestCase):
+    """osm_roads.inherit_dest: a feeder joins its dest-tagged link at the right travel end."""
+
+    def way(self, id, nodes, dir=0, dest=None):
+        w = dict(id=id, hw='motorway_link', dir=dir, nodes=nodes)
+        if dest: w['dest'] = dest
+        return w
+
+    def test_oneway_minus_one_looks_up_its_travel_start_not_nodes_zero(self):
+        # tagged travels (20,0) -> (10,0) since dir=-1; feeder arrives at (20,0), its travel start
+        tagged = self.way(1, [(10, 0), (20, 0)], dir=-1, dest={'destination': 'Akureyri'})
+        feeder = self.way(2, [(30, 0), (20, 0)], dir=1)
+        ways = [tagged, feeder]
+        self.assertEqual(osm_roads.inherit_dest(ways), 1)
+        self.assertEqual(feeder['dest'], tagged['dest'])
 
 
 class TestFactoryRoundTrip(unittest.TestCase):
@@ -243,6 +273,21 @@ class TestParcelInvariants(unittest.TestCase):
         self.assertEqual(sec4_check.check_pair(fa, s4), [])
         self.assertEqual(sec4_check.check_pair(fa, s4, subs), [])
 
+    def test_two_way_ramp_of_two_links_signs_only_the_entrance(self):
+        # Way 20 is split into two links by node M. L1 leaves Grove; L2's far end only
+        # reaches Vesturlandsvegur, the road the ramp is signed for, and must stay unsigned.
+        nodes = [(-1000, 1000), (0, 1000), (500, 1000), (1000, 1000), (1500, 1000)]
+        idx = {n: i for i, n in enumerate(nodes)}
+        L = [(nodes[0], nodes[1], 1000, 1, 'Grove', 'secondary', None, None, [], 10, 0),
+             (nodes[1], nodes[2], 500, 20, None, 'trunk_link', None, None, [], 11, 0),
+             (nodes[2], nodes[3], 500, 20, None, 'trunk_link', None, None, [], 11, 0),
+             (nodes[3], nodes[4], 500, 2, 'Vesturlandsvegur', 'trunk', None, None, [], 12, 0)]
+        groups = rd_build.link_groups(L, True)
+        found = rd_build.find_signposts(L, nodes, idx, groups, {20: {'destination': 'Vesturlandsvegur'}}, upper=True)
+        self.assertEqual(len(found), 1)
+        self.assertEqual(found[0]['exit'], (1, 0), 'signed where the ramp leaves Grove')
+        self.assertEqual(found[0]['approach'], (0, 0), 'the approach is Grove, not the ramp\'s own destination road')
+
     def test_rings_survive_the_g_words(self):
         _, _, fa, _ = self.build({20: {'destination': 'Akranes'}})
         S = fa_encode.link_strings(fa)
@@ -266,6 +311,12 @@ class TestParcelInvariants(unittest.TestCase):
         struct.pack_into('>H', w, 2 * (off + 3), 99)   # the G word of a node with a style word
         probs = sec4_check.check_pair(bytes(w), s4)
         self.assertTrue(probs)
+
+    def test_blank_destination_tags_produce_no_sign(self):
+        # a destination tag that trims to nothing must never reach a sub-record as a null
+        nodes, idx, L, groups, chains = self.parcel()
+        found = rd_build.find_signposts(L, nodes, idx, groups, {20: {'destination': ' ; '}}, upper=True)
+        self.assertEqual(found, [])
 
     def test_without_signs_the_record_is_unchanged(self):
         nodes, idx, L, groups, chains = self.parcel()
