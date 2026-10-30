@@ -13,7 +13,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-import fa_encode, sec4_write, sec4_check, rd_build, osm_roads
+import clarion_profile, fa_encode, sec4_write, sec4_check, rd_build, osm_roads
 
 TILE_ENV = 'OSM2CLARION_FACTORY_TILE'
 
@@ -100,6 +100,29 @@ class TestInheritDest(unittest.TestCase):
         ways = [tagged, feeder]
         self.assertEqual(osm_roads.inherit_dest(ways), 1)
         self.assertEqual(feeder['dest'], tagged['dest'])
+
+
+class TestInteriorNodeMerge(unittest.TestCase):
+    """rd_build.build_graphs splits a road at a ramp's merge node on its own node-sharing
+    count, even when OSM never split the road's own way there. So find_signposts, which
+    runs after that split, does not need the ramp-names fix for unsplit roads (c6c61f9)."""
+
+    def setUp(self):
+        rd_build.use_profile(clarion_profile.load(str(ROOT / 'profiles' / 'iceland.toml')))
+
+    def test_road_splits_at_the_ramps_interior_node(self):
+        road = dict(id=1, hw='trunk', name='MAIN', ref=None, dir=0,
+                    nodes=[(-21.902, 64.130), (-21.900, 64.130), (-21.898, 64.130)])
+        ramp = dict(id=2, hw='trunk_link', ref=None, dir=1, dest={'destination': 'Test'},
+                    nodes=[(-21.900, 64.130), (-21.900, 64.132)])
+        parcels = rd_build.build_graphs([road, ramp], 'B60R080R', 1, True)
+        P = next(p for p in parcels.values() if not p['ring'])
+        road_links = [l for l in P['links'] if l[3] == 1]
+        self.assertEqual(len(road_links), 2, 'one OSM way, unsplit, becomes two links either side of the merge')
+        groups = rd_build.link_groups(P['links'], True)
+        found = rd_build.find_signposts(P['links'], list(P['order']), P['index'], groups,
+                                        {2: ramp['dest']}, upper=True)
+        self.assertEqual(len(found), 1, 'the ramp is still signed off the road that OSM left unsplit')
 
 
 class TestFactoryRoundTrip(unittest.TestCase):
