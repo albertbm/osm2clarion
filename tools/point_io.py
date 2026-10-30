@@ -117,24 +117,36 @@ class Point:
 
 
 def data_record(levels, nlevel, name_idx, category, subcategory=0xffff,
-                lat=0, lon=0, ilat=0, ilon=0, lang=LANG_LOCAL,
+                lat=0, lon=0, x=0, y=0, lang=LANG_LOCAL,
                 flags=0x0000, data_id=0xffffffff):
-    """One 40-byte POINT data record; levels is the area ladder, country first, padded to nlevel with 0xffff."""
+    """One 40-byte POINT data record; levels is the area ladder, country first, padded to
+    nlevel with 0xffff; lat, lon the level-1 parcel code and x, y the position in it, in
+    2048ths of the parcel, written x first as 0x800 | x (POINT018: CARLTON 09c9 06ed)."""
     assert len(levels) == nlevel, (levels, nlevel)
+    assert 0 <= x < 0x800 and 0 <= y < 0x800, (x, y)
     lv = tuple(levels) + (0xffff,) * (6 - nlevel)
     return (struct.pack('>6H', *lv)
             + struct.pack('>HHH', flags, category, subcategory)
-            + struct.pack('>HHHH', lat, lon, ilat, ilon)
+            + struct.pack('>HHHH', lat, lon, 0x800 | x, y)
             + struct.pack('>HH', lang << 8, 0)
             + struct.pack('>HI', name_idx, data_id)
             + b'\0\0\0\0')
 
 
+def parse_data_record(r):
+    """The fields of one data record, named as data_record takes them."""
+    w = struct.unpack('>20H', r)
+    return dict(levels=w[:6], flags=w[6], category=w[7], subcategory=w[8], lat=w[9], lon=w[10],
+                x=w[11] & 0x7ff, y=w[12], lang=w[13] >> 8, name_idx=w[15], data_id=w[16] << 16 | w[17])
+
+
 def name_record(name, levels, nlevel, category, subcategory=0xffff,
-                lat=0, lon=0, ilat=0, ilon=0, glat=None, glon=None,
+                lat=0, lon=0, x=0, y=0, glat=None, glon=None,
                 address=b'', house='', items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
                 tel_idx=None, flags=0x0c):
-    """One POINT name record; the display and address names share one field, separated by '@'."""
+    """One POINT name record; the display and address names share one field, separated by '@'.
+    lat, lon, x, y as in data_record."""
+    assert 0 <= x < 0x800 and 0 <= y < 0x800, (x, y)
     nm = name.encode('utf-8') if isinstance(name, str) else name
     nm += b'\0' * (-len(nm) % 2)
     ad = address.encode('utf-8') if isinstance(address, str) else address
@@ -143,7 +155,7 @@ def name_record(name, levels, nlevel, category, subcategory=0xffff,
         ad += b'\0' * (-len(ad) % 2)
     ref = b''.join(struct.pack('>BBH', *r) for r in refs)
     t = (0, tel_idx) if tel_idx is not None else (0xffff, 0xffff)
-    body = (struct.pack('>HHHH', lat, lon, ilat, ilon)
+    body = (struct.pack('>HHHH', lat, lon, 0x800 | x, y)
             + bytes([(4 + len(ref)) // 2, len(items) // 2])
             + struct.pack('>HH', glat if glat is not None else lat,
                           glon if glon is not None else lon)
@@ -157,6 +169,33 @@ def name_record(name, levels, nlevel, category, subcategory=0xffff,
     total = 2 + len(body)
     assert total % 2 == 0 and total // 2 < 0x800, (name, total)
     return struct.pack('>H', flags << 11 | total // 2) + body
+
+
+def parse_name_record(nr):
+    """The fields of one name record, named as name_record takes them, so that
+    name_record(**parse_name_record(nr)) == nr."""
+    lat, lon, xw, y = struct.unpack_from('>HHHH', nr, 2)
+    nref = (nr[10] * 2 - 4) // 4
+    glat, glon = struct.unpack_from('>HH', nr, 12)
+    refs = tuple(struct.unpack_from('>BBH', nr, 16 + 4 * i) for i in range(nref))
+    o = 16 + 4 * nref
+    items = nr[o:o + nr[11] * 2]
+    o += nr[11] * 2
+    t0, t1 = struct.unpack_from('>HH', nr, o)
+    o += 4
+    nlevel, nmlen, adlen = nr[o], nr[o + 4], nr[o + 5]
+    o += 8
+    levels = struct.unpack_from('>%dH' % nlevel, nr, o)
+    o += 2 * nlevel
+    category, subcategory = struct.unpack_from('>HH', nr, o)
+    o += 4
+    name = nr[o:o + 2 * nmlen].rstrip(b'\0').decode('utf-8')
+    o += 2 * nmlen
+    ad = nr[o:o + 2 * adlen].rstrip(b'\0').decode('utf-8')
+    house, address = ad.split('@', 1) if '@' in ad else ('', ad)
+    return dict(name=name, levels=levels, nlevel=nlevel, category=category, subcategory=subcategory,
+                lat=lat, lon=lon, x=xw & 0x7ff, y=y, glat=glat, glon=glon, address=address, house=house,
+                items=items, refs=refs, tel_idx=None if t0 == 0xffff else t1, flags=nr[0] >> 3)
 
 
 def tel_record(text, flags=0x00):
