@@ -2,6 +2,7 @@
 """Read and write POINT<nnn>.DAT, the Clarion place-name search family: the same letter
 trie and container as ADDRE, over settlement and facility names rather than streets."""
 import struct
+import unicodedata
 import zlib
 
 from addre_io import ALIGN, addr, build_trie, deflate_block, unaddr
@@ -336,30 +337,119 @@ def category_entry(ordinal, area, code, trie_at, nodew, first, rec_at, nrec, las
     return bytes(e)
 
 
-def nearby_frame(la, lo, items):
-    """The slot-15 block for a category whose records all sit in one level-1 parcel (la, lo):
-    three narrowing levels, then a leaf of 16-byte items, one per name."""
-    def level(nxt, la_, lo_, tail, words=0xd):
-        # word 3 is the halfword count of what the level points at: 8 per entry plus 5
-        b = bytearray(ALIGN)
-        struct.pack_into('>8H', b, 0, 8, 0, nxt, words, la_, lo_, 0, 0)
-        b[16:16 + len(tail)] = tail
-        return bytes(b)
-    leaf = bytearray()
-    for name_idx, cat, ilat, ilon, lang in sorted(items, key=lambda t: (t[3] & 0x7ff, t[2] & 0x7ff, t[0])):
-        # the category goes in as BCD: 24 reads 0x0024, 71 0x0071
-        leaf += struct.pack('>8H', 8, 0, name_idx, 0, 0, int(str(cat), 16),
-                            (lang >> 5) << 15 | ilat & 0x7fff, (lang & 0x1f) << 11 | ilon & 0x7ff)
-    leaf += bytes.fromhex('0005ffffffff00000100000000000000')
-    leaf += b'\0' * (-len(leaf) % ALIGN)
-    return (level(0x80, la & 0xff00, lo & 0xff00, bytes.fromhex('0005ffffffffffffffff'))
-            + level(0x100, la & 0xfff0, lo & 0xfff0, bytes.fromhex('0005ffffffff0000'))
-            + level(0x180, la, lo, bytes.fromhex('0005ffffffff000000800000'), 8 * len(items) + 5)
-            + bytes(leaf))
+L1_MASK, L2_MASK = 0xff80, 0xfff0   # how the first two tree levels coarsen a parcel code
 
 
-def category_frames(at, area, cats):
-    """Bytes and slot 15 / slot 278 table values for a set of categories, each in one parcel."""
+def _bcd(n):
+    return int(str(n), 16)
+
+
+def collate(name):
+    """The order a nearby leaf sorts names in: letter by letter, an accented letter right
+    after its base letter (NÁRODNÉ before NEMZETI, LÜKSEMBURG after LUXENBORG)."""
+    return tuple((c[0], c[1:]) for c in (unicodedata.normalize('NFD', ch) for ch in name))
+
+
+def nearby_frame(items, sub=False):
+    """The slot-15 block of one category: a tree over the records' level-1 parcel codes,
+    three narrowing levels keyed (la & 0xff80, lo & 0xff80), (la & 0xfff0, lo & 0xfff0) and
+    (la, lo), then a leaf of 16-byte items per parcel. A category with a sub-category list
+    (sub=True: hotels, restaurants, petrol) has one more level under each parcel, a single
+    entry keyed (0, category), and its items carry the sub-category where the others carry
+    the category. Blocks are laid out depth first, each 256-aligned; an entry points at its
+    child block in halfwords from the frame start (u32: restaurants pass 64K words) and
+    carries that block's content size, 8 words per entry plus the 5-word terminator, whose
+    u32 tail points back at the parent. A leaf is sorted by code, y, x, then the name
+    (collate) and language. items: [(name_idx, cat, sub, la, lo, xw, y, lang, name)] with
+    xw the 0x800 | x word. Reproduces all 56 category blocks of POINT018 byte for byte."""
+    tree = {}
+    for it in items:
+        la, lo = it[3], it[4]
+        assert len(it) == 9, it
+        tree.setdefault((la & L1_MASK, lo & L1_MASK), {}).setdefault(
+            (la & L2_MASK, lo & L2_MASK), {}).setdefault((la, lo), []).append(it)
+    blocks = []     # [entries, parent block index or None]
+
+    def add(keys, parent):
+        blocks.append([[[la, lo] for la, lo in keys], parent])
+        return len(blocks) - 1
+
+    def leaf(group, parent):
+        # the code goes in as BCD: category 24 reads 0x0024, cuisine 907 0x0907
+        rows = sorted((_bcd(sb if sb != 0xffff else cat), y & 0x7ff, xw & 0x7ff, collate(name), lang, name_idx, xw)
+                      for name_idx, cat, sb, la, lo, xw, y, lang, name in group)
+        blocks.append([[struct.pack('>HIHHHHH', 8, n, 0, 0, code, (lang >> 5) << 15 | xw & 0x7fff, (lang & 0x1f) << 11 | y)
+                        for code, y, x, name, lang, n, xw in rows], parent])
+        return len(blocks) - 1
+
+    l1 = add(sorted(tree), None)
+    for e1, k1 in zip(blocks[l1][0], sorted(tree)):
+        l2 = add(sorted(tree[k1]), l1)
+        e1.append(l2)
+        for e2, k2 in zip(blocks[l2][0], sorted(tree[k1])):
+            l3 = add(sorted(tree[k1][k2]), l2)
+            e2.append(l3)
+            for e3, k3 in zip(blocks[l3][0], sorted(tree[k1][k2])):
+                group = tree[k1][k2][k3]
+                if sub:
+                    l4 = add([(0, group[0][1])], l3)
+                    blocks[l4][0][0].append(leaf(group, l4))
+                    e3.append(l4)
+                else:
+                    e3.append(leaf(group, l3))
+    at, pos = [], 0
+    for entries, parent in blocks:
+        at.append(pos)
+        n = 16 * len(entries) + 10
+        pos += n + (-n) % ALIGN
+    out = bytearray()
+    for entries, parent in blocks:
+        for e in entries:
+            if isinstance(e, list):      # a key entry: child pointer and the child's content size
+                la, lo, child = e
+                out += struct.pack('>HIHHHHH', 8, at[child] // 2, 8 * len(blocks[child][0]) + 5, la, lo, 0, 0)
+            else:
+                out += e
+        out += struct.pack('>HHHI', 5, 0xffff, 0xffff, 0xffffffff if parent is None else at[parent] // 2)
+        out += b'\0' * (-len(out) % ALIGN)
+    return bytes(out)
+
+
+def parse_nearby(d, base, nl1, names=()):
+    """(items, sub) back out of a nearby_frame block at file offset base whose level-1 block
+    has nl1 entries (the slot-15 table's word 7 is 8 * nl1 + 5); names, the file's name
+    records, fill in the item names."""
+    sub = [False]
+
+    def block(off, n):
+        return [struct.unpack_from('>HIHHHHH', d, off + 16 * i) for i in range(n)]
+
+    def walk(off, n, depth):
+        out = []
+        for w in block(off, n):
+            assert w[0] == 8, (hex(off), w)
+            child, cn = base + 2 * w[1], (w[2] - 5) // 8
+            if depth < 3:
+                out += walk(child, cn, depth + 1)
+                continue
+            cat = None
+            if block(child, 1)[0][2]:        # a size word: the (0, category) level under a parcel, not a leaf
+                sub[0] = True
+                (e,) = block(child, cn)
+                child, cn, cat = base + 2 * e[1], (e[2] - 5) // 8, e[4]
+            for it in block(child, cn):
+                code = int('%04x' % it[4])
+                out.append((it[1], cat if cat is not None else code, code if cat is not None else 0xffff, w[3], w[4],
+                            it[5] & 0x7fff, it[6] & 0x7ff, (it[5] >> 15) << 5 | it[6] >> 11,
+                            parse_name_record(names[it[1]])['name'] if names else ''))
+        return out
+    items = walk(base, nl1, 1)
+    return items, sub[0]
+
+
+def category_frames(at, area, cats, names):
+    """Bytes and slot 15 / slot 278 table values for a set of categories [(code, keys, recs)];
+    names are the file's name records, which the nearby leaves are sorted by."""
     assert at % ALIGN == 0
     n = len(cats)
     t15 = bytearray(ALIGN * ((28 * n + ALIGN - 1) // ALIGN))
@@ -367,27 +457,30 @@ def category_frames(at, area, cats):
     # file order: slot-15 table, its blocks, slot-278 table, then each category's trie and records
     near = bytearray()
     p = at + len(t15)
-    for i, (code, keys, recs, (la, lo)) in enumerate(cats):
+    for i, (code, keys, recs) in enumerate(cats):
         items, seen = [], set()
         for r in recs:
             w = struct.unpack('>20H', r)
             if w[15] not in seen:
-                seen.add(w[15]); items.append((w[15], code, w[11], w[12], w[13] >> 8))
-        nb = nearby_frame(la, lo, items)
-        struct.pack_into('>14H', t15, 28 * i,
-                         (28 * (i + 1)) // 2 if i + 1 < n else 0xffff, 0, addr(p + len(near)), 0,
-                         len(nb) // 2, 0, 0, 0xd, 0x8000, 8, i, 0, 1, code)
+                seen.add(w[15])
+                items.append((w[15], code, w[8], w[9], w[10], w[11], w[12], w[13] >> 8,
+                              parse_name_record(names[w[15]])['name']))
+        nb = nearby_frame(items, sub=any(it[2] != 0xffff for it in items))
+        nl1 = len({(it[3] & L1_MASK, it[4] & L1_MASK) for it in items})
+        struct.pack_into('>HIIHHHHHHHHH', t15, 28 * i,
+                         (28 * (i + 1)) // 2 if i + 1 < n else 0xffff, addr(p + len(near)),
+                         len(nb) // 2, 0, 0, 8 * nl1 + 5, 0x8000, 8, i, 0, 1, code)
         near += nb
     at278 = p + len(near)
     # every category's trie, then every category's records, as the factory lays them out
     body = bytearray()
     p = at278 + len(t278)
     tries = []
-    for code, keys, recs, _ in cats:
+    for code, keys, recs in cats:
         node, first, _n = build_trie(keys, CAT_CR, CAT_KW, REC_W)
         tries.append((p + len(body), len(node) // 2, first))
         body += node + b'\0' * (-len(node) % ALIGN)
-    for i, (code, keys, recs, _) in enumerate(cats):
+    for i, (code, keys, recs) in enumerate(cats):
         rec_at = p + len(body)
         for r in recs:
             assert len(r) == REC
