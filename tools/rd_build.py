@@ -3,7 +3,7 @@
 """Section-2 level-1 records for every parcel of a tile cell, from OSM ways. Ways are cut at parcel edges into edge nodes linked through a pseudo-entry across parcels."""
 import collections, json, math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index, osm_roads
+import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index, osm_roads, sec4_write
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 
 PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # degrees per parcel
@@ -264,9 +264,84 @@ def chains_of(links, idx, chain=True, ids=None, groups=None):
     if groups is None: groups = link_groups(links, chain)
     return [[(ids[k] if ids else k + 1, idx[links[k][0]], idx[links[k][1]], links[k][8]) for k in g] for g in groups]
 
-def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None):
+def heading(a, b):
+    return math.atan2(b[1] - a[1], b[0] - a[0])
+
+def turn_deg(h_in, h_out):
+    """Signed turn from one heading to the next, -180..180, left positive."""
+    d = math.degrees(h_out - h_in)
+    return d - 360 if d > 180 else d + 360 if d <= -180 else d
+
+def next_point(l, node, idx):
+    """The point of link l beside the node that is one of its ends."""
+    inner = l[8]
+    if idx[l[0]] == node: return inner[0] if inner else l[1]
+    return inner[-1] if inner else l[0]
+
+MAX_DEPARTURE = 100   # degrees: a ramp leaving at more than this is not an exit from that approach
+
+def find_signposts(L, nodes, idx, groups, signs, upper=False):
+    """Signposts of one level-1 parcel, before the record is laid out.
+
+    A sign hangs on a ramp (any *_link way with destination tags) at the node where it leaves
+    a road that is not a ramp; the approach is the incoming road link whose heading the ramp
+    departs from by the smallest turn. Returns [dict(exit=(chain, occurrence),
+    approach=(chain, occurrence), bits, text)], where occurrence n of a chain is the start
+    node of its link n and len(chain) its last node (fa_encode.shape_words)."""
+    pos = {k: (i, n) for i, g in enumerate(groups) for n, k in enumerate(g)}
+    inc = collections.defaultdict(list)
+    for k, l in enumerate(L):
+        inc[idx[l[0]]].append(k); inc[idx[l[1]]].append(k)
+    def roads_at(n, k): return [kk for kk in inc[n] if kk != k and not L[kk][5].endswith('_link')]
+    out = []
+    for k, l in enumerate(L):
+        if not l[5].endswith('_link') or not signs.get(l[3]): continue
+        a, b = idx[l[0]], idx[l[1]]
+        if l[10] > 0: J, fwd = a, True
+        elif l[10] < 0: J, fwd = b, False
+        else:   # a two-way ramp: the end that meets a road, when only one does
+            ends = [(n, f) for n, f in ((a, True), (b, False)) if roads_at(n, k)]
+            if len(ends) != 1: continue
+            J, fwd = ends[0]
+        h_out = heading(nodes[J], next_point(l, J, idx))
+        best = None
+        for kk in roads_at(J, k):
+            la = L[kk]
+            if la[10] > 0 and idx[la[1]] != J: continue
+            if la[10] < 0 and idx[la[0]] != J: continue
+            into_fwd = idx[la[1]] == J           # travelling la in storage order ends at J
+            t = abs(turn_deg(heading(next_point(la, J, idx), nodes[J]), h_out))
+            if t <= MAX_DEPARTURE and (best is None or t < best[0]): best = (t, kk, into_fwd)
+        if best is None: continue
+        _, kk, into_fwd = best
+        ie, ne = pos[k]; ia, na = pos[kk]
+        out.append(dict(exit=(ie, ne if fwd else ne + 1), approach=(ia, na if into_fwd else na + 1),
+                        bits=sec4_write.APPROACH_FWD if into_fwd else sec4_write.APPROACH_BWD,
+                        text=sec4_write.sign_text(signs[l[3]], upper)))
+    return out
+
+def signpost_subs(found, occ_words):
+    """Section-4 sub-records from find_signposts' list once the record is laid out: one per
+    exit node occurrence, in node-key order, with (flag, ref) naming the approach link's far
+    node and the exit code counting the signs of one approach."""
+    per_node = collections.defaultdict(list)
+    for s in found: per_node[s['exit']].append(s)
+    per_approach = collections.Counter()
+    subs = []
+    for (ie, ne), lst in per_node.items():
+        entries = []
+        for s in lst:
+            ia, na = s['approach']
+            code = sec4_write.EXIT_CODES[min(per_approach[s['approach']], len(sec4_write.EXIT_CODES) - 1)]
+            per_approach[s['approach']] += 1
+            entries.append(dict(dir=code | s['bits'], pairs=[(sec4_write.FLAG, occ_words[ia][na] - 22)], text=s['text']))
+        subs.append(dict(key=occ_words[ie][ne] - 22, groups=[dict(hdr=sec4_write.GROUP_HDR, entries=entries)]))
+    subs.sort(key=lambda s: s['key'])
+    return subs
+
+def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None, signs=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
-    encode_parcels.index = {}
+    encode_parcels.index = {}; encode_parcels.signposts = {}
     for pc, P in parcels.items():
         if P.get('ring'): continue
         keys = P['order']; idx = P['index']
@@ -306,8 +381,22 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
+        found = find_signposts(L, nodes, idx, groups, signs, UPPER_NAMES) if signs and level == 1 else []
+        gs = None
+        if found:
+            # a first layout with G placeholders fixes the node offsets; the sub-record order
+            # those give fixes each G
+            gs = {}
+            for s in found: gs.setdefault(s['exit'][0], {})[s['exit'][1]] = 0
+            fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
+                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs)
+            occ = fa_encode.occurrence_words(fa_encode.build_record.last_index)
+            subs = signpost_subs(found, occ)
+            L_of_key = dict(zip((s['key'] for s in subs), sec4_write.sub_offsets(subs)))
+            gs = {i: {n: L_of_key[occ[i][n] - 22] for n in o} for i, o in gs.items()}
+            encode_parcels.signposts[pc] = subs
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY, dirs=dirs)
+                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
@@ -415,12 +504,18 @@ def main():
     turns = []
     if '--turn-restrictions' in argv:
         i = argv.index('--turn-restrictions'); turns = json.load(open(argv[i + 1])); del argv[i:i + 2]
+    signs_path = None
+    if '--signposts' in argv:
+        i = argv.index('--signposts'); signs_path = argv[i + 1]; del argv[i:i + 2]
     src, dest, cell = argv[:3]
     rpath = argv[3] if len(argv) > 3 else P.roads
     if not rpath:
         raise SystemExit('no road set: set source.roads in the profile or pass roads.json')
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
     derive_dir(ways)
+    signs = {w['id']: w['dest'] for w in ways if w.get('dest')} if signs_path else None
+    if signs_path and not signs:
+        print('WARNING: --signposts but no way carries destination tags; rebuild roads.json with osm_roads.py', file=sys.stderr)
     if tol:
         shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
         junctions = {p for p, n in shared.items() if n > 1}
@@ -442,8 +537,11 @@ def main():
         parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
-                              oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None))
-        if level == 1: index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
+                              oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None), signs=signs)
+        if level == 1:
+            index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
+            signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)
+                         for pc, subs in sorted(encode_parcels.signposts.items())]
         parcels = own(parcels)
         shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
@@ -500,6 +598,11 @@ def main():
     out = clarion_tile.write_tile(t, clarion_tile.default_order(t)); open(dest, 'wb').write(out)
     print(f'wrote {dest} {len(out)} bytes; ways used {len(ways)}')
     for r in report: print('  ' + r)
+    if signs_path:
+        with open(signs_path, 'w') as f:
+            json.dump(dict(cell=cell, country=COUNTRY, parcels=signposts), f, ensure_ascii=False, indent=1)
+        print(f'  signposts {signs_path}: {sum(len(P["subs"]) for P in signposts)} sub-records in {len(signposts)} parcels; '
+              f'now run sec4_write.py --signposts {signs_path}')
     if index_path:
         side = dict(cell=cell, level=1, records=index)
         bad = shape_index.verify(side, out)   # read back off the written tile, not the encoder
