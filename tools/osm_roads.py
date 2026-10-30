@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping."""
-import json, math, sys
+"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping. --ramp-names names unnamed *_link ways after the road they lead to."""
+import collections, json, math, sys
 
 KEEP = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential',
         'living_street', 'service', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'}
@@ -58,6 +58,64 @@ def oneway_dir(ow, junction, hw):
 def oneway(tags):
     """1 one-way along the way, -1 against it, 0 both ways."""
     return oneway_dir(tags.get('oneway'), tags.get('junction'), tags.get('highway'))
+
+
+LINK = {'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'}
+CLASS_RANK = ['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified',
+              'residential', 'living_street', 'service']
+
+
+def _class_rank(hw):
+    base = hw[:-5] if hw in LINK else hw
+    return CLASS_RANK.index(base) if base in CLASS_RANK else len(CLASS_RANK)
+
+
+def _leads_to(way, end, idx, visited):
+    """Named roads reached by walking the chain of links onward from one end of `way`."""
+    point = tuple(way['nodes'][end])
+    visited = visited | {way['id']}
+    found = []
+    for other in idx.get(point, ()):
+        if other['id'] in visited: continue
+        if other['hw'] in LINK:
+            for oi in (0, -1):
+                if tuple(other['nodes'][oi]) == point:
+                    found.extend(_leads_to(other, 0 if oi == -1 else -1, idx, visited))
+        elif other.get('name'):
+            found.append((other['name'], other['hw']))
+    return found
+
+
+def _pick(candidates):
+    """Best of several leads-to candidates: higher road class first, then the most common name, then alphabetical."""
+    if not candidates: return None
+    best = min(_class_rank(hw) for _, hw in candidates)
+    names = [n for n, hw in candidates if _class_rank(hw) == best]
+    counts = collections.Counter(names)
+    top = max(counts.values())
+    return sorted(n for n, c in counts.items() if c == top)[0]
+
+
+def ramp_name(way, idx):
+    """A link way's name: its own, else the road it leads to (the oneway direction, both
+    ends tried on a two-way link), else the road it trails from."""
+    if way.get('name') or way['hw'] not in LINK: return way.get('name')
+    d = way.get('dir', 0)
+    ends = (-1,) if d == 1 else (0,) if d == -1 else (0, -1)
+    name = _pick([c for e in ends for c in _leads_to(way, e, idx, set())])
+    if name or d == 0: return name
+    return _pick(_leads_to(way, 0 if ends[0] == -1 else -1, idx, set()))
+
+
+def name_ramps(ways):
+    """Set a name on every unnamed link way in `ways` that the rule above can name."""
+    idx = collections.defaultdict(list)
+    for w in ways:
+        for p in w['nodes']: idx[tuple(p)].append(w)
+    for w in ways:
+        if w['hw'] in LINK and not w.get('name'):
+            name = ramp_name(w, idx)
+            if name: w['name'] = name
 
 
 def clip(pts, inside, cross):
@@ -142,6 +200,7 @@ def main(argv):
     if '--turns' in argv: i = argv.index('--turns'); turns = argv[i + 1], argv[i + 2]
     if '--public' not in argv and not (rel or box):
         ways = all_ways(pbf)
+        if '--ramp-names' in argv: name_ramps(ways)
         json.dump(ways, open(dest, 'w')); print('ways', len(ways))
         return
     if rel or box:
@@ -152,6 +211,7 @@ def main(argv):
     else:
         inside, cross = (lambda p: True), None
     ways, why = select(pbf, inside, cross, public='--public' in argv)
+    if '--ramp-names' in argv: name_ramps(ways)
     json.dump(ways, open(dest, 'w'), ensure_ascii=False)
     print('ways %d (%d pieces)' % (len({w['id'] for w in ways}), len(ways)))
     for k, v in why.most_common(): print('  %-26s %d' % (k, v))
