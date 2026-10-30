@@ -8,6 +8,7 @@ polygon, 0x40 polyline, 0x00 point), count byte, shapes (nvertices, type, ref, x
 dx,dy deltas). parse_record refuses a road-shape record (w2=0x00fa, counts shapes not units)
 rather than return it short of its tail.
 """
+import math
 import struct
 
 MAGIC = b'\x00\x01\x00\x03'
@@ -47,6 +48,28 @@ def parcel_geo(level, y0, x0, row, col):
 
 
 def s8(b): return b - 256 if b > 127 else b
+
+PARCELS_PER_DEG = {1: (32, 48), 2: (8, 12)}   # (columns per degree of longitude, rows per degree of latitude)
+
+def parcel_of(level, lat, lon):
+    """(row, col, x, y): the absolute parcel holding a position at level 1 or 2 and the
+    position inside it in 2048ths, floored the way addre_io.parcel_point does, so a POINT
+    record and the icon drawn for it share one (x, y)."""
+    per_lon, per_lat = PARCELS_PER_DEG[level]
+    fy, fx = lat * per_lat, (lon + 924) * per_lon
+    row, col = math.floor(fy), math.floor(fx)
+    return row, col, min(2047, int((fx - col) * 2048)), min(2047, int((fy - row) * 2048))
+
+def parcel_rowcol(level, w0, w1):
+    """The inverse of parcel_code at levels 1 and 2."""
+    R, C = (w0 >> 8) & 0x7f, (w0 >> 15) << 8 | w1 >> 8
+    lo0, lo1 = w0 & 0xff, w1 & 0xff
+    if level == 2:
+        row, col = R * 16 + (lo0 >> 4), C * 16 + (lo1 >> 4)
+    else:
+        row, col = R * 64 + ((lo0 >> 4) << 2 | lo0 & 3), C * 64 + ((lo1 >> 4) << 2 | lo1 & 3)
+    assert parcel_code(level, row, col) == (w0, w1), (level, hex(w0), hex(w1))
+    return row, col
 
 def parcel_code(level, row, col):
     """w0, w1 for a parcel at absolute (row, col)."""
@@ -166,6 +189,20 @@ def emblem_point_group(points):
 def emblem_entry(emblem_id):
     """12-byte point-index entry for a logo marker; id 0x193 = Nissan (factory B48R068R)."""
     return struct.pack('>HHHHHH', 0, 0, 0xffff, 0, 0x2000 | emblem_id, 0)
+
+ICON = 0x00ff               # the facility icon point; its side entry carries the detailed code
+ICON_CODES = {11: 2000, 30: 3272}   # side codes of the genres without a sub-category (hospital, rest area)
+
+def icon_layer(points, labels=()):
+    """Layer-25 group of facility icons after any typed label points, as the factory lays
+    it out: points [(x, y, code)] become 00ff points with a side entry each (icon_side)."""
+    shapes = list(labels)
+    shapes += [dict(type=ICON, ref=0xffff, pts=[(x, y)], idx=6 * i) for i, (x, y, code) in enumerate(points)]
+    return dict(kind=0, shapes=shapes)
+
+def icon_side(points):
+    """The record's point side section for icon_layer's points, one 12-byte entry each."""
+    return b''.join(emblem_entry(code) for x, y, code in points)
 
 def bg_slot(w):
     """Which pointer pair holds a record's geometry: w9/w10 normally, w7/w8 for a

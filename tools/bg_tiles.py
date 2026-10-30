@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Background tiles (sea and land, levels 2 and 1) for a region's cells, from an OSM coastline. Roads go in afterwards with rd_build.py; lev_* tools reuse load_land, clean_land and encode_level_fast for levels 3-6."""
+"""Background tiles (sea and land, levels 2 and 1) for a region's cells, from an OSM coastline. Roads go in afterwards with rd_build.py; lev_* tools reuse load_land, clean_land and encode_level_fast for levels 3-6. --pois pois.json (extract_pois.py) draws facility icons at both levels."""
 import sys, os, time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from shapely.geometry import box, LineString, MultiLineString
@@ -17,6 +17,7 @@ SEA = ''
 MARKERS = dict(areas=[], lines=[], points=[])
 LANDUSE = {'items': [], 'tree': None}   # [(polygon, layer, class)] and an STRtree, set by load_landuse
 LANDUSE_MIN = {1: 1e-7, 2: 4e-6}        # smallest land-use polygon drawn per level, in square degrees
+POIS = {}                               # (level, row, col) -> [(x, y, code)], set by load_pois
 DROPPED = dict(sea_polys=0, coastl=0, landuse=0, empty_sea_label=0)   # silent drops, counted for the build log
 
 t0 = time.time()
@@ -60,6 +61,29 @@ def load_landuse(path, classes=None):
     LANDUSE['items'] = items
     LANDUSE['tree'] = STRtree([p for p, _, _ in items]) if items else None
     print(f'land use {len(items)} polygons from {path}')
+
+
+def load_pois(path):
+    """Facility icons from extract_pois.py, binned by level-1 and level-2 parcel."""
+    import json
+    with open(path) as fh:
+        pois = json.load(fh)
+    for p in pois:
+        code = p['sub'] if p['sub'] != 0xffff else clarion_bg.ICON_CODES[p['cat']]
+        for level in (1, 2):
+            row, col, x, y = clarion_bg.parcel_of(level, p['lat'], p['lon'])
+            POIS.setdefault((level, row, col), []).append((x, y, code))
+    for v in POIS.values():
+        v.sort()
+    print(f'pois {len(pois)} from {path}')
+
+
+def poi_icons(level, lon0, lat0):
+    """The icons of the parcel whose south-west corner is (lon0, lat0)."""
+    if not POIS:
+        return ()
+    per_lon, per_lat = clarion_bg.PARCELS_PER_DEG[level]
+    return POIS.get((level, round(lat0 * per_lat), round((lon0 + 924) * per_lon)), ())
 
 
 def landuse_layers(level, rect, lon0, lat0, w, h, land=None):
@@ -129,6 +153,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                 if lon0 <= plon < lon0 + w and lat0 <= plat < lat0 + h:
                     extra_labels.append((0x4068, 0x4800, bg_encode.quant(plon, lon0, w),
                                          bg_encode.quant(plat, lat0, h), text))
+            icons = poi_icons(level, lon0, lat0)
             if not pl.intersects(rect):
                 extra = {}
             else:
@@ -142,7 +167,8 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
             elif pl.contains(rect):
                 # all land: header-only record, so every parcel exists
                 out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
-                    level, y0, x0, row, col, [], extra_lines, extra_labels, area_polys=area_polys, extra_layers=extra)
+                    level, y0, x0, row, col, [], extra_lines, extra_labels, area_polys=area_polys, extra_layers=extra,
+                    icons=icons)
                 continue
             else:
                 water = rect.difference(land_local)
@@ -176,7 +202,7 @@ def encode_level_fast(level, y0, x0, land_local, coast, tree, coverage, sea=None
                     if not sea: DROPPED['empty_sea_label'] += 1
             out.setdefault(row, {})[col] = bg_encode.build_parcel_record(
                 level, y0, x0, row, col, sea_polys, coastl + extra_lines,
-                labels + extra_labels, area_polys=area_polys, extra_layers=extra)
+                labels + extra_labels, area_polys=area_polys, extra_layers=extra, icons=icons)
     return out
 
 
@@ -218,6 +244,8 @@ def main():
         classes[kind] = (int(lc.split(':')[0]), int(lc.split(':')[1], 16))
     if '--landuse' in argv:
         i = argv.index('--landuse'); load_landuse(argv[i + 1], classes); del argv[i:i + 2]
+    if '--pois' in argv:
+        i = argv.index('--pois'); load_pois(argv[i + 1]); del argv[i:i + 2]
     road_section = '--no-road-section' not in argv
     if not road_section:
         argv.remove('--no-road-section')

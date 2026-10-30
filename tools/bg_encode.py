@@ -111,8 +111,10 @@ def name_section(labels):
     while len(out) % 4: out += b'\0'
     return bytes(out)
 
-def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlayers=26, area_polys=(), extra_layers=None):
-    """(y0, x0) the directory's south-west mesh, (row, col) the parcel inside it."""
+def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlayers=26, area_polys=(), extra_layers=None,
+                        icons=()):
+    """(y0, x0) the directory's south-west mesh, (row, col) the parcel inside it; icons are
+    facility icon points [(x, y, code)] for layer 25 and the point side section."""
     L = LEVELS[level]
     if level in (4, 5):   # code units are 20'/30' (2 per mesh); parcels are 2 (level 4) or 8 (level 5) meshes
         m = {4: 2, 5: 8}[level]
@@ -136,6 +138,9 @@ def build_parcel_record(level, y0, x0, row, col, sea_polys, coast, labels, nlaye
         subs = [dict(kind=0x80, shapes=shapes[i:i + 255]) for i in range(0, len(shapes), 255)]
         if subs: layers[li] = dict(subs[0], more=subs[1:])
     sections = {'names': name_section(labels)} if labels else {}   # shipped records omit it when empty
+    if icons:
+        layers[25] = clarion_bg.icon_layer(icons)
+        sections['points'] = clarion_bg.icon_side(icons)
     rec = dict(hdr=w, nlayers=nlayers if layers else 0, layers=layers, sections=sections)
     plain = clarion_bg.build_record(rec)
     c = zlib.compressobj(6, zlib.DEFLATED, ZWBITS, 8)
