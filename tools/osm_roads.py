@@ -19,7 +19,10 @@ def all_ways(pbf):
             out.append(dict(id=w.id, hw=hw, name=w.tags.get('name'), ref=w.tags.get('ref'),
                             oneway=w.tags.get('oneway'), junction=w.tags.get('junction'), dir=oneway(w.tags),
                             maxspeed=w.tags.get('maxspeed'), nodes=pts))
+            d = dest_tags(w.tags)
+            if d: out[-1]['dest'] = d
     H().apply_file(pbf, locations=True)
+    inherit_dest(out)
     return out
 
 
@@ -41,6 +44,32 @@ def keep(tags):
         return 'closed to cars'
     if tags.get('area') == 'yes': return 'area'
     return None
+
+
+DEST = ('destination', 'destination:ref', 'destination:ref:to', 'destination:street', 'junction:ref')
+
+
+def dest_tags(t):
+    """The signpost tags of a way, or None; rd_build --signposts turns them into section 4."""
+    d = {k: t[k] for k in DEST if k in t}
+    return d or None
+
+
+def inherit_dest(ways):
+    """Give an untagged link way the destination of the one tagged link way it feeds into,
+    walking back along link-only chains up to four hops, so the sign stands where the ramp
+    leaves the road rather than at a split further down. Returns how many ways gained one."""
+    at_end = {}
+    for w in ways:
+        if w['hw'].endswith('_link'): at_end.setdefault(tuple(w['nodes'][-1]), []).append(w)
+    gained = 0
+    for w in [w for w in ways if w['hw'].endswith('_link') and w.get('dest')]:
+        cur = w
+        for _ in range(4):
+            feeders = [f for f in at_end.get(tuple(cur['nodes'][0]), []) if f is not cur]
+            if len(feeders) != 1 or feeders[0].get('dest') or feeders[0].get('dir', 0) < 0: break
+            feeders[0]['dest'] = w['dest']; gained += 1; cur = feeders[0]
+    return gained
 
 
 def oneway_dir(ow, junction, hw):
@@ -207,12 +236,14 @@ def select(pbf, inside, cross, public=True):
             runs = clip(pts, inside, cross)
             if not runs: why['outside'] += 1; return
             if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
-            ow = oneway(t)
+            ow = oneway(t); d = dest_tags(t)
             for r in runs:
                 out.append(dict(id=w.id, hw=t['highway'], name=t.get('name'), ref=t.get('ref'),
                                 oneway=t.get('oneway'), junction=t.get('junction'),
                                 dir=ow, maxspeed=t.get('maxspeed'), nodes=[list(p) for p in r]))
+                if d: out[-1]['dest'] = d
     H().apply_file(pbf, locations=True)
+    why['destination inherited by a feeder link'] = inherit_dest(out)
     return out, why
 
 
