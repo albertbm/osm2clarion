@@ -465,5 +465,49 @@ class TestDedupe(unittest.TestCase):
         self.assertEqual(extract_pois.clean_name('Iceland´s Guesthouse'), "Iceland's Guesthouse")
 
 
+class TestAddPoint(unittest.TestCase):
+    """clarion_bg.add_point: the dealer and camera points of leaf-is-map join a record's icons."""
+
+    def record(self):
+        pts = [(100, 200, 2000), (1500, 300, 3272), (7, 2047, 907)]
+        w = [0] * 22
+        w[0], w[1] = clarion_bg.parcel_code(1, 3078, 28866)
+        w[2] = 0x19
+        w[7], w[8] = 0xffff, 0
+        return dict(hdr=w, nlayers=26, layers={25: clarion_bg.icon_layer(pts)}, sections={'points': clarion_bg.icon_side(pts)})
+
+    def test_dealer_and_camera_join_the_icons(self):
+        rec = self.record()
+        clarion_bg.add_point(rec, 0x806c, 348, 32)
+        cam = clarion_bg.camera_service_record(52, 17, 1)
+        s = clarion_bg.add_point(rec, 0x0050, 137, 412, side=cam)
+        self.assertEqual(s['idx'], 3 * 12 // 2, 'the camera entry follows the three icon entries')
+        back = clarion_bg.parse_record(clarion_bg.build_record(rec))
+        shapes = back['layers'][25]['shapes']
+        self.assertEqual([sh['type'] for sh in shapes], [0x806c, 0xff, 0xff, 0xff, 0x50])
+        self.assertEqual([sh.get('idx') for sh in shapes], [None, 0, 6, 12, 18])
+        side = back['sections']['points']
+        self.assertEqual(len(side), 36 + 20)
+        self.assertEqual([struct.unpack_from('>6H', side, 2 * i)[4] & 0xfff for i in (0, 6, 12)], [2000, 3272, 907])
+        self.assertEqual(side[36:], cam)
+        self.assertEqual(clarion_bg.build_record(back), clarion_bg.build_record(rec))
+
+    def test_empty_record(self):
+        w = [0] * 22
+        w[2] = 0x19
+        w[7], w[8] = 0xffff, 0
+        rec = dict(hdr=w, nlayers=0, layers={}, sections={})
+        clarion_bg.add_point(rec, 0x0050, 1, 2, side=clarion_bg.camera_service_record(20, 17, 2))
+        back = clarion_bg.parse_record(clarion_bg.build_record(rec))
+        self.assertEqual(back['nlayers'], 26)
+        self.assertEqual(back['layers'][25]['shapes'][0], dict(type=0x50, ref=0xffff, pts=[(1, 2)], idx=0))
+
+    def test_refuses_an_unparsed_layer(self):
+        rec = self.record()
+        rec['layers'][25] = dict(raw=b'\0' * 8)
+        with self.assertRaises(AssertionError):
+            clarion_bg.add_point(rec, 0x806c, 1, 1)
+
+
 if __name__ == '__main__':
     unittest.main()

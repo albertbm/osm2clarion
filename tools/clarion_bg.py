@@ -204,6 +204,27 @@ def icon_side(points):
     """The record's point side section for icon_layer's points, one 12-byte entry each."""
     return b''.join(emblem_entry(code) for x, y, code in points)
 
+def add_point(rec, typ, x, y, side=None):
+    """Add one layer-25 point to a parsed record and keep what the layer holds. A plain
+    typed point goes before the icons, where the factory puts them; a point with a side
+    entry (side: the bytes appended to the point section) goes last with its halfword index.
+    Returns the shape."""
+    g = rec['layers'].get(25)
+    if g is None:
+        g = rec['layers'][25] = dict(kind=0, shapes=[])
+        rec['nlayers'] = max(rec['nlayers'], 26)
+    assert 'raw' not in g and g['kind'] == 0 and not g.get('more'), 'layer 25 is not one parsed point group'
+    s = dict(type=typ, ref=0xffff, pts=[(x, y)])
+    if side is None:
+        g['shapes'].insert(next((i for i, sh in enumerate(g['shapes']) if 'idx' in sh), len(g['shapes'])), s)
+        return s
+    sec = rec['sections'].get('points', b'')
+    assert len(sec) % 4 == 0 and len(side) % 4 == 0, (len(sec), len(side))
+    s['idx'] = len(sec) // 2
+    rec['sections']['points'] = sec + side
+    g['shapes'].append(s)
+    return s
+
 def bg_slot(w):
     """Which pointer pair holds a record's geometry: w9/w10 normally, w7/w8 for a
     road-only record. A level-5 record has w2=0xfa either way, so this reads the
