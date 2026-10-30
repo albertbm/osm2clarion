@@ -435,5 +435,35 @@ class TestCollation(unittest.TestCase):
         self.assertEqual([e[1] for e in leaf], [2, 1])
 
 
+class TestDedupe(unittest.TestCase):
+    def poi(self, oid, name, lat, lon, cat=5, sub=3500):
+        return dict(id=oid, name=name, cat=cat, sub=sub, lat=lat, lon=lon)
+
+    def test_node_wins_over_area(self):
+        node = self.poi('n6381120324', 'Lilja Guesthouse', 63.9000, -21.0000)
+        area = self.poi('w742911004', 'Lilja Guesthouse', 63.90002, -21.00002)
+        kept, dropped = extract_pois.dedupe([area, node])
+        self.assertEqual(kept, [node])
+        self.assertEqual(dropped, [(area, node)])
+
+    def test_name_inside_the_other(self):
+        a = self.poi('n1', 'Drangshlíð', 63.5, -19.5)
+        b = self.poi('w2', 'Guesthouse Drangshlíð - Main building', 63.5002, -19.5003)
+        self.assertEqual(extract_pois.dedupe([a, b])[0], [a])
+
+    def test_kept_apart(self):
+        a = self.poi('n1', 'Hótel Kea', 65.68, -18.09)
+        far = self.poi('n2', 'Hótel Kea', 65.681, -18.09)                 # 111 m north
+        other = self.poi('n3', 'Hótel Kea', 65.68, -18.09, cat=6, sub=924)   # a restaurant of the same name
+        unrelated = self.poi('n4', 'Bautinn', 65.68001, -18.09001)
+        self.assertEqual(len(extract_pois.dedupe([a, far, other, unrelated])[0]), 4)
+
+    def test_clean_name(self):
+        self.assertEqual(extract_pois.clean_name('Daddi’s  Pizza'), "Daddi's Pizza")
+        self.assertEqual(extract_pois.clean_name('​Svarta Fjaran'), 'Svarta Fjaran')
+        self.assertEqual(extract_pois.clean_name('Guesthouse 1×6'), 'Guesthouse 1x6')
+        self.assertEqual(extract_pois.clean_name('Iceland´s Guesthouse'), "Iceland's Guesthouse")
+
+
 if __name__ == '__main__':
     unittest.main()

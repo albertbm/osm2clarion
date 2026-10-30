@@ -7,12 +7,15 @@ Four genres of the unit's search list, with the ICODE codes the factory card use
 sub-code, hospital 11 and rest area 30 without one. A way or relation takes its centroid.
 Needs osmium and shapely.
 
-    extract_pois.py iceland-latest.osm.pbf pois.json [--rest-area-name ÁNINGARSTAÐUR]
+    extract_pois.py iceland-latest.osm.pbf pois.json [--rest-area-name ÁNINGARSTAÐUR] [-v]
 
 A facility without a name is dropped, since a POINT record needs one; --rest-area-name
-gives unnamed rest areas that word (plus the road ref when tagged) instead.
+gives unnamed rest areas that word (plus the road ref when tagged) instead. A node and an
+area of one category within 50 m whose names match are one facility (dedupe); -v lists
+every pair dropped.
 """
 import json
+import math
 import sys
 
 RESTAURANT, HOTEL, HOSPITAL, REST_AREA = 6, 5, 11, 30
@@ -84,9 +87,52 @@ def chain_code(brand):
     return CHAINS.get(b) or next((code for name, code in CHAINS.items() if b.startswith(name + ' ')), CHAIN_OTHERS)
 
 
+DUP_M = 50     # two objects of one category this close with matching names are one facility
+CLEAN = {'\u2018': "'", '\u2019': "'", '\u00b4': "'", '`': "'", '\u201c': '"', '\u201d': '"', '\u00d7': 'x',
+         '\xa0': ' ', '\u2013': '-', '\u2014': '-', '\u200b': ''}   # typographic characters the keyboard cannot reach
+
+
+def clean_name(name):
+    return ' '.join(''.join(CLEAN.get(c, c) for c in name).split())
+
+
+def same_site(a, b):
+    """Same category, within DUP_M, and the same name or one name inside the other."""
+    if a['cat'] != b['cat']:
+        return False
+    dy = (a['lat'] - b['lat']) * 111195
+    dx = (a['lon'] - b['lon']) * 111195 * math.cos(math.radians(a['lat']))
+    if dx * dx + dy * dy > DUP_M * DUP_M:
+        return False
+    x, y = a['name'].casefold(), b['name'].casefold()
+    return x in y or y in x
+
+
+def dedupe(pois):
+    """(kept, dropped): OSM maps many facilities twice, as a node and as the building or
+    grounds around it, sometimes under a longer name. The node wins over an area centroid,
+    an earlier object over a later one."""
+    rank = {'n': 0, 'w': 1, 'r': 2}
+    cells = {}
+    kept, dropped = [], []
+    for p in sorted(pois, key=lambda p: (rank[p['id'][0]], p['id'])):
+        cy, cx = int(p['lat'] * 1000), int(p['lon'] * 1000)
+        near = (q for dy in (-1, 0, 1) for dx in (-1, 0, 1) for q in cells.get((cy + dy, cx + dx), ()))
+        twin = next((q for q in near if same_site(p, q)), None)
+        if twin is None:
+            kept.append(p)
+            cells.setdefault((cy, cx), []).append(p)
+        else:
+            dropped.append((p, twin))
+    return kept, dropped
+
+
 def main(argv):
     import osmium
     from shapely import wkb
+    verbose = '-v' in argv
+    if verbose:
+        argv.remove('-v')
     rest_name = None
     if '--rest-area-name' in argv:
         i = argv.index('--rest-area-name')
@@ -107,7 +153,7 @@ def main(argv):
             else:
                 dropped[cs[0]] = dropped.get(cs[0], 0) + 1
                 return
-        out.append(dict(id='%s%d' % (kind, oid), name=name, cat=cs[0], sub=cs[1],
+        out.append(dict(id='%s%d' % (kind, oid), name=clean_name(name), cat=cs[0], sub=cs[1],
                         lat=round(lat, 7), lon=round(lon, 7)))
 
     class H(osmium.SimpleHandler):
@@ -127,14 +173,18 @@ def main(argv):
             take('w' if a.from_way() else 'r', a.orig_id(), tags, c.x, c.y)
 
     H().apply_file(src, locations=True)
+    out, twins = dedupe(out)
     out.sort(key=lambda p: (p['cat'], p['lat'], p['lon'], p['id']))
     with open(dest, 'w') as f:
         json.dump(out, f, ensure_ascii=False, indent=0)
     per = {}
     for p in out:
         per[p['cat']] = per.get(p['cat'], 0) + 1
-    print('pois %d: %s; unnamed dropped %s' % (len(out), ' '.join('cat %d: %d' % kv for kv in sorted(per.items())),
-                                                ' '.join('cat %d: %d' % kv for kv in sorted(dropped.items())) or 'none'))
+    print('pois %d: %s; unnamed dropped %s; same-site twins dropped %d'
+          % (len(out), ' '.join('cat %d: %d' % kv for kv in sorted(per.items())),
+             ' '.join('cat %d: %d' % kv for kv in sorted(dropped.items())) or 'none', len(twins)))
+    for p, q in twins if verbose else twins[:20]:
+        print('  %s %r -> %s %r' % (p['id'], p['name'], q['id'], q['name']))
 
 
 if __name__ == '__main__':
