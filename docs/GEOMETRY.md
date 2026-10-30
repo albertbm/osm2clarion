@@ -119,11 +119,19 @@ the section start, `ffff 0000` when empty; the table's own length equals the fir
 (26 entries in every record seen). Then the groups:
 
 ```
-group:  0001 0003, u8 kind (0x80 polygon, 0x40 polyline, 0x00 point), u8 shape count,
-        shapes, zero-padded to 4 bytes
+group:  0001 0003, u16 kind | shape count (kind in the top two bits: 0x8000 polygon,
+        0x4000 polyline, 0 point; a level-2 point group counts past 255), shapes,
+        zero-padded to 4 bytes
 shape:  u16 vertex count, u16 type, u16 ffff, u16 x0, u16 y0, (count-1) x (int8 dx, int8 dy)
 point:  u16 type, u16 ffff, u16 x, u16 y
+        u16 type, u16 ffff, u16 x, u16 0x8000 | y, u16 idx   when bit 15 of y is set
 ```
+
+`idx` is a halfword offset into the record's point side section (w15, w16): 12-byte entries
+`0000 0000 ffff 0000 (0x2000 | code) 0000`, so idx runs 0, 6, 12. Type `0x00ff` with such
+an entry is a facility icon; `code` is the facility's detailed code (hotel chain 3500-3686,
+cuisine 901-938, petrol brand 400-488, hospital 2000, rest area 3272), the same point at
+level 1 and level 2 (`clarion_bg.icon_layer`, `icon_side`; POI-draft.md in leaf-is-map).
 
 Polygons repeat the first vertex last. Long straight edges are walked in +/-127 steps. A
 parcel that is all sea holds one rectangle `(0,0)->(0,2047)->(2047,2047)->(2047,0)`. A parcel
@@ -137,7 +145,7 @@ Layers and types seen (level 2 uses `0x50xx`, level 1 the same low byte with `0x
 | 1 | polygon | 0x5012 | **sea**, clipped to the parcel |
 | 4, 5, 7, 9 | polygon | 0x5026 0x5074 0x5015 0x5011 | other land cover, plus one group format (`0002 0005`) not parsed |
 | 11 | polyline | 0x5007 | **coastline**; 0x500a/0x500b other lines |
-| 25 | point | 0x100c 0x400c ... | place markers |
+| 25 | point | 0x100c 0x400c ... | place markers; 0x00ff with a side index: facility icons |
 
 Names section: `u16 6, u16 count` then five `ffff 0000` pairs, then entries
 `u16 type, u16 flags, u16 x, u16 y, u16 len, text` (0x4089/0x8089 area labels such as

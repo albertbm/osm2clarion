@@ -43,6 +43,23 @@ country-only record staying the 56-byte form. Three cases decode factory records
 them back byte for byte; they need `OSM2CLARION_FACTORY_TILE` pointing at a tile with a
 section 4 (`B48R060R.DAT`, 6,810 records) and skip without it.
 
+## test_pois.py
+
+Facility icons and POINT search records. The in-code cases check the position words (x
+first), the mixed 8/10-byte layer-25 group with its side section, the slot-15 nearby tree,
+`extract_pois` tag rules and `poi_point.merge` on a POINT file built in the test (nothing
+added gives the file back). Six cases compare against factory data and skip without it:
+
+```
+OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_FACTORY_POINT=POINT018.DAT python3 -m unittest tests.test_pois
+```
+
+The tile is read one record at a time (never `read_tile`); POINT018.DAT is REFER001's
+Luxembourg file, inflated. Checked there: every data and name record rebuilds byte for byte,
+Luxembourg's towns land on their centres only with x read first, all 56 nearby category
+blocks rebuild byte for byte, and the level-1 and level-2 records over Luxembourg Gare (178
+and 553 points, 166 and 521 with side entries) parse and rebuild byte for byte.
+
 ## test_reproduce.py
 
 The claim in BUILD-LOG.md is that the chain reproduces a shipped database exactly: every
