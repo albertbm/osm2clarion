@@ -41,18 +41,34 @@ def keyunits(s, kw):
     return bytes(out)
 
 
-PUNCT = {'\xa0': ' ', '\u2013': ' ', '\u2014': ' ', '\u2018': "'", '\u2019': "'", '\u201c': '"', '\u201d': '"'}
+# the factory keys (POINT018): '.' and '+' fold to a space (S.A.R.L. -> S A R L, P+R -> P R), quotes
+# vanish, runs of spaces collapse; brackets stay, as the settlement builders keep them (GARDABAR (ALFTANES))
+PUNCT = {'\xa0': ' ', '\u2013': ' ', '\u2014': ' ', '\u2018': "'", '\u2019': "'", '\u201c': '', '\u201d': '', '"': '',
+         '.': ' ', '+': ' '}
 unfolded = []     # characters no folding reached, dropped from the keys and reported
+
+
+def word_starts(s):
+    """Where the factory cuts a name into keys (POINT018): the whole name, every later word
+    of two or more characters that starts with a letter or digit, and after a one-letter
+    elision (D'ARMES gives ARMES, BAMBERG'S gives no S)."""
+    out, p = [], 0
+    for w in s.split(' '):
+        if p == 0 or (len(w) >= 2 and w[0].isalnum()):
+            out.append(p)
+            if len(w) >= 4 and w[1] == "'":
+                out.append(p + 2)
+        p += len(w) + 1
+    return out
 
 
 def word_keys(name, kw, fold=None):
     """One key per word start, the whole remainder from it, and whether it is a later word."""
-    s = addre_io.fold_key(''.join(PUNCT.get(c, c) for c in name), fold).upper()
+    s = ' '.join(addre_io.fold_key(''.join(PUNCT.get(c, c) for c in name), fold).upper().split())
     if not s.isascii():
         unfolded.extend(c for c in s if not c.isascii())
-        s = ''.join(c if c.isascii() else ' ' for c in s)
-    starts = [0] + [j + 1 for j, c in enumerate(s) if c == ' ' and j + 1 < len(s)]
-    return [(keyunits(s[p:], kw), p > 0) for p in starts if s[p].isalnum()]
+        s = ' '.join(''.join(c if c.isascii() else ' ' for c in s).split())
+    return [(keyunits(s[p:], kw), p > 0) for p in word_starts(s)]
 
 
 def parcel_latlon(la, lo, x, y):
@@ -116,7 +132,11 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
         hs = sorted(hits[u], key=lambda h: h[:2])
         keys.append((u, len(recs), len(hs)))
         recs += [h[2] for h in hs]
-    # the +0x3c hint stays what the file has: facilities carry two refs and no items, below any settlement's
+    # the +0x3c hint stays what the file has: it covers the longest refs+items field, which a
+    # facility (two refs, no items: 6 halfwords) never raises above the settlements'
+    for nr in names[len(p.names):]:
+        assert (nr[10], nr[11]) == (6, 0), (nr[10], nr[11])
+    assert frames.point_d(names) == frames.point_d(p.names), 'a facility record raised the +0x3c hint'
     out, _nb, _tb = point_io.assemble(p.prefix, p.df, keys, recs, names, list(p.tels), p.cr, p.kw, p.area, p.nlevel)
     at = frames.up(len(out))
     q = point_io.Point(out)
@@ -124,23 +144,28 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     out = bytearray(out) + b'\0' * (at - len(out)) + frame
     struct.pack_into('>IH', out, 0x800 + 6 * 280, addre_io.addr(h), 1)
     struct.pack_into('>IH', out, 0x800 + 6 * 287, addre_io.addr(dfo), 1)
-    # the category frames: every facility category, its trie keys and records in file order
-    cat_of = {i: point_io.parse_name_record(nr)['category'] for i, nr in enumerate(names)}
-    cats = []
-    for code in sorted({c for c in cat_of.values() if c != point_io.SETTLEMENT}):
-        ck, cr = [], []
-        for u, start, n in keys:
-            mine = [r for r in recs[start:start + n] if cat_of[struct.unpack_from('>H', r, 30)[0]] == code]
-            if mine:
-                ck.append((u, len(cr), len(mine)))
-                cr += mine
-        cats.append((code, ck, cr))
+    # the category frames: every facility category and (category, sub-category) pair present,
+    # trie keys in key order, records in the factory's within-key order
+    cs_of = {i: (f['category'], f['subcategory']) for i, f in
+             ((i, point_io.parse_name_record(nr)) for i, nr in enumerate(names))}
+
+    def by(pred):
+        return point_io.select_records(keys, recs, names, lambda r: pred(cs_of[struct.unpack_from('>H', r, 30)[0]]), fold)
+    cats = [(code,) + by(lambda cs: cs[0] == code)
+            for code in sorted({c for c, s in cs_of.values() if c != point_io.SETTLEMENT})]
+    subs = [pair + by(lambda cs: cs == pair)
+            for pair in sorted({cs for cs in cs_of.values() if cs[0] != point_io.SETTLEMENT and cs[1] != 0xffff})]
     if cats:
         at = frames.up(len(out))
-        blob, s15, s278 = point_io.category_frames(at, p.area, cats, names)
+        blob, s15, s278 = point_io.category_frames(at, p.area, cats, names, fold)
         out += b'\0' * (at - len(out)) + blob
         struct.pack_into('>IH', out, 0x800 + 6 * 15, *s15)
         struct.pack_into('>IH', out, 0x800 + 6 * 278, *s278)
+    if subs:
+        at = frames.up(len(out))
+        blob, s279 = point_io.subcategory_frames(at, p.area, subs, p.kw)
+        out += b'\0' * (at - len(out)) + blob
+        struct.pack_into('>IH', out, 0x800 + 6 * 279, *s279)
     return bytes(out), cats
 
 

@@ -10,7 +10,7 @@ The factory cases need OSM2CLARION_FACTORY_TILE (B48R060R.DAT, the tile the draf
 and OSM2CLARION_FACTORY_POINT (REFER001/POINT018.DAT inflated, Luxembourg) or they skip.
 Nothing from either is written anywhere.
 """
-import os, struct, sys, unittest, zlib
+import os, struct, sys, unittest, unittest.mock, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -329,6 +329,110 @@ class TestPoiPoint(unittest.TestCase):
             self.assertEqual([it[1] for it in items], [code])
         frame = poi_point.adm_frame(q.extra_off, q, self.FOLD, 20)[0]
         self.assertEqual(out[q.extra_off:q.extra_off + len(frame)], frame, 'the ADM frame is rebuilt where the tails end')
+        # slot 279: one SUB-CATEGORY entry per (category, sub) pair, its run the facilities' records
+        table = point_io.category_table(out, 279)
+        self.assertEqual([e['tail'] for e in table], [(0, 0xffff, 5, 3500), (0, 0xffff, 6, 924)])
+        self.assertEqual([(e['cr'], e['kw'], e['nrec']) for e in table], [(12, 1, 2), (12, 1, 2)])
+        keys = point_io.trie_keys(out, table[1]['trie_at'], 12, 1)
+        self.assertEqual([k for k, s, n in keys], [b'FRAKKAR', b'THRIR FRAKKAR'], 'one-byte key units, the fold applied')
+        self.assertEqual({point_io.parse_data_record(out[table[1]['rec_at'] + 40 * i:][:40])['name_idx'] for i in range(2)}, {4})
+    def test_hint_guard(self):
+        """A facility record with a third ref would raise the +0x3c hint merge does not recompute."""
+        d = self.base_file()
+        real = point_io.name_record
+
+        def three_refs(*a, **kw):
+            kw['refs'] = kw['refs'] + ((2, 0x40, 1),)
+            return real(*a, **kw)
+        with unittest.mock.patch.object(poi_point.point_io, 'name_record', three_refs):
+            with self.assertRaises(AssertionError):
+                poi_point.merge(d, [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD)
+
+    def test_word_keys_cut_like_the_factory(self):
+        def keys(name):
+            return [u.replace(b'\0', b'').decode() for u, later in poi_point.word_keys(name, 2, self.FOLD)]
+        self.assertEqual(keys("PLACE D'ARMES"), ["PLACE D'ARMES", "D'ARMES", 'ARMES'])
+        self.assertEqual(keys("BAMBERG'S"), ["BAMBERG'S"])
+        self.assertEqual(keys('AUTOPOLIS S.A.'), ['AUTOPOLIS S A'])
+        self.assertEqual(keys('4 SAISONS'), ['4 SAISONS', 'SAISONS'])
+        self.assertEqual(keys('GARÐABÆR (ÁLFTANES)'), ['GARDABAR (ALFTANES)'], 'as the settlement builders keyed card 030')
+        self.assertEqual(keys('ADRIANO & CO'), ['ADRIANO & CO', 'CO'])
+        self.assertEqual(keys('Daddi’s Pizza'), ["DADDI'S PIZZA", 'PIZZA'])
+
+
+class TestSubCategory(unittest.TestCase):
+    """Slot 279, the SUB-CATEGORY table: POI-draft.md's missing frame, decoded off POINT018."""
+
+    def test_entry_layout(self):
+        e = point_io.subcategory_entry(1, 17, 2, 403, 0x697400, 0x18, 0xc, 0x714800, 5)
+        self.assertEqual(len(e), 78)
+        self.assertEqual(struct.unpack_from('>H', e, 0)[0], 78, 'next entry, in halfwords from the table start')
+        self.assertEqual(struct.unpack_from('>H', e, 0x30)[0], 39)
+        self.assertEqual((e[0x32], e[0x33]), (6, 1), 'cr 12, one-byte key units')
+        self.assertEqual(struct.unpack_from('>HHH', e, 0x34), (1, 0x0c00, 4))
+        self.assertEqual(e[0x3a:0x46], b'SUB-CATEGORY')
+        self.assertEqual(struct.unpack_from('>HHHH', e, 0x46), (17, 0xffff, 2, 403))
+        self.assertEqual(struct.unpack_from('>H', point_io.subcategory_entry(0, 17, 2, 403, 0, 0, 0, 0, 0, last=True), 0)[0], 0xffff)
+
+    def test_record_order(self):
+        """Inside one key: whole-name hits first, then the name, the ladder, the position."""
+        names = [point_io.name_record(n, (0, 0, 0), 3, 6, 924) for n in ('ROMA', 'ANTICA ROMA', 'ROMA')]
+        r = [point_io.data_record((0, 0, 0), 3, 0, 6, 924, lat=5, lon=5, flags=0),
+             point_io.data_record((0, 0, 0), 3, 1, 6, 924, lat=1, lon=1, flags=0x4000),
+             point_io.data_record((0, 0, 0), 3, 2, 6, 924, lat=4, lon=4, flags=0),
+             point_io.data_record((0, 1, 0), 3, 2, 6, 924, lat=3, lon=3, flags=0)]
+        self.assertEqual(point_io.record_order([r[1], r[3], r[0], r[2]], names), [r[2], r[0], r[3], r[1]])
+
+    def test_factory_slot279_round_trip(self):
+        d = factory_point()
+        p = point_io.Point(d)
+        recs = p.records()
+        table = point_io.category_table(d, 279)
+        self.assertEqual(len(table), 42)
+        self.assertEqual(sorted({e['tail'][2] for e in table}), [2, 5, 6])
+        subs = [e['tail'][2:] + point_io.select_records(p.keys, recs, p.names, lambda r, t=e['tail'][2:]: struct.unpack_from('>HH', r, 14) == t)
+                for e in table]
+        a, nb = struct.unpack_from('>IH', d, 0x800 + 6 * 279)
+        at = addre_io.unaddr(a)
+        blob, s279 = point_io.subcategory_frames(at, p.area, subs, p.kw)
+        self.assertEqual(s279, (a, nb))
+        self.assertEqual(blob, d[at:at + len(blob)], 'table, 42 tries and 42 record runs')
+        self.assertEqual(len(blob), 712192)
+
+    def test_factory_category_record_order(self):
+        """The same within-key order gives 52 of the 56 CATEGORY runs (main order gives 35)."""
+        d = factory_point()
+        p = point_io.Point(d)
+        recs = p.records()
+        table = point_io.category_table(d, 278)
+        self.assertEqual(len(table), 56)
+        same = main = 0
+        for e in table:
+            fact = d[e['rec_at']:e['rec_at'] + 40 * e['nrec']]
+            pred = lambda r, c=e['tail'][2]: struct.unpack_from('>H', r, 14)[0] == c
+            _k, ordered = point_io.select_records(p.keys, recs, p.names, pred)
+            same += b''.join(ordered) == fact
+            main += b''.join(r for _u, s, n in p.keys for r in recs[s:s + n] if pred(r)) == fact
+        self.assertEqual((same, main), (52, 35))
+
+
+class TestCollation(unittest.TestCase):
+    FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
+
+    def test_case_and_icelandic_letters(self):
+        c = point_io.collate
+        self.assertEqual(c('þórshöfn', self.FOLD), c('ÞÓRSHÖFN', self.FOLD))
+        self.assertLess(c('reykjavík'), c('SELFOSS'), 'lower case does not sort after upper case')
+        names = ['Ægissíða', 'Þórshöfn', 'Ðalvík', 'Tálknafjörður', 'Vík', 'Dalvík', 'Akureyri', 'Ísafjörður', 'Blönduós']
+        self.assertEqual(sorted(names, key=lambda n: c(n, self.FOLD)),
+                         ['Akureyri', 'Ægissíða', 'Blönduós', 'Dalvík', 'Ðalvík', 'Ísafjörður', 'Tálknafjörður', 'Þórshöfn', 'Vík'])
+        self.assertEqual(c('Þ', self.FOLD), (('T', 'Þ'), ('H', '')))
+
+    def test_leaf_sorted_case_insensitively(self):
+        its = [(1, 11, 0xffff, 0xb01e, 0xc31c, 0x800 | 3, 4, 63, 'landspítali'), (2, 11, 0xffff, 0xb01e, 0xc31c, 0x800 | 3, 4, 63, 'KRISTNES')]
+        b = point_io.nearby_frame(its, fold=self.FOLD)
+        leaf = [struct.unpack_from('>HIHHHHH', b, 0x300 + 16 * i) for i in range(2)]
+        self.assertEqual([e[1] for e in leaf], [2, 1])
 
 
 if __name__ == '__main__':

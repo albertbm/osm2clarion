@@ -5,7 +5,7 @@ import struct
 import unicodedata
 import zlib
 
-from addre_io import ALIGN, addr, build_trie, deflate_block, unaddr
+from addre_io import ALIGN, KEY_FOLD, addr, build_trie, deflate_block, unaddr
 
 REC = 40               # the data record, fixed
 REC_W = 20
@@ -78,37 +78,13 @@ class Point:
         self.extra = d[self.extra_off:]
         self._trie()
 
-    def _crec(self, o):
-        d = self.d
-        return (u32(d, o), u16(d, o + 4), d[o + 8:o + 8 + self.kw],
-                int.from_bytes(d[o + 8 + self.kw:o + self.cr], 'big'))
-
     def _trie(self):
-        d = self.d
-        o = 0x1100
-        root = []
-        while u32(d, o):
-            root.append(self._crec(o))
+        o, n = 0x1100, 0
+        while u32(self.d, o):
+            n += 1
             o += self.cr
-        self.nroot = len(root)
-        keys = []
-        stack = [(c, b'') for c in root]
-        while stack:
-            c, pfx = stack.pop()
-            k = pfx + c[2]
-            if c[1] == 0:
-                keys.append((k, c[0] // self.recw, c[3]))
-                continue
-            fo = 0x1100 + c[0] * 2
-            n = c[1] * 2 // self.cr - 1
-            own = int.from_bytes(d[fo + n * self.cr + 8 + self.kw:
-                                   fo + (n + 1) * self.cr], 'big')
-            if own:
-                keys.append((k, u32(d, fo + n * self.cr) // self.recw, own))
-            for i in range(n):
-                stack.append((self._crec(fo + i * self.cr), k))
-        keys.sort()
-        self.keys = keys
+        self.nroot = n
+        self.keys = trie_keys(self.d, 0x1100, self.cr, self.kw, self.recw)
 
     def rec(self, i):
         return self.d[self.rec_off + i * REC:self.rec_off + (i + 1) * REC]
@@ -344,13 +320,46 @@ def _bcd(n):
     return int(str(n), 16)
 
 
-def collate(name):
-    """The order a nearby leaf sorts names in: letter by letter, an accented letter right
-    after its base letter (NÁRODNÉ before NEMZETI, LÜKSEMBURG after LUXENBORG)."""
-    return tuple((c[0], c[1:]) for c in (unicodedata.normalize('NFD', ch) for ch in name))
+def collate(name, fold=None):
+    """The order a nearby leaf sorts names in: upper-cased, letter by letter, an accented
+    letter right after its base letter (NÁRODNÉ before NEMZETI, LÜKSEMBURG after LUXENBORG).
+    A letter the keyboard folds (addre_io.KEY_FOLD plus fold: Þ -> TH, Ð -> D) sorts as its
+    folding with the letter itself as the accent, so the leaf agrees with the trie key."""
+    table = dict(KEY_FOLD, **(fold or {}))
+    out = []
+    for ch in name.upper():
+        f = table.get(ch)
+        if f is None:
+            c = unicodedata.normalize('NFD', ch)
+            out.append((c[0], c[1:]))
+            continue
+        f = f.upper()
+        out.append((f[0], ch))
+        out += [(c, '') for c in f[1:]]
+    return tuple(out)
 
 
-def nearby_frame(items, sub=False):
+def record_order(recs, names, fold=None):
+    """The records of one trie key in the order the factory's category and sub-category
+    runs hold them: whole-name hits before later-word hits (flags), then the name, the
+    area ladder, the position words and the name index (POINT018: all 42 SUB-CATEGORY
+    runs, 52 of the 56 CATEGORY runs)."""
+    return sorted(recs, key=lambda r: (r[12:14], collate(parse_name_record(names[u16(r, 30)])['name'], fold),
+                                       r[:12], r[18:26], r[30:32]))
+
+
+def select_records(keys, recs, names, pred, fold=None):
+    """(keys, recs) of the records pred accepts, in key order with record_order inside a key."""
+    ck, cr = [], []
+    for u, start, n in keys:
+        mine = record_order([r for r in recs[start:start + n] if pred(r)], names, fold)
+        if mine:
+            ck.append((u, len(cr), len(mine)))
+            cr += mine
+    return ck, cr
+
+
+def nearby_frame(items, sub=False, fold=None):
     """The slot-15 block of one category: a tree over the records' level-1 parcel codes,
     three narrowing levels keyed (la & 0xff80, lo & 0xff80), (la & 0xfff0, lo & 0xfff0) and
     (la, lo), then a leaf of 16-byte items per parcel. A category with a sub-category list
@@ -376,7 +385,7 @@ def nearby_frame(items, sub=False):
 
     def leaf(group, parent):
         # the code goes in as BCD: category 24 reads 0x0024, cuisine 907 0x0907
-        rows = sorted((_bcd(sb if sb != 0xffff else cat), y & 0x7ff, xw & 0x7ff, collate(name), lang, name_idx, xw)
+        rows = sorted((_bcd(sb if sb != 0xffff else cat), y & 0x7ff, xw & 0x7ff, collate(name, fold), lang, name_idx, xw)
                       for name_idx, cat, sb, la, lo, xw, y, lang, name in group)
         blocks.append([[struct.pack('>HIHHHHH', 8, n, 0, 0, code, (lang >> 5) << 15 | xw & 0x7fff, (lang & 0x1f) << 11 | y)
                         for code, y, x, name, lang, n, xw in rows], parent])
@@ -447,7 +456,28 @@ def parse_nearby(d, base, nl1, names=()):
     return items, sub[0]
 
 
-def category_frames(at, area, cats, names):
+def _tries_and_runs(at, table, groups, cr, kw, entry):
+    """Table plus body for the CATEGORY and SUB-CATEGORY frames: every group's trie, then
+    every group's record run, each 256-aligned; entry(i, trie_at, nodew, first, rec_at, nrec, last)
+    fills one table slot."""
+    body = bytearray()
+    p = at + len(table)
+    tries = []
+    for keys, recs in groups:
+        node, first, _n = build_trie(keys, cr, kw, REC_W)
+        tries.append((p + len(body), len(node) // 2, first))
+        body += node + b'\0' * (-len(node) % ALIGN)
+    for i, (keys, recs) in enumerate(groups):
+        rec_at = p + len(body)
+        for r in recs:
+            assert len(r) == REC
+            body += r
+        body += b'\0' * (-len(body) % ALIGN)
+        entry(i, *tries[i], rec_at, len(recs), i + 1 == len(groups))
+    return bytes(table) + bytes(body)
+
+
+def category_frames(at, area, cats, names, fold=None):
     """Bytes and slot 15 / slot 278 table values for a set of categories [(code, keys, recs)];
     names are the file's name records, which the nearby leaves are sorted by."""
     assert at % ALIGN == 0
@@ -465,29 +495,109 @@ def category_frames(at, area, cats, names):
                 seen.add(w[15])
                 items.append((w[15], code, w[8], w[9], w[10], w[11], w[12], w[13] >> 8,
                               parse_name_record(names[w[15]])['name']))
-        nb = nearby_frame(items, sub=any(it[2] != 0xffff for it in items))
+        nb = nearby_frame(items, sub=any(it[2] != 0xffff for it in items), fold=fold)
         nl1 = len({(it[3] & L1_MASK, it[4] & L1_MASK) for it in items})
         struct.pack_into('>HIIHHHHHHHHH', t15, 28 * i,
                          (28 * (i + 1)) // 2 if i + 1 < n else 0xffff, addr(p + len(near)),
                          len(nb) // 2, 0, 0, 8 * nl1 + 5, 0x8000, 8, i, 0, 1, code)
         near += nb
     at278 = p + len(near)
-    # every category's trie, then every category's records, as the factory lays them out
-    body = bytearray()
-    p = at278 + len(t278)
-    tries = []
-    for code, keys, recs in cats:
-        node, first, _n = build_trie(keys, CAT_CR, CAT_KW, REC_W)
-        tries.append((p + len(body), len(node) // 2, first))
-        body += node + b'\0' * (-len(node) % ALIGN)
-    for i, (code, keys, recs) in enumerate(cats):
-        rec_at = p + len(body)
-        for r in recs:
-            assert len(r) == REC
-            body += r
-        body += b'\0' * (-len(body) % ALIGN)
-        trie_at, nodew, first = tries[i]
+
+    def entry(i, trie_at, nodew, first, rec_at, nrec, last):
         t278[CAT_ENTRY * i:CAT_ENTRY * (i + 1)] = category_entry(
-            i, area, code, trie_at, nodew, first, rec_at, len(recs), last=i + 1 == n)
-    return (bytes(t15) + bytes(near) + bytes(t278) + bytes(body),
+            i, area, cats[i][0], trie_at, nodew, first, rec_at, nrec, last)
+    body = _tries_and_runs(at278, t278, [(k, r) for _c, k, r in cats], CAT_CR, CAT_KW, entry)
+    return (bytes(t15) + bytes(near) + body,
             (addr(at), len(t15) // ALIGN), (addr(at278), len(t278) // ALIGN))
+
+
+# Slot 279: one 78-byte SUB-CATEGORY entry per (category, sub-category) pair, the CATEGORY
+# entry with a 12-byte name, a 1-byte-unit trie (cr 12) and a four-word tail (area, ffff,
+# category, sub-category); POINT018 has 42 (9 petrol brands, 15 hotel chains, 18 cuisines).
+SUB_ENTRY = 78
+SUB_CR, SUB_KW = 12, 1
+
+
+def narrow_key(u, kw):
+    """A kw-byte-unit trie key as 1-byte units; only an ASCII key has one."""
+    assert all(b == 0 for i in range(0, len(u), kw) for b in u[i + 1:i + kw]), u
+    return bytes(u[i] for i in range(0, len(u), kw))
+
+
+def subcategory_entry(ordinal, area, cat, sub, trie_at, nodew, first, rec_at, nrec, last=False):
+    e = bytearray(SUB_ENTRY)
+    struct.pack_into('>H', e, 0, 0xffff if last else SUB_ENTRY // 2 * (ordinal + 1))
+    struct.pack_into('>I', e, 2, addr(trie_at))
+    struct.pack_into('>I', e, 6, nodew)
+    struct.pack_into('>H', e, 0xe, first)
+    struct.pack_into('>H', e, 0x10, 0x4c02)
+    struct.pack_into('>I', e, 0x12, addr(rec_at))
+    struct.pack_into('>I', e, 0x16, nrec * REC_W)
+    struct.pack_into('>H', e, 0x1a, REC_W)
+    struct.pack_into('>H', e, 0x30, 0xffff if last else SUB_ENTRY // 2)
+    e[0x32], e[0x33] = SUB_CR // 2, SUB_KW
+    struct.pack_into('>HHH', e, 0x34, ordinal, 0x0c00, 4)
+    e[0x3a:0x46] = b'SUB-CATEGORY'
+    struct.pack_into('>HHHH', e, 0x46, area, 0xffff, cat, sub)
+    return bytes(e)
+
+
+def subcategory_frames(at, area, subs, kw):
+    """Bytes and the slot-279 table value for [(cat, sub, keys, recs)] sorted by (cat, sub);
+    keys are the file's kw-unit keys, narrowed to the 1-byte units this trie uses."""
+    assert at % ALIGN == 0
+    n = len(subs)
+    t279 = bytearray(ALIGN * ((SUB_ENTRY * n + ALIGN - 1) // ALIGN))
+
+    def entry(i, trie_at, nodew, first, rec_at, nrec, last):
+        t279[SUB_ENTRY * i:SUB_ENTRY * (i + 1)] = subcategory_entry(
+            i, area, subs[i][0], subs[i][1], trie_at, nodew, first, rec_at, nrec, last)
+    groups = [([(narrow_key(u, kw), s, c) for u, s, c in keys], recs) for _cat, _sub, keys, recs in subs]
+    body = _tries_and_runs(at, t279, groups, SUB_CR, SUB_KW, entry)
+    return body, (addr(at), len(t279) // ALIGN)
+
+
+def category_table(d, slot):
+    """The CATEGORY (278) or SUB-CATEGORY (279) table of a file as
+    [dict(tail, trie_at, nodew, first, rec_at, nrec, cr, kw)], tail the trailing words
+    (area, ffff, category[, sub-category])."""
+    a, _nb = struct.unpack_from('>IH', d, 0x800 + 6 * slot)
+    if a == 0xffffffff:
+        return []
+    o = unaddr(a)
+    size, ntail = (CAT_ENTRY, 3) if slot == 278 else (SUB_ENTRY, 4)
+    out = []
+    while True:
+        e = d[o:o + size]
+        out.append(dict(tail=struct.unpack_from('>%dH' % ntail, e, size - 2 * ntail),
+                        trie_at=unaddr(u32(e, 2)), nodew=u32(e, 6), first=u16(e, 0xe),
+                        rec_at=unaddr(u32(e, 0x12)), nrec=u32(e, 0x16) // REC_W, cr=e[0x32] * 2, kw=e[0x33]))
+        if u16(e, 0) == 0xffff:
+            return out
+        o += size
+
+
+def trie_keys(d, base, cr, kw, recw=REC_W):
+    """[(key, first record index, count)] of a trie whose root starts at file offset base."""
+    def crec(o):
+        return (u32(d, o), u16(d, o + 4), d[o + 8:o + 8 + kw], int.from_bytes(d[o + 8 + kw:o + cr], 'big'))
+    o, root = base, []
+    while u32(d, o):
+        root.append(crec(o))
+        o += cr
+    keys, stack = [], [(c, b'') for c in root]
+    while stack:
+        c, pfx = stack.pop()
+        k = pfx + c[2]
+        if c[1] == 0:
+            keys.append((k, c[0] // recw, c[3]))
+            continue
+        fo = base + c[0] * 2
+        n = c[1] * 2 // cr - 1
+        own = int.from_bytes(d[fo + n * cr + 8 + kw:fo + (n + 1) * cr], 'big')
+        if own:
+            keys.append((k, u32(d, fo + n * cr) // recw, own))
+        for i in range(n):
+            stack.append((crec(fo + i * cr), k))
+    keys.sort()
+    return keys
