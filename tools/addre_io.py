@@ -419,3 +419,20 @@ def street_record(flags, name_idx, levels, rel=0x7f7f, sid=0xffffffff):
            + struct.pack('>I', name_idx) + struct.pack('>%dH' % len(levels), *levels))
     assert len(out) <= SREC, levels
     return out + b'\xff' * (SREC - len(out))
+
+
+def range_record(flags, lo, hi, name_idx, levels, rel=0):
+    """One 22-byte ADDRE house-number range row: lo/hi replace street_record's sid,
+    flags 0000/8000 for a range's first/continuation row (RESULT.md, row 46945-48)."""
+    out = (struct.pack('>HHHHI', rel, flags, lo, hi, name_idx)
+           + struct.pack('>%dH' % len(levels), *levels))
+    assert len(out) <= SREC, levels
+    return out + b'\xff' * (SREC - len(out))
+
+
+def parse_range_record(r):
+    """range_record read back: dict(rel, flags, lo, hi, name_idx, levels)."""
+    assert len(r) == SREC, len(r)
+    rel, flags, lo, hi, name_idx = struct.unpack_from('>HHHHI', r)
+    return dict(rel=rel, flags=flags, lo=lo, hi=hi, name_idx=name_idx,
+                levels=struct.unpack_from('>5H', r, 12))

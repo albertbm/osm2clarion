@@ -2270,6 +2270,18 @@ class AddreRecords(unittest.TestCase):
         from addre_io import street_record
         self.assertEqual(street_record(0x4000, 456, (1, 2, 0)), self.ANDORRA_SREC_0)
 
+    def test_range_records_match_factory_rows(self):
+        from addre_io import parse_range_record, range_record
+        rows = [
+            '00008000000200020000023f0009000d000100920001',
+            '00000000000100140000023e0009000d000100920001',
+            '0000800000090024000002400009000d000100920001',
+            '00008000003a003c000002410009000f0000015d0002',
+        ]
+        for raw in map(bytes.fromhex, rows):
+            f = parse_range_record(raw)
+            self.assertEqual(range_record(**f), raw)
+
     def test_street_record_takes_the_factory_id_form(self):
         from addre_io import street_record
         self.assertEqual(street_record(0x4000, 646, (1, 2, 1), rel=0, sid=0x00010005),
