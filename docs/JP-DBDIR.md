@@ -81,6 +81,64 @@ the drawing records (`shapes`, `drawn_runs`, `parcel_geojson`).
   GSI's TKY2JGD grid fits worse on Ishigaki (median 187 m), so the data sits on a uniform
   Tokyo Datum rather than the islands' local surveys.
 
+### Roads, background and points, against the newer European features
+
+Measured on the same card against the European features up to `07fbf78`. Overlays use OSM
+extracts from Overpass (2026-11-01) and the Tokyo Datum shift above.
+
+**Roads.**
+- Drawn roads sit in BPCL column 4, a section table of 61 words at level 1 (52 at levels 2-5).
+  Each class has its own section, with the class digit in the top nibble of a shape word, as
+  ROAD-CLASSES.md has it. Section and digit, matched to OSM: 13 = `0` motorway, 10 = `2` trunk,
+  9 = `3` primary, 8 = `4` secondary, 6 = `6` tertiary, 3 and 4 = `9` minor roads, 1 = `a`, by
+  analogy the ferry. A shape is `len, 0006, 0000, class<<12, 0x8000|n, 0000, x0, y0`, then n int8
+  delta pairs, with the end point stored again in the tail. A delta sum drifts a few units from it.
+- Link geometry has its own table. `BLIA` has 11,479,311 rows, one link each, keyed by the BPCL
+  level-1 parcel key. Each link is `u16 3n, u16 flags<<13|n`, then n big-endian (x, y, z): x and
+  y in parcel units 0..4096, z - 2048 most likely height in 0.1 m. Consecutive link ids share
+  end points, and the same id appears in the drawn road's tail. On Ishigaki, 16,102 vertices of
+  4,140 links lie a median 1.7 m from the nearest OSM highway. The same links moved one parcel
+  east or west are 782-911 m off.
+- Routing is outside the parcels. `BRGN` holds 488 regions on five levels (404, 56, 21, 6 and
+  1), each with a box of four big-endian u24 in 1/8" (N, S, W, E) and ten blobs not yet read.
+  There is no counterpart to section 2.
+- One-way and speed were not found. The link flag bits do not follow OSM `oneway`, and no shape
+  word carries a speed.
+- Road names are in BPCL column 7: `１＝designation,..,name,..` in full-width Shift-JIS, with the
+  record type giving the class (`0210/0211` expressway, `0212` national route, `0213/0214`
+  prefectural). It is the same numbered-field idea as `1=NAME;2=REF`. How a road shape points
+  at its name is not decoded.
+
+**Background.**
+- No outline has a hole. Sea with islands is cut into pieces along straight lines, and
+  neighbouring pieces repeat each cut as an undrawn edge. In a 1-in-5 sample of level-1 parcels,
+  5,357 sea polygons hold no bridge edge at all. The cuts fall at x = 2048 most often, then
+  1024 and 3071. This is the same fix as `no_holes`, found in a shipped map.
+- Polygons wind counter-clockwise, x east and y north (5,310 of 5,357 sea polygons), where the
+  shipped European sea runs clockwise. Steps are int8, or int16 when `attr & 0x100`. The largest
+  sea piece has 734 points (p99 525), near the European cap of 600 and the 677 that shipped.
+- Type codes have their own numbering. The overlay places forest at `0139`/`0141`, city parks
+  at `0301`/`0302`, railway land at `0274`, and inland water at `0122` plus the `0120` lines.
+  `0123` lies under parks and woods as often as under water.
+- The building-scale map is BTPCL, not a separate directory. Its parcel is the 1/16 cell of a
+  second mesh, 28.125" x 18.75", the grid `house_encode.GRID = 16` writes. Buildings are types
+  `040a` and `a900`. Their tail `4000 NNNN` reads as floors: 2-3 for houses, 5-15 for
+  high-rises, and N = 10 under OSM `building:levels` averaging 10.0.
+
+**Labels and points.**
+- Name records (BPCL columns 6-8) open with a 14-entry section table, then entries `len,
+  scale|flags, type, id, 0, x, y, [extra], textlen, text`. The top three bits of the second word
+  pick the scale band, one-hot, and a label is stored once per band it shows in. The type echoes
+  the feature's drawing type: `0123` water, `012b` mountains, `0260` stations.
+- Section 16 of the drawing record holds town polygons. Each shape's tail names an area label in
+  column 8, and all 74,745 shapes sampled link to one.
+- The per-prefecture POI tables (`BPOIB/BPOIT01-47`) ship empty: control pages only. Facility
+  names reach the map as labels, and their symbols as section-18 points with over 1,000 type
+  codes. The search files use REFER002 `POINT001-047.DAT` slots 7 and 24, and REFER001
+  `point*.cmp` slots 7, 23-25, 30 and 31. Slots 15, 278 and 279 are unused, so the category
+  frames are laid out differently.
+- No speed-camera or logo layer has been identified yet.
+
 ## What a Japanese target needs, in order
 
 Each step has a gate. Don't start the next step until the gate passes, the same discipline
