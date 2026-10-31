@@ -10,12 +10,12 @@ The factory cases need OSM2CLARION_FACTORY_TILE (B48R060R.DAT, the tile the draf
 and OSM2CLARION_FACTORY_POINT (REFER001/POINT018.DAT inflated, Luxembourg) or they skip.
 Nothing from either is written anywhere.
 """
-import os, struct, sys, unittest, unittest.mock, zlib
+import math, os, struct, sys, unittest, unittest.mock, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-import addre_io, clarion_bg, extract_pois, frames, point_io, poi_point  # noqa: E402
+import addre_io, clarion_bg, extract_pois, fa_encode, frames, point_io, poi_point  # noqa: E402
 from tile_scan import TileScan  # noqa: E402
 
 TILE_ENV, POINT_ENV = 'OSM2CLARION_FACTORY_TILE', 'OSM2CLARION_FACTORY_POINT'
@@ -376,6 +376,100 @@ class TestPoiPoint(unittest.TestCase):
         self.assertEqual(keys('GARÐABÆR (ÁLFTANES)'), ['GARDABAR (ALFTANES)'], 'as the settlement builders keyed card 030')
         self.assertEqual(keys('ADRIANO & CO'), ['ADRIANO & CO', 'CO'])
         self.assertEqual(keys('Daddi’s Pizza'), ["DADDI'S PIZZA", 'PIZZA'])
+
+
+class TestFacilityRefs(unittest.TestCase):
+    """poi_point.facility_refs / nearest_link_refs: real refs into a facility's own parcel,
+    read from our own built tiles (never a factory one)."""
+
+    NODES = [(100, 200), (900, 240), (1500, 1800)]
+
+    def record(self):
+        chains = fa_encode.chains_from_links([(0, 1, 850), (1, 2, 1600)], {1: 10, 2: 11})
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, chains,
+                                          hws=['motorway', 'residential'], country=352)
+        return plain
+
+    def test_nearest_link_picks_the_near_node(self):
+        plain = self.record()
+        w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+        g = 2 * w[7]
+        refs = poi_point.nearest_link_refs(plain, None, 105, 205)   # beside NODES[0]
+        self.assertEqual(len(refs), 2)
+        pts = [(w[g + v] & 0x7ff, w[g + v + 1] & 0x7ff) for _tag, _fl, v in refs]
+        self.assertIn(self.NODES[0], pts, 'one ref lands on the node the facility sits beside')
+        self.assertIn(self.NODES[1], pts, "the link's other end is the shared node")
+        self.assertTrue(all(fl == 0x40 for _tag, fl, _v in refs), 'both refs are graph nodes')
+
+    def test_facility_refs_reports_a_parcel_with_no_road(self):
+        problems = []
+        la, lo = clarion_bg.parcel_code(1, 96 * 32 + 7, 898 * 32 + 9)
+        tile_recs = {(la, lo): (self.record(), None)}
+        other_la, other_lo = clarion_bg.parcel_code(1, 96 * 32 + 8, 898 * 32 + 9)
+        refs = poi_point.facility_refs(tile_recs, other_la, other_lo, 100, 100, problems, 'LONE FACILITY')
+        self.assertIsNone(refs)
+        self.assertEqual(len(problems), 1)
+        self.assertIn('LONE FACILITY', problems[0])
+        self.assertIn('no street', problems[0])
+
+
+class TestLadderConvention(unittest.TestCase):
+    """merge()'s ladder() reads x before y; --settlements-yfirst undoes a POINT file whose
+    settlements were written the other way (card 030, PATCH-point-xy.md)."""
+
+    FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
+    # the 8 capital-area towns, positions read off card 030's own POINT001 the way
+    # PATCH-point-xy says they were written (swapped); real municipality centroids, not
+    # geographic centres, which is why GRINDAVÍK round-trips through here too
+    TOWNS = [
+        ('REYKJAVÍK', (0, 0, 0), (64.133311, -21.851959)),
+        ('GARÐABÆR', (0, 3, 0), (64.087596, -21.915512)),
+        ('GARÐABÆR (ÁLFTANES)', (0, 4, 0), (64.104818, -22.019180)),
+        ('GRINDAVÍK', (0, 6, 0), (63.884603, -22.056854)),
+        ('HAFNARFJÖRÐUR', (0, 7, 0), (64.056844, -21.961670)),
+        ('KÓPAVOGUR', (0, 11, 0), (64.102122, -21.868851)),
+        ('MOSFELLSBÆR', (0, 12, 0), (64.163605, -21.677338)),
+        ('SELTJARNARNES', (0, 16, 0), (64.153381, -21.994125)),
+    ]
+
+    def base_file_yfirst(self):
+        """A POINT file with the capital's settlements written with position words swapped,
+        as leaf-is-map's build_point.py / build_addr_area0.py wrote before PATCH-point-xy."""
+        kw, cr = 2, 14
+        names, hits = [], {}
+        for i, (name, lv, (lat, lon)) in enumerate(self.TOWNS):
+            la, lo, y, x = addre_io.parcel_point(lat, lon)
+            names.append(point_io.name_record(name, lv, 3, point_io.SETTLEMENT, lat=la, lon=lo, x=y, y=x,
+                                              refs=((2, 0x40, 0x8000 + 4 * i), (3, 0x40, 0x8001 + 4 * i))))
+            for u, later in poi_point.word_keys(name, kw, self.FOLD):
+                hits.setdefault(u, []).append(point_io.data_record(lv, 3, i, point_io.SETTLEMENT, lat=la, lon=lo,
+                                                                   x=y, y=x, flags=0x4000 if later else 0))
+        keys, recs = [], []
+        for u in sorted(hits):
+            keys.append((u, len(recs), len(hits[u])))
+            recs += hits[u]
+        out, _, _ = point_io.assemble(frames.point_prefix((4800, 1280, -1680, 3600), '14/11/17/01'), bytes(frames.POINT_DF),
+                                      keys, recs, names, [], cr, kw, 0, 3, maxkey_hint=frames.point_d(names))
+        at = frames.up(len(out))
+        frame, h, dfo = poi_point.adm_frame(at, point_io.Point(out), self.FOLD, 20)
+        out = bytearray(out) + b'\0' * (at - len(out)) + frame
+        struct.pack_into('>IH', out, 0x800 + 6 * 280, addre_io.addr(h), 1)
+        struct.pack_into('>IH', out, 0x800 + 6 * 287, addre_io.addr(dfo), 1)
+        return bytes(out)
+
+    def test_yfirst_file_mirrors_without_the_flag(self):
+        """The 032 bug, reproduced: a hospital at (64.1410, -21.7590) reads
+        nearer Mosfellsbær when the file's settlements decode x-first, because they were
+        written the other way; --settlements-yfirst reads them as written and finds
+        Reykjavík, the real nearest town (CARDS.md row 032: 0.0413 against 0.0422)."""
+        d = self.base_file_yfirst()
+        hospital = dict(name='TEST SPITALI', cat=11, sub=0xffff, lat=64.1410, lon=-21.7590)
+        out, _cats = poi_point.merge(d, [hospital], self.FOLD)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 12, 0),
+                         'mirrored: picks Mosfellsbær over the much nearer Reykjavík')
+        out, _cats = poi_point.merge(d, [hospital], self.FOLD, settlements_yfirst=True)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 0, 0),
+                         'read the way they were written: Reykjavík, the real nearest town')
 
 
 class TestSubCategory(unittest.TestCase):
