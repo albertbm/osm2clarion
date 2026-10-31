@@ -8,8 +8,8 @@ below was read out of both shipped databases, the 2014 and the 2017, and matches
 ## Which level draws which view
 
 The zoom ladder runs 10 km, 16 km, 64 km, 160 km, 320 km, 640 km. 16 km draws section 1 level 4,
-pair 0 of each column, the road record. **64 km draws section 1 level 5, the road block inside the
-background record.** 160 km and wider draw no roads at all.
+pair 0 of each column, the road record. 64 km draws section 1 level 5, the road block inside the
+background record. 160 km and wider draw no roads at all.
 
 Established two ways. From the bytes: level 4 keeps roads and background in separate records, told
 apart by w2, while a level-5 record is both at once and its second block parses as the eleven-pair
@@ -197,14 +197,14 @@ road-carrying records in each database, whose road block `clarion_bg` does not m
 The level-4 and level-3 second numbers are road-shape records, not background records, and
 `parse_record` now refuses those outright rather than rebuilding them short, so they count as errors
 and no longer as mismatches. Level 4 over the two shipped files is 1,358 byte-exact and 1,027 refused.
-The level-5 figures are unaffected: the 84 are background records whose separate road block is simply
+The level-5 figures are unaffected: the 84 are background records whose separate road block is
 not carried over.
 
 That replacement rule tested `w[9] == 0xffff` alone, so it read a record of the 2014 rebuilt kind
 (`w9/w10 = 0000/0000`) at w9/w10. `gi` came out 9, `geo_off` came out 0, the layer table was read from
 the record header, and `assert nlayers == len(table)` tripped. So all 13 such records in a 2014 rebuild
-raised, level 5 coming out 66 byte-exact / 42 mismatched / 13 errors. Worth being exact about: the old
-rule failed loudly on these records rather than misreading them quietly, and no record came back wrong.
+raised, level 5 coming out 66 byte-exact / 42 mismatched / 13 errors. The old rule failed loudly on
+these records rather than misreading them quietly, and no record came back wrong.
 The rule is now
 `clarion_bg.bg_slot`, which counts both `ffff/0000` and `0000/0000` as an empty pair, and which
 `lev5_roads.bg_slot` calls so the two cannot drift. Those 13 records now round-trip byte for byte at

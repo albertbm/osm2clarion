@@ -39,7 +39,7 @@ that the other cases use. If those drift apart, those six fail.
 The claim in BUILD-LOG.md is that the chain reproduces a shipped database exactly: every
 tile rebuilds byte-identically, every record rebuilds byte-exact, `make_mmain.py` reproduces
 `MMAIN001.DAT` and `make_drstr_card.py` reproduces `DRSTR001.DAT`. Checking that needs the
-shipped database, and the shipped database is licensed commercial data. It cannot be
+shipped database, which is licensed commercial data. It cannot be
 committed here, so these cases skip unless you supply a card:
 
 ```
@@ -47,8 +47,8 @@ OSM2CLARION_CARD=/Volumes/GEURX-30-105-100 python3 -m unittest discover -s tests
 ```
 
 Mount the card read-only. An unpacked image works too; it needs `MAPAL001/` with the 52
-tiles and `LEV3456R.DAT`, `MMAIN001.DAT`, `DRSTR001.DAT` and `VER_INFO/DB_INFO.TXT`. The card
-is only read. A full tile reaches 477 MB and the whole surface is 4.8 GiB, so the rebuild
+tiles and `LEV3456R.DAT`, `MMAIN001.DAT`, `DRSTR001.DAT` and `VER_INFO/DB_INFO.TXT`. A full
+tile reaches 477 MB and the whole surface is 4.8 GiB, so the rebuild
 cases work through the smallest tiles until `READ_BUDGET` bytes have been read, 64 MiB by
 default.
 

@@ -43,8 +43,8 @@ prefix:
 reaches address lookup and postcodes only. Nothing in the build chain needs the
 decompressor: `tools/decompress_fast.py` is here to read a base card's address half when a
 question about one comes up, and that is all. dfj's original slices the remaining buffer once
-per block. That is quadratic, and on a 300 MB file of about 4,600 blocks it never finishes.
-This one slices to the next offset and writes one output file per input.
+per block, which is quadratic: on a 300 MB file of about 4,600 blocks it never finishes. This
+one slices to the next offset and writes one output file per input.
 
 ## The map surface
 

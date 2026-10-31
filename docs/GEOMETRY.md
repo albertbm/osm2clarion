@@ -43,7 +43,7 @@ address in the section table is the section table's own size in 256-byte units.
 
 ### Section tables
 
-Section 1 is the map surface (background polygons, coastlines, names). Section 2 is the road
+Section 1 is the map surface (background polygons, coastlines, names); section 2 is the road
 network (undecoded, see below). Large tiles carry a section 4 (level type 0x93), also
 undecoded. The level table at `0x1ac` lists, per section, `level, type, count`; the count is
 the number of directories at that level.
@@ -66,7 +66,7 @@ u16 0x2046 (section 1) or 0x1046 (section 2)   u16 0x20  u16 0x20  u16 y  u16 x 
 32 slots of: u32 address + body (512 bytes for 0x2046, 256 for 0x1046)
 ```
 
-A slot is a **parcel row**. The body is an array of u32 pairs `(compressed words,
+A slot is a parcel row. The body is an array of u32 pairs `(compressed words,
 inflated words)`; the pair index is `2*col + 1` for the background record of parcel `col`
 in section 1 (index `2*col` is a second record kind, present only where ferry routes cross),
 and `col` in section 2. Absent pairs are `ffffffff ffffffff`, except even pairs in level-1
@@ -192,7 +192,7 @@ of its link's class word, and whose "other node" is
 an index in the neighbouring parcel. Curvature is shape nodes of degree 2; there is no
 separate geometry, and the background records carry no road lines.
 
-**Drawn road geometry is a separate record**: the even pair of a level-1 background
+Drawn road geometry is a separate record: the even pair of a level-1 background
 directory (`2*col`, kind `0x00fa`, earlier mistaken for ferry routes) exists for exactly the
 parcels that have a road graph (37 of 37 on Pantelleria, 42,077 of 45,154 in the Paris tile).
 `tools/fa_encode.py` writes it. Header: parcel code, `0x00fa`, `347a 2aef`, 0, 0, then
@@ -282,14 +282,14 @@ style word). Level 5 has no shape pairs. `lev_roads.py` moves both road director
 with the grid and writes level-4 shape records for the main roads, with no graph records.
 Level 5 is in [LEVEL5.md](LEVEL5.md).
 
-**Level 3** (2 and 4 km): the 52 shipped level-3 cells hold 6522 shape records in their
+Level 3 (2 and 4 km): the 52 shipped level-3 cells hold 6522 shape records in their
 even pairs, level-2 layout (eleven pairs, roads in layer 6, header word 20 a per-cell
 token), shapes `len, 0x4000|points, class<<12, 0, name, 0, 0, points` with no link id and
 the start x flagged 0x0800. `lev_roads.py` writes them for the cells being built (motorway to
 tertiary, classes 3 to 7) as one polyline per way run; two-point shapes drew as dashes with
 gaps. `lev_compact.py` rewrites the coarse file keeping only referenced pieces.
 
-**Road class.** Word 2 of a shape carries the class in its top nibble: 8 local streets
+Road class: word 2 of a shape carries the class in its top nibble: 8 local streets
 (every level-1 shape), 7 collectors (every level-2 shape), 6 down to 2 for the main road
 classes at level 4, 0xa ferries. The graph records use the same digit in their class word
 (`0x898`, `0x797`, `0x696`/`0x686`, `0x595`, `0x393`, `0xa8a`). The unit chooses classes per

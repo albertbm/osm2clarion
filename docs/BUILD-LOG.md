@@ -183,8 +183,7 @@ A unit only accepts positions inside the shipment area baked into its firmware, 
 unit is longitude -20 to 68. Build a map outside that and the unit draws it correctly, then refuses
 every position in silence: the coastline is right, the roads are right, the vehicle never appears,
 and nothing logs an error. Nothing on the card changes this. The card's own declared bounds have no
-bearing on it, which is worth knowing before spending a day patching them. Iceland sits west of -20,
-so all four cells built here are outside the area.
+bearing on it. Iceland sits west of -20, so all four cells built here are outside the area.
 
 ## What draws and what does not
 
@@ -222,8 +221,8 @@ Country labels are points in layer 25 of the level-6 record, and the point type 
 | 0x80b6 | SVK | 0x80b7 | SVN | 0x80b8 | CZE | 0x80b9 | TUR |
 | 0x80ba | UKR | 0x80bb | HUN | 0x80bc | BLR | 0x80bd | RUS |
 
-`0x8040` to `0x807f` are POI icons: parking, airport, hotel, dealer and so on. There is no badge to
-be had for a country outside the table. The label text is in no card file, searched; it comes from
+`0x8040` to `0x807f` are POI icons: parking, airport, hotel, dealer and so on. There is no badge
+for a country outside the table. The label text is in no card file, searched; it comes from
 the unit's firmware. Probes of `0x8080` to `0x8095` and `0x80be` to `0x8130` drew nothing.
 
 ## The two database versions
