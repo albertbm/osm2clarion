@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Check a POINT file's facilities, their search frames and their icons in the tiles.
 
-    poi_check.py POINT.DAT [TILE.DAT ...] [--fold Þ=TH,þ=th,Ð=D,ð=d] [-v]
+    poi_check.py POINT.DAT [TILE.DAT ...] [--pois pois.json] [--fold Þ=TH,þ=th,Ð=D,ð=d] [-v]
 
 The POINT side, tiles or not: every facility (non-settlement name record) must be reachable
 from the letter trie under each word of its folded name; slot 278 must hold one CATEGORY
@@ -13,17 +13,20 @@ The tries are walked here, not through point_io's reader, and the parcel arithme
 GEOMETRY.md's formula rather than the writer's, so a shared mistake shows up.
 
 The tile side: every 00ff point in a level-1 or level-2 background record must index a
-12-byte side entry 0000 0000 ffff 0000 2xxx 0000 on a 6-halfword boundary whose code is the
+12-byte side entry 0000 0000 ffff 0000 2xxx 0000 whose code is the
 sub-category, or the genre's fixed code (hospital 2000, rest area 3272), of a facility of
 that code within TOLERANCE_M - the icon stays at the OSM position, the facility's search
 position is snapped onto its street link, 18-25 m apart even when that is correct
-(match_icons); a facility inside a tile given here must have an icon at both levels, and
+(match_icons); 20-byte camera entries can share the side section, so each point's actual
+halfword index is used. --pois supplies the unsnapped OSM positions for generated facilities. A
+facility inside a tile given here must have an icon at both levels, and
 one whose parcel has no record at all is reported too. Level-2 positions follow from the
 level-1 words as bg_tiles derives them. Works on factory tiles (mmap walk, no read_tile); a
 factory tile has facilities the POINT file of one country does not, so there -v lists the
 unmatched icons rather than failing.
 """
 import collections
+import json
 import math
 import os
 import struct
@@ -219,14 +222,51 @@ TOLERANCE_M = 30
 CELL_DEG = 0.002   # grid cell for the local 'wrong code' lookup; well over TOLERANCE_M
 
 
-def icon_targets(fac):
-    """{level: [(lat, lon, code, w0, w1, x, y)]} of every facility's own real position. The
-    icon sits TOLERANCE_M or so away at the OSM position (measure_factory.py), so matching
-    is by code and distance (match_icons), not exact parcel position."""
+def source_positions(fac, pois, problems):
+    """Match generated facilities to their source JSON rows and return {name index: lat/lon}."""
+    by_key = collections.defaultdict(list)
+    for i, f in fac.items():
+        by_key[(f['name'], f['category'], f['subcategory'])].append(i)
+    sources = collections.defaultdict(list)
+    for p in pois:
+        sources[(p['name'], p['cat'], p['sub'])].append(p)
+    out = {}
+    for key, rows in sources.items():
+        candidates = by_key.get(key, [])
+        if len(candidates) < len(rows):
+            problems.append('pois.json: %r has %d rows but POINT has %d matching facilities'
+                            % (key, len(rows), len(candidates)))
+            continue
+        pairs = []
+        for ri, p in enumerate(rows):
+            for fi in candidates:
+                f = fac[fi]
+                pairs.append((metres((p['lat'], p['lon']), real_latlon(1, f['lat'], f['lon'], f['x'], f['y'])), ri, fi))
+        used_rows, used_fac = set(), set()
+        for _d, ri, fi in sorted(pairs):
+            if ri in used_rows or fi in used_fac:
+                continue
+            used_rows.add(ri)
+            used_fac.add(fi)
+            out[fi] = (rows[ri]['lat'], rows[ri]['lon'])
+    return out
+
+
+def icon_targets(fac, originals=None):
+    """{level: [(lat, lon, code, w0, w1, x, y)]} at the OSM position when supplied, or
+    the facility search position otherwise."""
     out = {1: [], 2: []}
-    for f in fac.values():
+    originals = originals or {}
+    for i, f in fac.items():
         code = f['subcategory'] if f['subcategory'] != 0xffff else FIXED.get(f['category'])
         if code is None:
+            continue
+        if i in originals:
+            lat, lon = originals[i]  # Generated icons stay at OSM coordinates while search rows are snapped.
+            for level in (1, 2):
+                row, col, x, y = clarion_bg.parcel_of(level, lat, lon)
+                w0, w1 = clarion_bg.parcel_code(level, row, col)
+                out[level].append((lat, lon, code, w0, w1, x, y))
             continue
         lat, lon = real_latlon(1, f['lat'], f['lon'], f['x'], f['y'])
         out[1].append((lat, lon, code, f['lat'], f['lon'], f['x'], f['y']))
@@ -266,7 +306,7 @@ def check_record(plain, level, icons_out, problems, tag):
                 problems.append('%s: 00ff point at %d,%d without a side index' % (tag, x, y))
                 continue
             idx = sh['idx']
-            if idx % 6 or 2 * idx + 12 > len(side):
+            if 2 * idx + 12 > len(side):
                 problems.append('%s: idx %d off the side section (%d bytes)' % (tag, idx, len(side)))
                 continue
             e = struct.unpack_from('>6H', side, 2 * idx)
@@ -339,8 +379,8 @@ def match_icons(icons, targets, level, stats, problems):
     return used
 
 
-def check_tiles(tiles, fac, stats, problems):
-    want = icon_targets(fac)
+def check_tiles(tiles, fac, stats, problems, originals=None):
+    want = icon_targets(fac, originals)
     expected = {lv: len(want[lv]) for lv in (1, 2)}
     parcels_seen = {1: set(), 2: set()}
     per_tile = collections.Counter()
@@ -398,9 +438,14 @@ def check_tiles(tiles, fac, stats, problems):
 
 
 def main(argv):
-    verbose = argv.count('-v')        # -v lists 200 problems and exits 0, -vv lists them all
+    verbose = argv.count('-v')        # -v lists 200 problems, -vv lists them all
     argv = [a for a in argv if a != '-v']
     fold = None
+    pois_path = None
+    if '--pois' in argv:
+        i = argv.index('--pois')
+        pois_path = argv[i + 1]
+        del argv[i:i + 2]
     if '--fold' in argv:
         i = argv.index('--fold')
         fold = dict(kv.split('=') for kv in argv[i + 1].split(','))
@@ -412,11 +457,12 @@ def main(argv):
     print('POINT: %d facilities, slot 278 %s entries, slot 279 %s entries, slot 15 %s entries'
           % (stats['facilities'], stats['slot 278 entries'], stats['slot 279 entries'], stats['slot 15 entries']))
     if tiles:
-        check_tiles(tiles, fac, stats, problems)
+        originals = source_positions(fac, json.load(open(pois_path)), problems) if pois_path else None
+        check_tiles(tiles, fac, stats, problems, originals)
     print('problems', len(problems))
     for p in problems[:{0: 20, 1: 200}.get(verbose, len(problems))]:
         print('  ' + p)
-    return 1 if problems and not verbose else 0
+    return 1 if problems else 0
 
 
 if __name__ == '__main__':

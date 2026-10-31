@@ -854,6 +854,19 @@ class TestPoiCheck(unittest.TestCase):
         self.assertEqual(poi_check.folded_words("PLACE D'ARMES", None), ("PLACE D'ARMES", [0, 6, 8]))
         self.assertEqual(poi_check.folded_words('Þrír Frakkar', TestPoiPoint.FOLD), ('THRIR FRAKKAR', [0, 6]))
 
+    def test_icon_after_20_byte_camera_side_entry(self):
+        import poi_check
+        w = [0] * 22
+        w[0], w[1] = clarion_bg.parcel_code(1, 3078, 28866)
+        w[2], w[7], w[8] = 0x19, 0xffff, 0
+        rec = dict(hdr=w, nlayers=0, layers={}, sections={})
+        clarion_bg.add_point(rec, 0x0050, 10, 20, side=clarion_bg.camera_service_record(20, 17, 2))
+        clarion_bg.add_point(rec, clarion_bg.ICON, 30, 40, side=clarion_bg.emblem_entry(924))
+        icons, problems = [], []
+        poi_check.check_record(clarion_bg.build_record(rec), 1, icons, problems, 'TEST')
+        self.assertEqual(problems, [])
+        self.assertEqual(icons[0][:3], (924, 30, 40))
+
 
 class TestPoiCheckTolerance(unittest.TestCase):
     """icon_targets/match_icons: the icon stays at the OSM position while poi_point snaps
@@ -897,6 +910,21 @@ class TestPoiCheckTolerance(unittest.TestCase):
         problems, stats, used = self.check(fac, plain)
         self.assertEqual(problems, [])
         self.assertEqual(stats[(1, 'matched')], 1)
+        self.assertEqual(used, {0})
+
+    def test_pois_json_uses_unsnapped_position_beyond_fallback_tolerance(self):
+        import poi_check
+        lat, lon = 64.1340, -21.9260
+        la, lo, y, x = addre_io.parcel_point(lat, lon)
+        fac = {7: dict(self.offset_facility(lat, lon, 135), name='Far Snap')}
+        plain = self.icon_record(la, lo, 924, x, y)
+        problems = []
+        originals = poi_check.source_positions(
+            fac, [dict(name='Far Snap', cat=6, sub=924, lat=lat, lon=lon)], problems)
+        icons, stats = [], collections.Counter()
+        poi_check.check_record(plain, 1, icons, problems, 'TEST')
+        used = poi_check.match_icons(icons, poi_check.icon_targets(fac, originals)[1], 1, stats, problems)
+        self.assertEqual(problems, [])
         self.assertEqual(used, {0})
 
     def test_icon_500m_from_its_facility_still_fails(self):
