@@ -10,7 +10,7 @@ The factory cases need OSM2CLARION_FACTORY_TILE (B48R060R.DAT, the tile the draf
 and OSM2CLARION_FACTORY_POINT (REFER001/POINT018.DAT inflated, Luxembourg) or they skip.
 Nothing from either is written anywhere.
 """
-import math, os, struct, sys, unittest, unittest.mock, zlib
+import collections, math, os, struct, sys, unittest, unittest.mock, zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -853,6 +853,118 @@ class TestPoiCheck(unittest.TestCase):
         import poi_check
         self.assertEqual(poi_check.folded_words("PLACE D'ARMES", None), ("PLACE D'ARMES", [0, 6, 8]))
         self.assertEqual(poi_check.folded_words('Þrír Frakkar', TestPoiPoint.FOLD), ('THRIR FRAKKAR', [0, 6]))
+
+
+class TestPoiCheckTolerance(unittest.TestCase):
+    """icon_targets/match_icons: the icon stays at the OSM position while poi_point snaps
+    the facility's own search position onto the nearest street link, so a correctly-snapped
+    pair sits TOLERANCE_M apart, not at the same position - poi_check must match the two by
+    code and distance, not by exact equality."""
+
+    def icon_record(self, w0, w1, code, x, y):
+        w = [0] * 22
+        w[0], w[1] = w0, w1
+        w[2] = 0x19
+        w[7], w[8] = 0xffff, 0
+        pts = [(x, y, code)]
+        rec = dict(hdr=w, nlayers=26, layers={25: clarion_bg.icon_layer(pts)},
+                   sections={'points': clarion_bg.icon_side(pts)})
+        return clarion_bg.build_record(rec)
+
+    def check(self, fac, plain, level=1):
+        import poi_check
+        icons, problems, stats = [], [], collections.Counter()
+        poi_check.check_record(plain, level, icons, problems, 'TEST')
+        want = poi_check.icon_targets(fac)
+        used = poi_check.match_icons(icons, want[level], level, stats, problems)
+        return problems, stats, used
+
+    def offset_facility(self, lat, lon, metres_east, code=6, sub=924):
+        """A facility of the given code, metres_east of (lat, lon) at the same latitude."""
+        dlon = metres_east / (111320 * math.cos(math.radians(lat)))
+        la, lo, y, x = addre_io.parcel_point(lat, lon + dlon)
+        return {'category': code, 'subcategory': sub, 'lat': la, 'lon': lo, 'x': x, 'y': y}
+
+    def test_correctly_snapped_pair_matches(self):
+        """A restaurant icon at the OSM position and its facility 20 m east, snapped onto a
+        street link - a plausible distance per measure_factory.py (median 22 m, max 25.5 m
+        on the factory pair). Must match with no 'no facility' or 'wrong code' problem."""
+        lat, lon = 64.1340, -21.9260
+        la, lo, y, x = addre_io.parcel_point(lat, lon)
+        fac = {0: self.offset_facility(lat, lon, 20)}
+        self.assertEqual((fac[0]['lat'], fac[0]['lon']), (la, lo), 'the offset must stay in the icon\'s own parcel')
+        plain = self.icon_record(la, lo, 924, x, y)
+        problems, stats, used = self.check(fac, plain)
+        self.assertEqual(problems, [])
+        self.assertEqual(stats[(1, 'matched')], 1)
+        self.assertEqual(used, {0})
+
+    def test_icon_500m_from_its_facility_still_fails(self):
+        """A real defect - the facility is nowhere near the icon - must still be reported;
+        the tolerance is for the factory's own snap distance, not a licence to ignore
+        anything within reach."""
+        lat, lon = 64.1340, -21.9260
+        la, lo, y, x = addre_io.parcel_point(lat, lon)
+        fac = {0: self.offset_facility(lat, lon, 500)}
+        plain = self.icon_record(la, lo, 924, x, y)
+        problems, stats, used = self.check(fac, plain)
+        self.assertEqual(stats[(1, 'matched')], 0)
+        self.assertEqual(used, set())
+        self.assertEqual(len(problems), 1)
+        self.assertIn('nearest code-924 facility', problems[0])
+        self.assertIn('m away', problems[0])
+        dist = float(problems[0].split('is ')[1].split(' m away')[0])
+        self.assertGreater(dist, 400)
+
+    def test_wrong_code_within_tolerance_is_still_flagged(self):
+        """A facility of a different code sitting within tolerance is a real defect (the
+        exact-position check's old 'wrong code' case) and must stay flagged, not be waved
+        through because some other-coded thing happens to be nearby."""
+        lat, lon = 64.1340, -21.9260
+        la, lo, y, x = addre_io.parcel_point(lat, lon)
+        fac = {0: self.offset_facility(lat, lon, 20, code=6, sub=906)}   # fast food, not 924
+        plain = self.icon_record(la, lo, 924, x, y)
+        problems, stats, used = self.check(fac, plain)
+        self.assertEqual(stats[(1, 'matched')], 0)
+        self.assertEqual(stats[(1, 'wrong code')], 1)
+        self.assertEqual(used, set())
+        self.assertTrue(any('is code 906' in p for p in problems), problems)
+
+
+class TestPoiCheckFactoryTolerance(unittest.TestCase):
+    """The control track: poi_check's tolerance against the real factory pair, not a
+    synthetic one. factory_point()/TILE_ENV skip without the env vars (see module
+    docstring)."""
+
+    def test_factory_pairs_match_within_tolerance(self):
+        d = factory_point()
+        path = os.environ.get(TILE_ENV)
+        if not path or not os.path.exists(path):
+            raise unittest.SkipTest('set %s to a factory tile' % TILE_ENV)
+        import poi_check
+        problems, stats = [], collections.Counter()
+        fac = poi_check.check_point(d, None, problems, stats)
+        want = poi_check.icon_targets(fac)
+        icons = []
+        with TileScan(path) as t:
+            for r in t.records(section=1, level=1):
+                if not r.is_zlib:
+                    continue
+                try:
+                    plain = r.plain()
+                except zlib.error:
+                    continue
+                if len(plain) < 44 or struct.unpack_from('>H', plain, 4)[0] != 0x19:
+                    continue
+                poi_check.check_record(plain, 1, icons, [], 'FACTORY')
+        match_problems = []
+        poi_check.match_icons(icons, want[1], 1, stats, match_problems)
+        # measure_factory.py against this same pair: 878 icons have a same-code facility
+        # within 100 m, median 21.96 m, p90 23.93 m, p99 25.13 m, max 25.51 m - all inside
+        # TOLERANCE_M (30 m), so the snap itself should cost the one-to-one assignment no
+        # more than a handful of matches
+        self.assertGreaterEqual(stats[(1, 'matched')], 850, 'the factory pairs should match within tolerance')
+        self.assertEqual(stats[(1, 'wrong code')], 0, 'nothing should sit closer by code mismatch at level 1')
 
 
 if __name__ == '__main__':
