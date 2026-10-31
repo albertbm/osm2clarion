@@ -15,7 +15,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
-import addre_io, clarion_bg, extract_pois, fa_encode, frames, point_io, poi_point  # noqa: E402
+import addre_io, clarion_bg, extract_pois, fa_encode, frames, point_io, poi_point, shape_index  # noqa: E402
 from tile_scan import TileScan  # noqa: E402
 
 TILE_ENV, POINT_ENV = 'OSM2CLARION_FACTORY_TILE', 'OSM2CLARION_FACTORY_POINT'
@@ -42,6 +42,22 @@ def factory_record(level, code):
             if len(head) == 6 and struct.unpack('>3H', head) == code + (0x19,):
                 return r.plain()
     raise unittest.SkipTest('record %04x %04x not in the tile' % code)
+
+
+def factory_fa_record(level, code):
+    """The inflated section-1 0x00fa road-shape record with this parcel code - the plain
+    sibling of factory_record's background record, same tile, same code+type scan."""
+    path = os.environ.get(TILE_ENV)
+    if not path or not os.path.exists(path):
+        raise unittest.SkipTest('set %s to a factory tile' % TILE_ENV)
+    with TileScan(path) as t:
+        for r in t.records(section=1, level=level):
+            if not r.is_zlib or r.n > (4 << 20):
+                continue
+            head = zlib.decompressobj().decompress(bytes(t.m[r.off:r.off + 2048]))[:6]
+            if len(head) == 6 and struct.unpack('>3H', head) == code + (0xfa,):
+                return r.plain()
+    raise unittest.SkipTest('0x00fa record %04x %04x not in the tile' % code)
 
 
 def latlon(la, lo, x, y):
@@ -305,7 +321,7 @@ class TestPoiPoint(unittest.TestCase):
         pois = [dict(name='Landspítali', cat=11, sub=0xffff, lat=64.1340, lon=-21.9260),
                 dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900),
                 dict(name='Þrír Frakkar', cat=6, sub=924, lat=64.1440, lon=-21.9300)]
-        out, cats = poi_point.merge(d, pois, self.FOLD)
+        out, cats = poi_point.merge(d, pois, self.FOLD, allow_placeholder_refs=True)
         q = point_io.Point(out)
         self.assertEqual(len(q.names), 5)
         self.assertEqual([c for c, _, _ in cats], [5, 6, 11])
@@ -343,7 +359,8 @@ class TestPoiPoint(unittest.TestCase):
         self.assertEqual((stats['facilities'], stats['slot 278 entries'], stats['slot 279 entries']), (3, 3, 2))
 
     def test_sub_category_frame_missing_is_reported(self):
-        out, _cats = poi_point.merge(self.base_file(), [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD)
+        out, _cats = poi_point.merge(self.base_file(), [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD,
+                                     allow_placeholder_refs=True)
         import poi_check
         problems = []
         poi_check.check_point(out, self.FOLD, problems, {})
@@ -364,7 +381,8 @@ class TestPoiPoint(unittest.TestCase):
             return real(*a, **kw)
         with unittest.mock.patch.object(poi_point.point_io, 'name_record', three_refs):
             with self.assertRaises(AssertionError):
-                poi_point.merge(d, [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD)
+                poi_point.merge(d, [dict(name='Hótel Kea', cat=5, sub=3500, lat=65.6815, lon=-18.0900)], self.FOLD,
+                                allow_placeholder_refs=True)
 
     def test_word_keys_cut_like_the_factory(self):
         def keys(name):
@@ -394,23 +412,110 @@ class TestFacilityRefs(unittest.TestCase):
         plain = self.record()
         w = struct.unpack('>%dH' % (len(plain) // 2), plain)
         g = 2 * w[7]
-        refs = poi_point.nearest_link_refs(plain, None, 105, 205)   # beside NODES[0]
+        refs, foot = poi_point.nearest_link_refs(plain, None, 105, 205, 64.0)   # beside NODES[0]
         self.assertEqual(len(refs), 2)
         pts = [(w[g + v] & 0x7ff, w[g + v + 1] & 0x7ff) for _tag, _fl, v in refs]
         self.assertIn(self.NODES[0], pts, 'one ref lands on the node the facility sits beside')
         self.assertIn(self.NODES[1], pts, "the link's other end is the shared node")
         self.assertTrue(all(fl == 0x40 for _tag, fl, _v in refs), 'both refs are graph nodes')
+        self.assertLess(math.hypot(foot[0] - 105, foot[1] - 205), 10, 'the foot point lands near the facility')
+
+    def test_nearest_link_is_a_segment_not_a_vertex(self):
+        """Near the middle of link 850's span but past node1's y, so node1 (which also
+        bounds link 1600) is the nearest VERTEX overall; the nearest SEGMENT is still
+        850's own interior, closer than node1 itself - the regression note 1 fixes."""
+        plain = self.record()
+        w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+        g = 2 * w[7]
+        refs, _foot = poi_point.nearest_link_refs(plain, None, 850, 241, 64.0)
+        pts = {(w[g + v] & 0x7ff, w[g + v + 1] & 0x7ff) for _tag, _fl, v in refs}
+        self.assertEqual(pts, {self.NODES[0], self.NODES[1]}, "850's own link, not node1's other link (1600)")
 
     def test_facility_refs_reports_a_parcel_with_no_road(self):
         problems = []
         la, lo = clarion_bg.parcel_code(1, 96 * 32 + 7, 898 * 32 + 9)
         tile_recs = {(la, lo): (self.record(), None)}
         other_la, other_lo = clarion_bg.parcel_code(1, 96 * 32 + 8, 898 * 32 + 9)
-        refs = poi_point.facility_refs(tile_recs, other_la, other_lo, 100, 100, problems, 'LONE FACILITY')
+        refs = poi_point.facility_refs(tile_recs, other_la, other_lo, 100, 100, 64.0, problems, 'LONE FACILITY')
         self.assertIsNone(refs)
         self.assertEqual(len(problems), 1)
         self.assertIn('LONE FACILITY', problems[0])
         self.assertIn('no street', problems[0])
+
+
+class TestFactoryNearestLink(unittest.TestCase):
+    """nearest_link_refs against POINT018's own facilities, parcel a52c:d0ff of
+    B48R060R.DAT: the segment rule reproduces the factory's referenced link; a nearest-
+    vertex rule, re-implemented here only to show the contrast, does not."""
+
+    CODE = (0xa52c, 0xd0ff)
+
+    def test_matches_factory_refs_over_the_parcel(self):
+        d = factory_point()
+        plain = factory_fa_record(1, self.CODE)
+        bg = factory_record(1, self.CODE)
+        row, _col = clarion_bg.parcel_rowcol(1, *self.CODE)
+        lat = row / 48
+        p = point_io.Point(d)
+        fac = [f for f in (point_io.parse_name_record(nr) for nr in p.names)
+               if f['category'] != point_io.SETTLEMENT and (f['lat'], f['lon']) == self.CODE
+               and len(f['refs']) == 2 and all(r[1] == 0x40 for r in f['refs'])]
+        self.assertGreater(len(fac), 20, 'enough facilities in this parcel to mean something')
+
+        def vertex_refs(x, y):
+            """The pre-fix rule: nearest point over every shape, then that link's bounds."""
+            _code, g, shapes = shape_index.shapes_of(plain, bg)
+            w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+            best = None
+            for s in shapes:
+                for q, (role, lid) in s['points'].items():
+                    dist = math.hypot((w[q] & 0x7ff) - x, (w[q + 1] & 0x7ff) - y)
+                    if best is None or dist < best[0]:
+                        best = (dist, q, lid, s)
+            _dist, _q, lid, shape = best
+            pts = sorted(shape['points'].items())
+            idxs = [i for i, (pq, (prole, plid)) in enumerate(pts) if plid == lid]
+            i0, i1 = idxs[0], idxs[-1]
+            end_q = pts[i1][0]
+            start_q = pts[i0][0] if pts[i0][1][0] == 'start' else pts[i0 - 1][0]
+            sv, ev = start_q - g, end_q - g
+            tags = (2, 3) if sv < ev else (4, 5)
+            return ((tags[0], 0x40, sv), (tags[1], 0x40, ev))
+
+        segment_hits = vertex_hits = 0
+        for f in fac:
+            refs, _foot = poi_point.nearest_link_refs(plain, bg, f['x'], f['y'], lat)
+            segment_hits += refs == f['refs']
+            vertex_hits += vertex_refs(f['x'], f['y']) == f['refs']
+        # REPORT-poifix.md: 2,607/2,636 (98.9%) over the whole tile this way, 1,371/2,636
+        # (52%) by nearest vertex; a few ties between two overlapping links (opposite
+        # carriageways sharing both nodes) still pick the wrong direction tag either way.
+        self.assertGreaterEqual(segment_hits / len(fac), 0.9, 'matches most of this parcel\'s facilities')
+        self.assertLess(vertex_hits, segment_hits, 'the vertex rule does markedly worse on the same facilities')
+
+    def test_snaps_near_the_factory_position(self):
+        """The factory's own facilities sit close to their referenced link already
+        (REPORT-poifix.md: median 0, 0-2 m); the foot point nearest_link_refs returns
+        should land close to the recorded position for most of them."""
+        d = factory_point()
+        plain = factory_fa_record(1, self.CODE)
+        bg = factory_record(1, self.CODE)
+        row, _col = clarion_bg.parcel_rowcol(1, *self.CODE)
+        lat = row / 48
+        mx, my = poi_point.parcel_metres(lat)
+        p = point_io.Point(d)
+        fac = [f for f in (point_io.parse_name_record(nr) for nr in p.names)
+               if f['category'] != point_io.SETTLEMENT and (f['lat'], f['lon']) == self.CODE
+               and len(f['refs']) == 2 and all(r[1] == 0x40 for r in f['refs'])]
+        dists = []
+        for f in fac:
+            refs, (fx, fy) = poi_point.nearest_link_refs(plain, bg, f['x'], f['y'], lat)
+            if refs != f['refs']:
+                continue   # only meaningful where the chosen link is the factory's own
+            dists.append(math.hypot((f['x'] - fx) * mx, (f['y'] - fy) * my))
+        dists.sort()
+        self.assertLess(dists[len(dists) // 2], 2, 'median distance to the foot point, metres')
+        self.assertLess(dists[int(0.9 * len(dists))], 10, '90th percentile, metres')
 
 
 class TestLadderConvention(unittest.TestCase):
@@ -464,12 +569,41 @@ class TestLadderConvention(unittest.TestCase):
         Reykjavík, the real nearest town (CARDS.md row 032: 0.0413 against 0.0422)."""
         d = self.base_file_yfirst()
         hospital = dict(name='TEST SPITALI', cat=11, sub=0xffff, lat=64.1410, lon=-21.7590)
-        out, _cats = poi_point.merge(d, [hospital], self.FOLD)
+        out, _cats = poi_point.merge(d, [hospital], self.FOLD, allow_placeholder_refs=True)
         self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 12, 0),
                          'mirrored: picks Mosfellsbær over the much nearer Reykjavík')
-        out, _cats = poi_point.merge(d, [hospital], self.FOLD, settlements_yfirst=True)
+        out, _cats = poi_point.merge(d, [hospital], self.FOLD, settlements_yfirst=True, allow_placeholder_refs=True)
         self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 0, 0),
                          'read the way they were written: Reykjavík, the real nearest town')
+
+
+class TestPlaceholderRefsFail(unittest.TestCase):
+    """merge() exits non-zero on a placeholder ref unless --allow-placeholder-refs - note
+    4. test_facilities and friends already cover the override path."""
+
+    FOLD = TestPoiPoint.FOLD
+
+    def test_no_road_tile_at_all_fails(self):
+        d = TestPoiPoint().base_file()
+        poi = dict(name='Landspítali', cat=11, sub=0xffff, lat=64.1340, lon=-21.9260)
+        problems = []
+        with self.assertRaises(SystemExit):
+            poi_point.merge(d, [poi], self.FOLD, problems=problems)
+        self.assertTrue(any('no --road-tile' in p for p in problems), problems)
+        out, _cats = poi_point.merge(d, [poi], self.FOLD, allow_placeholder_refs=True)
+        self.assertEqual(len(point_io.Point(out).names), 3)
+
+    def test_parcel_without_a_road_record_fails(self):
+        d = TestPoiPoint().base_file()
+        poi = dict(name='Landspítali', cat=11, sub=0xffff, lat=64.1340, lon=-21.9260)
+        with self.assertRaises(SystemExit):
+            poi_point.merge(d, [poi], self.FOLD, road_tiles=())
+        # road_tiles=() is falsy, same as None at the call site; exercise a real (empty) tile_recs map
+        with unittest.mock.patch.object(poi_point, 'road_tile_records', lambda paths: {}):
+            with self.assertRaises(SystemExit):
+                poi_point.merge(d, [poi], self.FOLD, road_tiles=['dummy.DAT'])
+            out, _cats = poi_point.merge(d, [poi], self.FOLD, road_tiles=['dummy.DAT'], allow_placeholder_refs=True)
+            self.assertEqual(len(point_io.Point(out).names), 3)
 
 
 class TestSubCategory(unittest.TestCase):
