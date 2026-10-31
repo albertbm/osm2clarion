@@ -4,7 +4,8 @@
 
     poi_point.py POINT001.DAT pois.json out.DAT [--road-tile TILE.DAT] [--road-tile TILE.DAT ...]
                  [--fold Þ=TH,þ=th,Ð=D,ð=d] [--adm-lang 20] [--settlements-yfirst]
-                 [--ref-base 0x8000] [--lang 63] [--allow-placeholder-refs]
+                 [--ref-base 0x8000] [--lang 63] [--municipalities ICELAND.osm.pbf]
+                 [--allow-placeholder-refs] [--allow-missing-ladder]
 
 The file is taken apart with point_io.Point and put back with every search frame rebuilt:
 the letter trie and data records (one per word of every name, flag 0x4000 on the later
@@ -14,23 +15,29 @@ tries) for every facility category present, the ones already in the file include
 an empty pois.json the output is the input, byte for byte, which is the check this runs
 on the ADM frame before touching anything.
 
-Each facility gets the area ladder of the nearest settlement record; --settlements-yfirst
-reads those settlement positions swapped, for a POINT file whose settlements were written
-y first (card 030 and earlier, leaf-is-map addr/build_point.py / build_addr_area0.py before
-PATCH-point-xy). The position words are its own level-1 parcel (x first, our own
-convention).
+Each facility's ladder comes from --municipalities, an OSM extract of admin_level=6
+boundaries (load_municipalities): the municipality polygon containing the facility, mapped
+to the POINT settlement row of the same name (ladder_leaf). Without --municipalities the
+old nearest-settlement ladder stands instead, for callers with no OSM extract on hand - it
+picks the wrong town 39% of the time on the factory data (REPORT-poifix.md) and is kept
+only for that case. --settlements-yfirst reads the existing settlement positions swapped,
+for a POINT file whose settlements were written y first (card 030 and earlier, leaf-is-map
+addr/build_point.py / build_addr_area0.py before PATCH-point-xy). The position words are
+its own level-1 parcel (x first, our own convention).
 
 Refs are the start/end nodes of the street link nearest the facility in its own parcel's
 road record (--road-tile, read with shape_index/fa_encode; never a factory tile), by
 point-to-segment distance over each link's own polyline rather than nearest vertex
 (nearest_link_refs), and the search position is snapped to that link's foot point - the
 map icon, written elsewhere, keeps the OSM position. A parcel with no road record at all,
-or no --road-tile given at all, keeps the old placeholder ref and is listed on stderr, and
-makes this exit non-zero unless --allow-placeholder-refs says to proceed anyway - stderr,
-not silence, because no card we have shows what the factory does there (facility_refs'
-docstring). No address, no telephone, a data id past the highest one in the file. --fold
-adds keyboard foldings to addre_io.fold_key for the trie keys; --adm-lang is the language
-the ADM rows carry (20 where the country's language is none of the 18 menu languages).
+or no --road-tile given at all, keeps the old placeholder ref and is listed on stderr.
+Either kind of placeholder, or a facility whose municipality has no POINT node, makes this
+exit non-zero unless --allow-placeholder-refs / --allow-missing-ladder says to proceed
+anyway - stderr, not silence either way, because no card we have shows what the factory
+does there (facility_refs' docstring) and a silently wrong ladder is the bug this replaced.
+No address, no telephone, a data id past the highest one in the file. --fold adds keyboard
+foldings to addre_io.fold_key for the trie keys; --adm-lang is the language the ADM rows
+carry (20 where the country's language is none of the 18 menu languages).
 """
 import json
 import math
@@ -187,6 +194,64 @@ def facility_refs(tile_recs, la, lo, x, y, lat, problems=None, name=''):
     return result
 
 
+def load_municipalities(pbf):
+    """Administrative boundaries as (name, shapely polygon) pairs, for the ladder's
+    point-in-polygon test: admin_level=6 relations (Iceland's municipalities), the way
+    osm_roads.region reads a given relation list, but every one in the extract rather than
+    a fixed set. Needs osmium and shapely; an OSM extract, never a factory tile."""
+    import osmium
+    import shapely
+    import shapely.wkb
+    fab = osmium.geom.WKBFactory()
+    out = []
+
+    class H(osmium.SimpleHandler):
+        def area(self, a):
+            if a.tags.get('boundary') != 'administrative' or a.tags.get('admin_level') != '6':
+                return
+            name = a.tags.get('name')
+            if name:
+                out.append((name, shapely.wkb.loads(fab.create_multipolygon(a), hex=True)))
+    H().apply_file(pbf, locations=True)
+    for _name, poly in out:
+        shapely.prepare(poly)
+    return out
+
+
+def muni_name_of(lat, lon, municipalities):
+    """The name of the municipality polygon containing (lat, lon), or None."""
+    import shapely
+    for name, poly in municipalities:
+        if shapely.contains_xy(poly, lon, lat):
+            return name
+    return None
+
+
+def town_municipalities(towns, municipalities):
+    """Which OSM municipality each POINT settlement row's own position falls in: not a
+    name match (an official admin name like "Hafnarfjarðarkaupstaður" or
+    "Seltjarnarnesbær" doesn't fold onto the settlement's own display name,
+    "HAFNARFJÖRÐUR" or "SELTJARNARNES" - Icelandic declension, not a simple affix), so
+    this tests containment on each settlement's own coordinates instead and groups by
+    that. Returns {index into towns: municipality name or None}."""
+    return {i: muni_name_of(lat, lon, municipalities) for i, (_nm, _lv, (lat, lon)) in enumerate(towns)}
+
+
+def ladder_leaf(muni_name, towns, town_munis, lat, lon):
+    """The ladder of the POINT settlement(s) whose own position falls inside this
+    municipality (town_munis, from town_municipalities). A municipality can hold more
+    than one settlement row (GARÐABÆR and GARÐABÆR (ÁLFTANES), both inside today's merged
+    Garðabær boundary) - among those, the nearest one to the facility is the leaf; with
+    only one candidate there is no choice to make. None if the file has no row for this
+    municipality at all."""
+    cands = [towns[i][1:] for i, m in town_munis.items() if m == muni_name]
+    if not cands:
+        return None
+    if len(cands) == 1:
+        return cands[0][0]
+    return min(cands, key=lambda c: math.hypot(c[1][0] - lat, (c[1][1] - lon) * math.cos(math.radians(lat))))[0]
+
+
 def adm_frame(at, p, fold, adm_lang):
     """The ADM frame for the settlements of a parsed POINT file, at file offset at."""
     names, keys = [], {}
@@ -203,7 +268,7 @@ def adm_frame(at, p, fold, adm_lang):
 
 def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_LOCAL,
           road_tiles=None, settlements_yfirst=False, problems=None,
-          allow_placeholder_refs=False):
+          allow_placeholder_refs=False, municipalities=None, allow_missing_ladder=False):
     """Bytes of the POINT file d with the facilities of pois added. road_tiles, paths to
     our own built level-1 tiles, gives every facility real refs (facility_refs) and snaps
     its search position to the foot of the chosen link (the factory's own facilities sit
@@ -216,24 +281,45 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     MOSFELLSBÆR for a hospital at (64.1410, -21.7590), 0.0444 against REYKJAVÍK's 0.0452, because the
     settlements decoded mirrored).
 
-    problems, a list, collects one line per facility with a placeholder ref, if given,
-    whether or not --allow-placeholder-refs was passed."""
+    municipalities, (name, polygon) pairs from load_municipalities, assigns the ladder by
+    administrative containment instead of nearest settlement: the municipality polygon a
+    facility's position falls in, mapped to the POINT settlement row of the same name (or
+    the nearest of several sharing it as a prefix - ladder_leaf). Without municipalities
+    the old nearest-settlement ladder stands, for callers with no OSM extract on hand.
+    A facility whose municipality has no row in the file gets the country's own root ladder
+    and this raises unless --allow-missing-ladder lets it through - never the nearest
+    settlement regardless of distance.
+
+    problems, a list, collects one line per facility with a placeholder ref or a missing
+    ladder, if given, whether or not the corresponding --allow- flag was passed."""
     p = point_io.Point(d)
     old_adm, h, dfo = adm_frame(p.extra_off, p, fold, adm_lang)
     if d[p.extra_off:p.extra_off + len(old_adm)] != old_adm:
         raise SystemExit('the ADM frame rebuilt from the settlements differs from the file; '
                          'check --fold and --adm-lang')
     fields = [point_io.parse_name_record(nr) for nr in p.names]
-    towns = [(f['levels'],
+    towns = [(f['name'], f['levels'],
               parcel_latlon(f['lat'], f['lon'], *((f['y'], f['x']) if settlements_yfirst else (f['x'], f['y']))))
              for f in fields if f['category'] == point_io.SETTLEMENT]
     root = (p.area,) + (0,) * (p.nlevel - 1)
-    road_problems = []
+    road_problems, ladder_problems = [], []
+    town_munis = town_municipalities(towns, municipalities) if municipalities is not None else None
 
-    def ladder(lat, lon):
+    def ladder(lat, lon, name):
+        if municipalities is not None:
+            muni = muni_name_of(lat, lon, municipalities)
+            lv = ladder_leaf(muni, towns, town_munis, lat, lon) if muni else None
+            if lv is not None:
+                return lv
+            msg = ('%s: outside every municipality polygon' % name if muni is None else
+                   '%s: no POINT node for municipality %r' % (name, muni))
+            ladder_problems.append(msg)
+            if problems is not None:
+                problems.append(msg)
+            return root
         if not towns:
             return root
-        return min(towns, key=lambda t: math.hypot(t[1][0] - lat, (t[1][1] - lon) * math.cos(math.radians(lat))))[0]
+        return min(towns, key=lambda t: math.hypot(t[2][0] - lat, (t[2][1] - lon) * math.cos(math.radians(lat))))[1]
 
     tile_recs = road_tile_records(road_tiles) if road_tiles else None
     hits = {}        # key -> [(flags, name index, record bytes)]
@@ -247,7 +333,7 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     for poi in pois:
         idx = len(names)
         la, lo, y, x = addre_io.parcel_point(poi['lat'], poi['lon'])
-        lv = ladder(poi['lat'], poi['lon'])
+        lv = ladder(poi['lat'], poi['lon'], poi['name'])
         result = facility_refs(tile_recs, la, lo, x, y, poi['lat'], problems, poi['name']) if tile_recs is not None else None
         if result is None:
             road_problems.append(poi['name'])
@@ -271,6 +357,11 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
                          'pass --allow-placeholder-refs to proceed:\n  %s'
                          % (len(road_problems), 'y' if len(road_problems) == 1 else 'ies',
                             '\n  '.join(road_problems[:20] + (['...'] if len(road_problems) > 20 else []))))
+    if ladder_problems and not allow_missing_ladder:
+        raise SystemExit('%d facilit%s with no POINT node for their municipality; '
+                         'pass --allow-missing-ladder to proceed:\n  %s'
+                         % (len(ladder_problems), 'y' if len(ladder_problems) == 1 else 'ies',
+                            '\n  '.join(ladder_problems[:20] + (['...'] if len(ladder_problems) > 20 else []))))
     keys, recs = [], []
     for u in sorted(hits):
         hs = sorted(hits[u], key=lambda h: h[:2])
@@ -332,6 +423,10 @@ def main(argv):
     allow_placeholder_refs = '--allow-placeholder-refs' in argv
     if allow_placeholder_refs:
         argv.remove('--allow-placeholder-refs')
+    allow_missing_ladder = '--allow-missing-ladder' in argv
+    if allow_missing_ladder:
+        argv.remove('--allow-missing-ladder')
+    municipalities_pbf = opt('--municipalities', None)
     road_tiles = []
     while '--road-tile' in argv:
         i = argv.index('--road-tile')
@@ -340,9 +435,10 @@ def main(argv):
     src, pois_path, dest = argv
     d = open(src, 'rb').read()
     pois = json.load(open(pois_path))
+    municipalities = load_municipalities(municipalities_pbf) if municipalities_pbf else None
     problems = []
     out, cats = merge(d, pois, fold, adm_lang, ref_base, lang, road_tiles or None, settlements_yfirst, problems,
-                      allow_placeholder_refs)
+                      allow_placeholder_refs, municipalities, allow_missing_ladder)
     open(dest, 'wb').write(out)
     p, q = point_io.Point(d), point_io.Point(out)
     print('%s: names %d -> %d, records %d -> %d, %d -> %d bytes; categories %s'
@@ -351,7 +447,7 @@ def main(argv):
     if unfolded:
         print('  %d characters no folding reached, dropped from the keys: %s' % (len(unfolded), ''.join(sorted(set(unfolded)))))
     if problems:
-        print('  %d facilities with a placeholder ref, kept the old one:' % len(problems))
+        print('  %d problems (placeholder ref or missing ladder):' % len(problems))
         for line in problems:
             print('    ' + line)
 

@@ -577,6 +577,90 @@ class TestLadderConvention(unittest.TestCase):
                          'read the way they were written: Reykjavík, the real nearest town')
 
 
+class TestLadderByContainment(unittest.TestCase):
+    """merge()'s ladder() with --municipalities: point-in-polygon against OSM admin
+    boundaries, mapped to the POINT settlement row of the same name - note 3's fix for
+    nearest-settlement, which the factory data disagrees with 39% of the time
+    (REPORT-poifix.md). Needs shapely; skips without it, same as the extractor tests."""
+
+    FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
+    TOWNS = [('REYKJAVÍK', (0, 0, 0), 64.1466, -21.9426),
+             ('GARÐABÆR', (0, 3, 0), 64.0876, -21.9155),
+             ('GARÐABÆR (ÁLFTANES)', (0, 4, 0), 64.1048, -22.0192)]
+
+    def setUp(self):
+        try:
+            import shapely  # noqa: F401
+        except ImportError:
+            raise unittest.SkipTest('shapely not installed')
+
+    def base_file(self):
+        kw, cr = 2, 14
+        names, hits = [], {}
+        for i, (name, lv, lat, lon) in enumerate(self.TOWNS):
+            la, lo, y, x = addre_io.parcel_point(lat, lon)
+            names.append(point_io.name_record(name, lv, 3, point_io.SETTLEMENT, lat=la, lon=lo, x=x, y=y,
+                                              refs=((2, 0x40, 0x8000 + 4 * i), (3, 0x40, 0x8001 + 4 * i))))
+            for u, later in poi_point.word_keys(name, kw, self.FOLD):
+                hits.setdefault(u, []).append(point_io.data_record(lv, 3, i, point_io.SETTLEMENT, lat=la, lon=lo, x=x, y=y,
+                                                                   flags=0x4000 if later else 0))
+        keys, recs = [], []
+        for u in sorted(hits):
+            keys.append((u, len(recs), len(hits[u])))
+            recs += hits[u]
+        out, _, _ = point_io.assemble(frames.point_prefix((4800, 1280, -1680, 3600), '14/11/17/01'), bytes(frames.POINT_DF),
+                                      keys, recs, names, [], cr, kw, 0, 3, maxkey_hint=frames.point_d(names))
+        at = frames.up(len(out))
+        frame, h, dfo = poi_point.adm_frame(at, point_io.Point(out), self.FOLD, 20)
+        out = bytearray(out) + b'\0' * (at - len(out)) + frame
+        struct.pack_into('>IH', out, 0x800 + 6 * 280, addre_io.addr(h), 1)
+        struct.pack_into('>IH', out, 0x800 + 6 * 287, addre_io.addr(dfo), 1)
+        return bytes(out)
+
+    def garðabær_box(self):
+        """Covers both the Garðabær centre and the Álftanes point, not Reykjavík - today's
+        single municipality, which merged the two in real life."""
+        import shapely
+        box = shapely.box(-22.05, 64.06, -21.88, 64.12)
+        shapely.prepare(box)
+        return [('Garðabær', box)]
+
+    def test_point_in_one_municipality_picks_the_nearer_leaf(self):
+        d = self.base_file()
+        municipalities = self.garðabær_box()
+        near_alftanes = dict(name='TEST STOFA', cat=11, sub=0xffff, lat=64.1040, lon=-22.0150)
+        out, _cats = poi_point.merge(d, [near_alftanes], self.FOLD, municipalities=municipalities, allow_placeholder_refs=True)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 4, 0))
+        near_centre = dict(name='TEST STOFA 2', cat=11, sub=0xffff, lat=64.0880, lon=-21.9100)
+        out2, _c2 = poi_point.merge(d, [near_centre], self.FOLD, municipalities=municipalities, allow_placeholder_refs=True)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out2).names[-1])['levels'], (0, 3, 0))
+
+    def test_grouping_is_by_the_towns_own_position_not_their_name(self):
+        """town_municipalities groups by where each settlement row's own coordinates
+        land, not by matching its name against the OSM relation's: a real admin name
+        (Hafnarfjarðarkaupstaður, Seltjarnarnesbær) doesn't fold onto the plain town name
+        the POINT file carries, so name matching would silently find nothing here."""
+        d = self.base_file()
+        box = self.garðabær_box()[0][1]
+        municipalities = [('Sveitarfélagið Álftanes og Garðabær', box)]   # deliberately unlike either town's own name
+        poi = dict(name='TEST STOFA', cat=11, sub=0xffff, lat=64.1040, lon=-22.0150)
+        out, _cats = poi_point.merge(d, [poi], self.FOLD, municipalities=municipalities, allow_placeholder_refs=True)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 4, 0))
+
+    def test_outside_every_municipality_is_reported_and_fails(self):
+        d = self.base_file()
+        municipalities = self.garðabær_box()
+        far_away = dict(name='FAR AWAY', cat=11, sub=0xffff, lat=65.5, lon=-19.0)
+        problems = []
+        with self.assertRaises(SystemExit):
+            poi_point.merge(d, [far_away], self.FOLD, problems=problems, municipalities=municipalities, allow_placeholder_refs=True)
+        self.assertTrue(any('municipality' in p for p in problems), problems)
+        out, _cats = poi_point.merge(d, [far_away], self.FOLD, municipalities=municipalities, allow_placeholder_refs=True,
+                                     allow_missing_ladder=True)
+        self.assertEqual(point_io.parse_name_record(point_io.Point(out).names[-1])['levels'], (0, 0, 0),
+                         "the override keeps the country's root ladder, not a far settlement")
+
+
 class TestPlaceholderRefsFail(unittest.TestCase):
     """merge() exits non-zero on a placeholder ref unless --allow-placeholder-refs - note
     4. test_facilities and friends already cover the override path."""
