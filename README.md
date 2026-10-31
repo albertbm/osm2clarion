@@ -71,6 +71,8 @@ outside a European card's box, and `[shift]` moves the grid west to reach it, fo
 
 ## Limits
 
+- Japanese-market cards are a different format (`DBDIR/`, a paged database keyed on JIS
+  meshes). This fork reads them, and nothing writes one yet: [docs/JP-DBDIR.md](docs/JP-DBDIR.md).
 - No address database. `REFER001` ships through untouched: no address search, no postcode
   lookup, no house numbers.
 - Routing graphs at level 1 only. The router will not route over new roads.
