@@ -12,13 +12,15 @@ container from lev_file.write and the header from lev_file.header.
 
 Parcels outside the profile's cells are left absent. The sea label goes on level 3 only.
 
-    lev_build.py --profile iceland [--coastline PATH] [--roads roads.json --l2-tile TILE ...]
+    lev_build.py --profile iceland [--coastline PATH]
+                 [--roads roads.json --l2-tile TILE ... [--graph-bbox lon0,lat0,lon1,lat1]]
                  --data-version yy/mm/dd/nn OUT.DAT
 
 --roads adds road shapes at levels 3, 4 and 5 (lev_roads.build): the road-shape record in the
 even pair of a level-3 or level-4 column, a road block inside a level-5 record, and route
 numbers in the background records' names sections. It also writes the level-4 and level-5
-section-2 graphs and their down-pointers (lev_graph.build).
+section-2 graphs and their down-pointers (lev_graph.build). --graph-bbox keeps only the L2
+links fully inside that box, for a minimal test graph; it also skips patching the L2 tiles.
 """
 import os
 import sys
@@ -116,7 +118,7 @@ def directory(level, y0, x0, recs, labels):
     return D
 
 
-def build(P, coast_path, data_version, ways=None, l2_tiles=None):
+def build(P, coast_path, data_version, ways=None, l2_tiles=None, graph_bbox=None):
     bg_tiles.use_profile(P)
     land, _, _ = bg_tiles.load_land(coast_path)
     dby0, dbx0 = P.mesh_origin
@@ -157,11 +159,12 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
     # Off unless --l2-tile is given: the graph crashes the unit (cards 051-053) and rewrites the L2 tiles.
     if ways and l2_tiles:
-        graph_dirs, graph_stats = lev_graph.build(ways, P, l2_tiles)
+        graph_dirs, graph_stats = lev_graph.build(ways, P, l2_tiles, bbox=graph_bbox)
         for level in (4, 5):
             nrec, nnodes, nlinks = graph_stats[level]
             print('level %d routing: %d records, %d nodes, %d links' % (level, nrec, nnodes, nlinks))
         print('level 2 hierarchy flags: %s' % ', '.join('%#x=%d' % x for x in sorted(graph_stats['l2_flags'].items())))
+        print('level 2 tiles patched: %s' % graph_stats['l2_patched'])
 
     cells = arcmin(cy0, cy1, cx0, cx1)
     sec1 = dict(id=1, levels=[dict(level=l, typ=t, dirs=levels.get(l, [])) for l, t in tile_header.LEVELS[1]])
@@ -193,10 +196,15 @@ def main(argv):
         i = argv.index('--l2-tile')
         l2_tiles.append(argv[i + 1])
         del argv[i:i + 2]
+    graph_bbox = None
+    if '--graph-bbox' in argv:
+        i = argv.index('--graph-bbox')
+        graph_bbox = tuple(float(v) for v in argv[i + 1].split(','))
+        del argv[i:i + 2]
     i = argv.index('--data-version')
     version = argv[i + 1]
     del argv[i:i + 2]
-    out = build(P, coast, version, ways, l2_tiles)
+    out = build(P, coast, version, ways, l2_tiles, graph_bbox)
     with open(argv[0], 'wb') as f:
         f.write(out)
     print('wrote %s %d B' % (argv[0], len(out)))

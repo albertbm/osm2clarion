@@ -267,11 +267,24 @@ def patch_l2_flags(paths, flags):
     assert found == set(flags), 'L2 hierarchy nodes absent from tiles: %r' % sorted(set(flags) - found)[:10]
 
 
-def build(ways, profile, l2_tiles):
-    """({4: directory, 5: directory}, statistics) for lev_build."""
+def build(ways, profile, l2_tiles, bbox=None):
+    """({4: directory, 5: directory}, statistics) for lev_build.
+
+    bbox=(lon0, lat0, lon1, lat1) keeps only the emitted L2 links with both ends inside
+    it, for a minimal test graph, and skips patching hierarchy flags into the L2 tiles
+    (those flags are not needed for a down-pointer to resolve, only, if at all, for the
+    firmware to find the hierarchy from the fine side). Off by default; with no bbox this
+    is the normal full graph, unchanged.
+    """
     rd_build.use_profile(profile)
     if not l2_tiles: raise ValueError('coarse routing requires the emitted L2 road tiles')
     child = emitted_l2_layer(l2_tiles)
+    if bbox is not None:
+        lon0, lat0, lon1, lat1 = bbox
+        def inside(gid):
+            lon, lat = geo_of(child, gid)
+            return lon0 <= lon <= lon1 and lat0 <= lat <= lat1
+        child['links'] = [l for l in child['links'] if inside(l['a']) and inside(l['b'])]
     origin = profile.mesh_origin
     r4, layer4, occ4 = build_level(child, 4, origin, profile.country, FACTORY_CLASSES[4])
     r5, layer5, _ = build_level(layer4, 5, origin, profile.country, FACTORY_CLASSES[5])
@@ -282,11 +295,13 @@ def build(ways, profile, l2_tiles):
         for gid in R['gids']:
             pc, i = child_node_ref(child, gid, parent, 4)
             flags[pc, i] = 0x4000 if gid in upper5 else 0x2000
-    patch_l2_flags(l2_tiles, flags)
+    if bbox is None:
+        patch_l2_flags(l2_tiles, flags)
     box = (origin[0] + 88, origin[0], origin[1], origin[1] + 88)
     dirs = {4: directory(4, r4, origin, box), 5: directory(5, r5, origin, box)}
     stats = {4: (len(r4), sum(len(r['nodes']) for r in r4.values()), sum(len(r['links']) for r in r4.values())),
              5: (len(r5), sum(len(r['nodes']) for r in r5.values()), sum(len(r['links']) for r in r5.values()))}
+    stats['l2_patched'] = bbox is None
     stats['l2_flags'] = collections.Counter(flags.values())
     return dirs, stats
 
