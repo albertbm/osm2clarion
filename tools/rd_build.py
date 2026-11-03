@@ -78,7 +78,8 @@ def build_graphs(ways, cell, level=1, chain=True):
         for pc, run in cut(wy['nodes'], level):
             # parcels just outside the cell are built too, so a border edge node finds its twin
             if not inside(pc) and not any(inside(neighbour(pc, sd, level)) for sd in SIDES): continue
-            P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter()))
+            P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
+                                             touch_pts=collections.defaultdict(list)))
             q = []
             for p in run:
                 key = quant(p, pc, level)
@@ -86,19 +87,39 @@ def build_graphs(ways, cell, level=1, chain=True):
             if len(q) < 2: continue
             P['runs'].append((q, wy))
             P['touch'][q[0][0]] += 2; P['touch'][q[-1][0]] += 2   # a run end is always a node
-            for key, _ in q[1:-1]: P['touch'][key] += 1
+            P['touch_pts'][q[0][0]].append(q[0][1]); P['touch_pts'][q[-1][0]].append(q[-1][1])
+            for key, p in q[1:-1]: P['touch'][key] += 1; P['touch_pts'][key].append(p)
+    # a junction that only lands on the parcel line by quantization coincidence (not a
+    # real crossing, since nothing matching touches the mirrored point in the neighbour) is
+    # pulled 1 unit inward, so it can't be taken for an edge-crossing node with a twin. A
+    # junction that is also a real crossing is left on the line instead: the neighbour has
+    # the same input point at the mirrored key, so it mirrors like any other parcel-edge
+    # node rather than splitting into two disconnected copies. All nudges are decided before
+    # any parcel's touch_pts is touched, since a neighbour's crossing check reads them too.
+    def crosses(pc, P, key, gx, gy, sd):
+        npc = neighbour(pc, sd, level)
+        if npc not in parcels: return False
+        tw = (0 if sd == 'right' else 2047 if sd == 'left' else gx,
+              0 if sd == 'top' else 2047 if sd == 'bottom' else gy)
+        mine = P['touch_pts'][key][0]
+        return any(dist(p, mine) < 0.5 for p in parcels[npc]['touch_pts'].get(tw, ()))
+    all_nudges = {}
     for pc, P in parcels.items():
         touch = P['touch']
-        # a junction that only lands on the parcel line by quantization coincidence (not a
-        # real crossing, since something besides its own run also touches that point) is
-        # pulled 1 unit inward, so it can't be taken for an edge-crossing node with a twin
         nudge = {}
         for key, n in touch.items():
             gx, gy = key
             if n > 2 and (gx in (0, 2047) or gy in (0, 2047)):
+                sides = [sd for sd, ok in (('right', gx == 2047), ('left', gx == 0),
+                                            ('top', gy == 2047), ('bottom', gy == 0)) if ok]
+                if any(crosses(pc, P, key, gx, gy, sd) for sd in sides): continue
                 nk = (1 if gx == 0 else 2046 if gx == 2047 else gx,
                       1 if gy == 0 else 2046 if gy == 2047 else gy)
                 if nk != key: nudge[key] = nk
+        all_nudges[pc] = nudge
+    for pc, P in parcels.items():
+        touch = P['touch']
+        nudge = all_nudges[pc]
         if nudge:
             for k, nk in nudge.items(): touch[nk] = touch.pop(k)
             kept = []
@@ -124,7 +145,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                     P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
                                        wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid,
                                        wy.get('dir', 0)))
-        del P['runs'], P['touch']
+        del P['runs'], P['touch'], P['touch_pts']
         if chain: P['links'] = chain_links(P['links'])
         P['links'] = layer_order(P['links'], level)
     for pc, P in parcels.items():
