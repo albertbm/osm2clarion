@@ -3,9 +3,7 @@
 """Write LEV3456R.DAT from a coastline and a profile alone: sea and coast at levels 6 to 3.
 
 No existing map file is read. The records come from bg_tiles.encode_level_fast, the
-container from lev_file.write and the header from lev_file.header. Section 2 (coarse
-roads) is declared with its four level rows at count 0 and no directories, the form the
-tiles need.
+container from lev_file.write and the header from lev_file.header.
 
     level 6   one record for the whole database box
     level 5   one 11 x 11 directory over the database box, parcels in the region's cells
@@ -14,12 +12,13 @@ tiles need.
 
 Parcels outside the profile's cells are left absent. The sea label goes on level 3 only.
 
-    lev_build.py --profile iceland [--coastline PATH] [--roads roads.json] --data-version yy/mm/dd/nn OUT.DAT
+    lev_build.py --profile iceland [--coastline PATH] [--roads roads.json --l2-tile TILE ...]
+                 --data-version yy/mm/dd/nn OUT.DAT
 
 --roads adds road shapes at levels 3, 4 and 5 (lev_roads.build): the road-shape record in the
 even pair of a level-3 or level-4 column, a road block inside a level-5 record, and route
-numbers in the background records' names sections. Section 2 stays empty: the coarse graph
-is routing data and is not written.
+numbers in the background records' names sections. It also writes the level-4 and level-5
+section-2 graphs and their down-pointers (lev_graph.build).
 """
 import os
 import sys
@@ -33,6 +32,7 @@ import bg_tiles  # noqa: E402
 import clarion_bg  # noqa: E402
 import clarion_profile  # noqa: E402
 import lev_file  # noqa: E402
+import lev_graph  # noqa: E402
 import tile_header  # noqa: E402
 from clarion_bg import LEVELS, mesh_to_lat, mesh_to_lon, tile_cell  # noqa: E402
 
@@ -116,7 +116,7 @@ def directory(level, y0, x0, recs, labels):
     return D
 
 
-def build(P, coast_path, data_version, ways=None):
+def build(P, coast_path, data_version, ways=None, l2_tiles=None):
     bg_tiles.use_profile(P)
     land, _, _ = bg_tiles.load_land(coast_path)
     dby0, dbx0 = P.mesh_origin
@@ -151,16 +151,24 @@ def build(P, coast_path, data_version, ways=None):
     print('level 3: %d directories, %d parcels' % (
         len(levels[3]), sum(r is not None for D in levels[3] for row in D['rows'] if row for r in row)))
 
+    graph_dirs = {}
     if ways:
         for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country).items()):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
+        graph_dirs, graph_stats = lev_graph.build(ways, P, l2_tiles)
+        for level in (4, 5):
+            nrec, nnodes, nlinks = graph_stats[level]
+            print('level %d routing: %d records, %d nodes, %d links' % (level, nrec, nnodes, nlinks))
+        print('level 2 hierarchy flags: %s' % ', '.join('%#x=%d' % x for x in sorted(graph_stats['l2_flags'].items())))
 
     cells = arcmin(cy0, cy1, cx0, cx1)
     sec1 = dict(id=1, levels=[dict(level=l, typ=t, dirs=levels.get(l, [])) for l, t in tile_header.LEVELS[1]])
-    sec2 = dict(id=2, levels=[dict(level=l, typ=t, dirs=[]) for l, t in tile_header.LEVELS[2]])
+    sec2 = dict(id=2, levels=[dict(level=l, typ=t, dirs=([graph_dirs[l]] if l in graph_dirs else []))
+                             for l, t in tile_header.LEVELS[2]])
     # box rows: the database box at levels 6 and 5, as stock files have; the data at 4 and 3
     boxes = [(6, 0, tuple(P.bounds)), (5, 0, tuple(P.bounds)), (4, 0, cells), (3, 0, cells)]
-    fields = dict(box_rows=[(1, boxes), (2, [])], db_bounds=tuple(P.bounds),
+    boxes2 = [(5, 0, tuple(P.bounds)), (4, 0, cells)] if graph_dirs else []
+    fields = dict(box_rows=[(1, boxes), (2, boxes2)], db_bounds=tuple(P.bounds),
                   data_version=data_version, source=None)
     return lev_file.write(dict(fields=fields, sections=[sec1, sec2]))
 
@@ -178,10 +186,15 @@ def main(argv):
         i = argv.index('--roads')
         ways = json.load(open(argv[i + 1]))
         del argv[i:i + 2]
+    l2_tiles = []
+    while '--l2-tile' in argv:
+        i = argv.index('--l2-tile')
+        l2_tiles.append(argv[i + 1])
+        del argv[i:i + 2]
     i = argv.index('--data-version')
     version = argv[i + 1]
     del argv[i:i + 2]
-    out = build(P, coast, version, ways)
+    out = build(P, coast, version, ways, l2_tiles)
     with open(argv[0], 'wb') as f:
         f.write(out)
     print('wrote %s %d B' % (argv[0], len(out)))

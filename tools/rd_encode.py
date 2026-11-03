@@ -47,12 +47,12 @@ def scaled(q):
         assert m <= 7, 'quantity %r does not fit the three-bit multiplier' % q
     return m, v
 
-def cost_words(length_m, kmh):
-    """The entry's (travel time, length) word pair; bit 15 of the time word is left set (KIWI RESERVED, set on every road link)."""
+def cost_words(length_m, kmh, reserved=True):
+    """The entry's (travel time, length) word pair; generated L1/L2 sets KIWI's reserved bit."""
     secs = length_m / (kmh / 3.6)
     mt, t = scaled(secs * 10)
     mb, b = scaled(length_m)
-    return 0x8000 | (mt << 12) | t, (mb << 12) | b
+    return (0x8000 if reserved else 0) | (mt << 12) | t, (mb << 12) | b
 
 def class_word(cls):
     """The link class word: class in the high byte, then 0x90 | class (0x80 | class above 9)."""
@@ -74,8 +74,13 @@ def unit_head(ncls, degree):
 def record_head(level, y0, x0, row, col, units, country):
     """The 27-word record header: parcel code, two zero dwords, five unit pairs, ISO 3166 country code."""
     assert country, 'a section-2 record needs its ISO 3166 country code'
-    per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
-    hdr = list(clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)) + [0, 0, 0, 0]
+    if level in (4, 5):
+        m = {4: 2, 5: 8}[level]
+        code = clarion_bg.parcel_code(level, 2 * (y0 + m * row), 2 * (x0 + m * col))
+    else:
+        per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
+        code = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
+    hdr = list(code) + [0, 0, 0, 0]
     out = struct.pack('>6H', *hdr)
     for off, ln in units + [(0xffffffff, 0)] * (5 - len(units)): out += struct.pack('>II', off, ln)
     return out + struct.pack('>H', country), hdr
@@ -151,12 +156,14 @@ def regulation_order(words, k):
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
-                       l2_twin=None):
+                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
     Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table.
     l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000)."""
     default = 0x0898 if level == 1 else 0x0797
-    cls_of = [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else [default] * len(links)
+    cls_of = ([class_word(c) for c in class_codes] if class_codes is not None else
+              [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
+              [default] * len(links))
     ncls = node_classes(nodes, links, [c & 0xf for c in cls_of])
     order = sorted(range(len(nodes)), key=lambda i: (nodes[i][0], nodes[i][1]))
     pos = {old: new for new, old in enumerate(order)}
@@ -164,16 +171,16 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     slot = {}
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
-        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH)
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level not in (4, 5))
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
             slot[(end, k)] = len(adj[end])
             adj[end].append((pos[other], lid | (END_FLAG if end == j else 0), ncls[other] << 8 | low, a, bw,
-                             ow[0] if end == i else ow[1]))
+                             ow[0] if end == i else ow[1], link_w4[k] if link_w4 else 0))
     real = {i: len(v) for i, v in adj.items()}
     for i, (side, twin) in edges.items():
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0))
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0, 0))
     extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
@@ -196,11 +203,11 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         if not ents: continue
         # the entry count shares its word with x, so 15 is the ceiling; above it x is corrupted
         assert len(ents) <= 15, 'node %r has %d entries, too many for the count nibble' % (nodes[old], len(ents))
-        flag = END_FLAG if l2_twin and l2_twin[old] else 0
+        flag = node_flags[old] if node_flags else END_FLAG if l2_twin and l2_twin[old] else 0
         body += [(len(ents) << 12) | x, ncls[old] << 12 | y, flag]
-        for k, (other, lid, cls, a, length, ow) in enumerate(ents):
+        for k, (other, lid, cls, a, length, ow, w4) in enumerate(ents):
             ex = regulation_order(extras.get((old, k), ()), k)
-            body += [other, 0, ow | len(ex) << 6, lid, cls, a, length] + ex
+            body += [other, w4, ow | len(ex) << 6, lid, cls, a, length] + ex
     live = [old for old in order if adj[old]]
     nn = len(live)
     unit = unit_head([ncls[old] for old in live], [real[old] for old in live]) + body
@@ -210,10 +217,11 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(out) + c.flush()
         if len(comp) % 2: comp += b'\0'
         return out, comp
+    if level in (4, 5): return out, None
     pb = [nn, 0xa100]   # part b: connection table
     for k, old in enumerate(o for o in order if adj[o]):
         pb += [0x2000, k, 0, k]
-        for other, lid, cls, a, length, _ in adj[old]:
+        for other, lid, cls, a, length, _, _ in adj[old]:
             pb += [other, SIDE_B.get(cls & 0xe000, 0) if cls & 0x8000 else 0, other]
     pb += [hdr[0], hdr[1], 0]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)

@@ -655,6 +655,15 @@ class TestRoadGraph(unittest.TestCase):
         got = sorted({(e['cls'] & 0xf, e['id'] & 0x1fff) for n in rec['nodes'] for e in n['entries']})
         self.assertEqual(got, [(4, 1), (4, 2), (8, 1)], 'ids restart per class; the class names the group')
 
+    def test_coarse_link_metadata(self):
+        plain, _ = rd_encode.build_record_edges(4, 32, 896, 1, 2, self.NODES, self.LINKS, {}, country=352,
+                                                class_codes=[4, 4, 7], link_w4=[0x80, 2, 0x140],
+                                                node_flags=[0x2000, 0, 0x4000, 0])
+        rec = clarion_rd.parse_record(plain)
+        self.assertEqual(sorted(e['w4'] for n in rec['nodes'] for e in n['entries']), [2, 2, 0x80, 0x80, 0x140, 0x140])
+        self.assertFalse(any(e['a'] & 0x8000 for n in rec['nodes'] for e in n['entries']))
+        self.assertEqual(sorted(n['nflags'] for n in rec['nodes']), [0, 0, 0x2000, 0x4000])
+
     def test_twin_flag_marks_a_node_shared_with_level_2(self):
         # a level-1 node also present at level 2 carries 0x2000 in its flag word (GEOMETRY.md)
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {}, country=352,
