@@ -220,10 +220,10 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     if level in (4, 5): return out, None
     pb = [nn, 0xa100]   # part b: connection table
     for k, old in enumerate(o for o in order if adj[o]):
-        pb += [0x2000, k, 0, k]
+        pb += [len(adj[old]) << 12, k, 0, k]
         for other, lid, cls, a, length, _, _ in adj[old]:
             pb += [other, SIDE_B.get(cls & 0xe000, 0) if cls & 0x8000 else 0, other]
-    pb += [hdr[0], hdr[1], 0]
+    pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)
     return out, partb
