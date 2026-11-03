@@ -245,6 +245,9 @@ def select(pbf, inside, cross, public=True):
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
             runs = clip(pts, inside, cross)
             if not runs: why['outside'] += 1; return
+            # a tunnel or bridge can leave every municipality (a fjord floor), so keep it whole
+            if (t.get('tunnel') not in (None, 'no') or t.get('bridge') not in (None, 'no')) and runs != [pts]:
+                runs = [pts]; why['tunnel or bridge kept whole'] += 1
             if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
             ow = oneway(t); d = dest_tags(t)
             for r in runs:
