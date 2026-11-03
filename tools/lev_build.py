@@ -155,6 +155,8 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None):
     if ways:
         for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country).items()):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
+    # Off unless --l2-tile is given: the graph crashes the unit (cards 051-053) and rewrites the L2 tiles.
+    if ways and l2_tiles:
         graph_dirs, graph_stats = lev_graph.build(ways, P, l2_tiles)
         for level in (4, 5):
             nrec, nnodes, nlinks = graph_stats[level]
