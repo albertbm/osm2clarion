@@ -124,8 +124,6 @@ def oneway_bits(d):
     Traffic leaves the 0x4000 end and arrives at the 0x8000 end."""
     return (0x4000, 0x8000) if d > 0 else (0x8000, 0x4000) if d < 0 else (0, 0)
 
-SIDE_B = {0x8000: 0x8000, 0xa000: 0x0080, 0xc000: 0xc000, 0xe000: 0x00c0}   # part-b side flags (top, right, bottom, left)
-
 PROHIBITED = 0xff     # regulation flag (bit 7) + passage code 0x7f, "not allowed unconditionally"
 
 def regulation_word(entry_index):
@@ -156,10 +154,12 @@ def regulation_order(words, k):
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
-                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None):
+                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
     Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table.
-    l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000)."""
+    l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000).
+    l1_pair: [(cell word, child index) or None] aligned with nodes, level 2 only -- the node's
+    L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block)."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = ([class_word(c) for c in class_codes] if class_codes is not None else
               [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
@@ -218,11 +218,21 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         if len(comp) % 2: comp += b'\0'
         return out, comp
     if level in (4, 5): return out, None
+    # own index in x,y order is the key other blocks' triples address this node by; it stays
+    # fixed even though the stream below is written in a different order (sorted by cell word)
+    pos_of = {old: k for k, old in enumerate(live)}
+    pairs = {}
+    for old in pos_of:
+        pair = l1_pair[old] if l1_pair else None
+        pairs[old] = pair if pair else (0, pos_of[old])
+    cellof = {old: pairs[old][0] for old in pos_of}
+    stream_order = sorted(pos_of, key=lambda old: (cellof[old], pos_of[old]))
     pb = [nn, 0xa100]   # part b: connection table
-    for k, old in enumerate(o for o in order if adj[o]):
-        pb += [len(adj[old]) << 12, k, 0, k]
+    for old in stream_order:
+        cw, child = pairs[old]
+        pb += [len(adj[old]) << 12, pos_of[old], cw, child]
         for other, lid, cls, a, length, _, _ in adj[old]:
-            pb += [other, SIDE_B.get(cls & 0xe000, 0) if cls & 0x8000 else 0, other]
+            pb += [other, 0 if cls & 0x8000 else cellof.get(other, 0), other]
     pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)

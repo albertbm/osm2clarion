@@ -362,8 +362,10 @@ def signpost_subs(found, occ_words):
     subs.sort(key=lambda s: s['key'])
     return subs
 
-def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None, signs=None):
+def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
+                   l1_index=None, signs=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
+    encode_parcels.l1_missing = encode_parcels.l1_mismatch = 0
     encode_parcels.index = {}; encode_parcels.signposts = {}
     for pc, P in parcels.items():
         if P.get('ring'): continue
@@ -383,12 +385,33 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
         # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
         l2_flags = [tuple(P['nodes'][k]['geo']) in l2_geo for k in keys] if l2_geo is not None else None
+        l1_pair = None
+        if level == 2 and l1_index is not None:
+            l1_pair = []
+            # L1's own (y0, row) is unsnapped (DIRM 1) so it is already an exact absolute
+            # row at the level-1 scale (32 per mesh unit); L2's is snapped to a multiple of
+            # DIRM[2]=4 mesh units, 8 per mesh unit. Comparing the two absolute addresses
+            # (one 4x finer) gives the L1 twin's cell inside this L2 parcel's 4x4 grid.
+            abs_row2, abs_col2 = pc[0] * 32 + pc[2] * 4, pc[1] * 32 + pc[3] * 4
+            for key in keys:
+                info = l1_index.get(tuple(P['nodes'][key]['geo']))
+                pair = None
+                if info is not None:
+                    (y1, x1, row1, col1), idx1 = info
+                    subrow = y1 * 32 + row1 - abs_row2
+                    subcol = x1 * 32 + col1 - abs_col2
+                    if 0 <= subrow < 4 and 0 <= subcol < 4:
+                        pair = ((subrow << 14) | (subcol << 6), idx1)
+                    else:
+                        encode_parcels.l1_mismatch += 1
+                if pair is None: encode_parcels.l1_missing += 1
+                l1_pair.append(pair)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
                                                dirs=[l[10] for l in P['links']], ids=ids,
-                                               oneway_regs=oneway_regs, l2_twin=l2_flags)
+                                               oneway_regs=oneway_regs, l2_twin=l2_flags, l1_pair=l1_pair)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
         groups = link_groups(P['links'], chain)
@@ -554,13 +577,19 @@ def main():
     # level 2 is needed before level 1 is encoded, so a level-1 node at the same point can carry 0x2000
     l2_parcels = build_graphs(ways2, cell, 2, not no_chain)
     l2_geo = {tuple(nd['geo']) for P in l2_parcels.values() for nd in P['nodes'].values()}
-    boxes = {}; report = []
+    boxes = {}; report = []; l1_index = None
     for level, subset in ((1, ways), (2, ways2)):
         chain = not no_chain
         parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
+        if level == 1:
+            # the level-1 node an L2 node pairs with, by exact geo match: (parcel, index in that record)
+            l1_index = {tuple(nd['geo']): (pc, P['index'][key])
+                        for pc, P in parcels.items() if not P['ring']
+                        for key, nd in P['nodes'].items()}
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
-                              oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None), signs=signs)
+                              oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
+                              l1_index=(l1_index if level == 2 else None), signs=signs)
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)
