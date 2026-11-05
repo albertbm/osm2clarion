@@ -362,26 +362,69 @@ def signpost_subs(found, occ_words):
     subs.sort(key=lambda s: s['key'])
     return subs
 
+def node_ways(P):
+    """{node key: way ids of its links}, cached on the parcel."""
+    if 'node_ways' not in P:
+        w = collections.defaultdict(set)
+        for l in P['links']: w[l[0]].add(l[3]); w[l[1]].add(l[3])
+        P['node_ways'] = {k: frozenset(v) for k, v in w.items()}
+    return P['node_ways']
+
 def l1_twin(geo, pc, l1_index):
     """(cell word, L1 index) of geo's L1 twin inside parcel pc's 4x4 grid, or None.
     L1's own (y0, row) is unsnapped (DIRM 1), already an exact absolute row at the
     level-1 scale (32 per mesh unit); L2's is snapped to a multiple of DIRM[2]=4 mesh
     units, 8 per mesh unit. Comparing the two absolute addresses gives the L1 twin's
     cell inside pc's 4x4 grid."""
-    info = l1_index.get(tuple(geo))
-    if info is None: return None
-    (y1, x1, row1, col1), idx1 = info
     abs_row2, abs_col2 = pc[0] * 32 + pc[2] * 4, pc[1] * 32 + pc[3] * 4
-    subrow = y1 * 32 + row1 - abs_row2
-    subcol = x1 * 32 + col1 - abs_col2
-    if 0 <= subrow < 4 and 0 <= subcol < 4:
-        return (subrow << 14) | (subcol << 6), idx1
+    for (y1, x1, row1, col1), idx1, *_ in l1_index.get(tuple(geo), ()):
+        subrow = y1 * 32 + row1 - abs_row2
+        subcol = x1 * 32 + col1 - abs_col2
+        if 0 <= subrow < 4 and 0 <= subcol < 4:
+            return (subrow << 14) | (subcol << 6), idx1
     return None
+
+NEAR_EDGE_M = 60    # an L2 edge node and its L1 twin cut the parcel line from differently simplified polylines
+NEAR_INNER_M = 10
+
+def l1_nearest(geo, side, pc, l1_index, ways=frozenset()):
+    """(cell word, L1 index) of the L1 node nearest to geo inside parcel pc's 4x4 grid, when no L1
+    node sits at exactly geo. A parcel-edge node must pair with an edge node on the same side: the
+    firmware reads the border test's x,y off that L1 node (0x3545dc), so an inner one loses the
+    border mode that keeps edge triples away from the own record's table."""
+    near = l1_nearest.cache.get(id(l1_index))
+    if near is None:
+        near = {}
+        for g, infos in l1_index.items():
+            for pc1, idx, key, w in infos: near.setdefault(pc1, []).append((g, idx, key, w))
+        l1_nearest.cache = {id(l1_index): near}
+    y2, x2, row2, col2 = pc
+    base_row, base_col = y2 * 32 + row2 * 4, x2 * 32 + col2 * 4
+    rows = {'bottom': (0,), 'top': (3,)}.get(side, range(4))
+    cols = {'left': (0,), 'right': (3,)}.get(side, range(4))
+    want = {'bottom': lambda k: k[1] == 0, 'top': lambda k: k[1] == 2047,
+            'left': lambda k: k[0] == 0, 'right': lambda k: k[0] == 2047}.get(side, lambda k: True)
+    best = None
+    for r in rows:
+        for c in cols:
+            ar, ac = base_row + r, base_col + c
+            for g, idx, key, w in near.get((ar // 32, ac // 32, ar % 32, ac % 32), ()):
+                if not want(key): continue
+                d = dist(g, geo)
+                if d > (NEAR_EDGE_M if side else NEAR_INNER_M): continue
+                rank = (not (w & ways), d)   # same road first, then distance
+                if best is None or rank < best[0]: best = (rank, (r << 14) | (c << 6), idx)
+    if best is None: return None
+    l1_nearest.max_m = max(l1_nearest.max_m, best[0][1])
+    l1_nearest.other_way += best[0][0]
+    return best[1], best[2]
+l1_nearest.cache = {}; l1_nearest.max_m = 0.0; l1_nearest.other_way = 0
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
                    l1_index=None, signs=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
-    encode_parcels.l1_missing = encode_parcels.l1_mismatch = 0
+    encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = 0
+    encode_parcels.unpaired = []
     encode_parcels.index = {}; encode_parcels.signposts = {}
     for pc, P in parcels.items():
         if P.get('ring'): continue
@@ -400,7 +443,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if twin is None: encode_parcels.no_twin += 1
             twin_child = None
             if twin is not None and level == 2 and l1_index is not None:
-                tpair = l1_twin(parcels[npc]['nodes'][tw]['geo'], npc, l1_index)
+                tgeo = parcels[npc]['nodes'][tw]['geo']
+                tpair = l1_twin(tgeo, npc, l1_index) or l1_nearest(tgeo, parcels[npc]['nodes'][tw]['edge'], npc, l1_index,
+                                                                   node_ways(parcels[npc]).get(tw, frozenset()))
                 twin_child = tpair[1] if tpair else None
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin, twin_child)
         # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
@@ -411,8 +456,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             for key in keys:
                 pair = l1_twin(P['nodes'][key]['geo'], pc, l1_index)
                 if pair is None:
-                    info = l1_index.get(tuple(P['nodes'][key]['geo']))
-                    if info is None: encode_parcels.l1_missing += 1
+                    pair = l1_nearest(P['nodes'][key]['geo'], P['nodes'][key]['edge'], pc, l1_index,
+                                      node_ways(P).get(key, frozenset()))
+                    if pair is not None: encode_parcels.l1_near += 1
+                    elif l1_index.get(tuple(P['nodes'][key]['geo'])) is None:
+                        encode_parcels.l1_missing += 1
+                        encode_parcels.unpaired.append((pc, key, P['nodes'][key]['edge'], P['nodes'][key]['geo']))
                     else: encode_parcels.l1_mismatch += 1
                 l1_pair.append(pair)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
@@ -592,9 +641,13 @@ def main():
         parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
         if level == 1:
             # the level-1 node an L2 node pairs with, by exact geo match: (parcel, index in that record)
-            l1_index = {tuple(nd['geo']): (pc, P['index'][key])
-                        for pc, P in parcels.items() if not P['ring']
-                        for key, nd in P['nodes'].items()}
+            l1_index = {}
+            for pc, P in parcels.items():
+                if P['ring']: continue
+                ways_at = node_ways(P)
+                for key, nd in P['nodes'].items():
+                    # the two edge nodes either side of a parcel line share one geo
+                    l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
@@ -629,6 +682,12 @@ def main():
         if encode_parcels.no_twin:
             report.append(f'level {level}: {encode_parcels.no_twin} edge nodes with no node at the mirrored point '
                           f'across the edge, left without an edge entry')
+        if level == 2:
+            report.append(f'level 2: L1 twins by nearest node {encode_parcels.l1_near} (max {l1_nearest.max_m:.1f} m, '
+                          f'{l1_nearest.other_way} on another road), '
+                          f'no L1 node at all {encode_parcels.l1_missing}, exact twin outside the parcel {encode_parcels.l1_mismatch}')
+            for pc, key, side, g in encode_parcels.unpaired[:12]:
+                report.append(f'  unpaired L2 node {pc} key {key} side {side} at {g[1]:.6f},{g[0]:.6f}')
         report.append(f'level {level}: {len(recs)} parcels in {len(lv["dirs"])} dirs, '
                       f'{sum(len(Q["nodes"]) for Q in parcels.values())} nodes, shapes placed {placed}, '
                       f'nodes/parcel median {counts[len(counts)//2]} max {counts[-1]}')
