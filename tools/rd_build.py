@@ -362,6 +362,22 @@ def signpost_subs(found, occ_words):
     subs.sort(key=lambda s: s['key'])
     return subs
 
+def l1_twin(geo, pc, l1_index):
+    """(cell word, L1 index) of geo's L1 twin inside parcel pc's 4x4 grid, or None.
+    L1's own (y0, row) is unsnapped (DIRM 1), already an exact absolute row at the
+    level-1 scale (32 per mesh unit); L2's is snapped to a multiple of DIRM[2]=4 mesh
+    units, 8 per mesh unit. Comparing the two absolute addresses gives the L1 twin's
+    cell inside pc's 4x4 grid."""
+    info = l1_index.get(tuple(geo))
+    if info is None: return None
+    (y1, x1, row1, col1), idx1 = info
+    abs_row2, abs_col2 = pc[0] * 32 + pc[2] * 4, pc[1] * 32 + pc[3] * 4
+    subrow = y1 * 32 + row1 - abs_row2
+    subcol = x1 * 32 + col1 - abs_col2
+    if 0 <= subrow < 4 and 0 <= subcol < 4:
+        return (subrow << 14) | (subcol << 6), idx1
+    return None
+
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
                    l1_index=None, signs=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
@@ -382,29 +398,22 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                 tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx, 0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
                 twin = parcels[npc]['index'].get(tw)   # a run that only grazes the neighbour leaves no twin
             if twin is None: encode_parcels.no_twin += 1
-            if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin)
+            twin_child = None
+            if twin is not None and level == 2 and l1_index is not None:
+                tpair = l1_twin(parcels[npc]['nodes'][tw]['geo'], npc, l1_index)
+                twin_child = tpair[1] if tpair else None
+            if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin, twin_child)
         # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
         l2_flags = [tuple(P['nodes'][k]['geo']) in l2_geo for k in keys] if l2_geo is not None else None
         l1_pair = None
         if level == 2 and l1_index is not None:
             l1_pair = []
-            # L1's own (y0, row) is unsnapped (DIRM 1) so it is already an exact absolute
-            # row at the level-1 scale (32 per mesh unit); L2's is snapped to a multiple of
-            # DIRM[2]=4 mesh units, 8 per mesh unit. Comparing the two absolute addresses
-            # (one 4x finer) gives the L1 twin's cell inside this L2 parcel's 4x4 grid.
-            abs_row2, abs_col2 = pc[0] * 32 + pc[2] * 4, pc[1] * 32 + pc[3] * 4
             for key in keys:
-                info = l1_index.get(tuple(P['nodes'][key]['geo']))
-                pair = None
-                if info is not None:
-                    (y1, x1, row1, col1), idx1 = info
-                    subrow = y1 * 32 + row1 - abs_row2
-                    subcol = x1 * 32 + col1 - abs_col2
-                    if 0 <= subrow < 4 and 0 <= subcol < 4:
-                        pair = ((subrow << 14) | (subcol << 6), idx1)
-                    else:
-                        encode_parcels.l1_mismatch += 1
-                if pair is None: encode_parcels.l1_missing += 1
+                pair = l1_twin(P['nodes'][key]['geo'], pc, l1_index)
+                if pair is None:
+                    info = l1_index.get(tuple(P['nodes'][key]['geo']))
+                    if info is None: encode_parcels.l1_missing += 1
+                    else: encode_parcels.l1_mismatch += 1
                 l1_pair.append(pair)
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],

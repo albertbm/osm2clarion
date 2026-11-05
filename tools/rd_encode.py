@@ -152,11 +152,21 @@ def regulation_order(words, k):
     prohibition from the entry itself comes last."""
     return sorted(words, key=lambda w: ((w >> 12) - k - 1) % 16)
 
+MIRROR_SIDE = {0x8000: lambda row, col: col << 6,              # top -> row 0
+               0xa000: lambda row, col: row << 14,             # right -> col 0
+               0xc000: lambda row, col: (3 << 14) | (col << 6),  # bottom -> row 3
+               0xe000: lambda row, col: (row << 14) | (3 << 6)}  # left -> col 3
+
+def mirror_cell(cell, side):
+    """The twin's L2 cell across a parcel border: own cell with the border row or column flipped."""
+    return MIRROR_SIDE[side](cell >> 14, (cell >> 6) & 3)
+
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
                        l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None):
-    """build_record with parcel-edge connections: edges = {node index: (side bits, twin index)}.
-    Level 1 ships zlib; level 2 raw, as two parts, the second a per-node connection table.
+    """build_record with parcel-edge connections: edges = {node index: (side bits, twin index,
+    twin's L1 child index or None)}. Level 1 ships zlib; level 2 raw, as two parts, the second a
+    per-node connection table.
     l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000).
     l1_pair: [(cell word, child index) or None] aligned with nodes, level 2 only -- the node's
     L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block)."""
@@ -179,7 +189,10 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
             adj[end].append((pos[other], lid | (END_FLAG if end == j else 0), ncls[other] << 8 | low, a, bw,
                              ow[0] if end == i else ow[1], link_w4[k] if link_w4 else 0))
     real = {i: len(v) for i, v in adj.items()}
-    for i, (side, twin) in edges.items():
+    edge_child = {}
+    for i, e in edges.items():
+        side, twin = e[0], e[1]
+        edge_child[i] = e[2] if len(e) > 2 else None
         adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0, 0))
     extras = {}
     build_record_edges.regs_written = 0
@@ -224,7 +237,13 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     pairs = {}
     for old in pos_of:
         pair = l1_pair[old] if l1_pair else None
-        pairs[old] = pair if pair else (0, pos_of[old])
+        if pair:
+            pairs[old] = pair
+        else:
+            # no L1 twin: still give the node its own border cell, from its own x,y,
+            # so the border-mode guard at 0x354830 sees it (TRACE058 Q3)
+            x, y = nodes[old]
+            pairs[old] = ((y * 4 // 2048) << 14 | (x * 4 // 2048) << 6, pos_of[old])
     cellof = {old: pairs[old][0] for old in pos_of}
     stream_order = sorted(pos_of, key=lambda old: (cellof[old], pos_of[old]))
     pb = [nn, 0xa100]   # part b: connection table
@@ -232,7 +251,11 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         cw, child = pairs[old]
         pb += [len(adj[old]) << 12, pos_of[old], cw, child]
         for other, lid, cls, a, length, _, _ in adj[old]:
-            pb += [other, 0 if cls & 0x8000 else cellof.get(other, 0), other]
+            if cls & 0x8000:
+                tc = edge_child.get(old)
+                pb += [other, mirror_cell(cw, cls & 0xe000), tc if tc is not None else other]
+            else:
+                pb += [other, cw, other]
     pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)
