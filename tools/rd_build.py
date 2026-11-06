@@ -69,6 +69,32 @@ def dist(a, b):
 MAX_INNER = 40    # longer runs get a graph node instead of riding inside the link
 MAX_POINTS = 64
 
+def off_parcel_lines(ways):
+    """Move a junction that quantizes onto a level-1 parcel line (level-2 lines are a subset) one unit
+    into the parcel east or north of it. A factory parcel-edge node has exactly one real link (113,466 of
+    113,466 L1 and 69,498 of 69,498 L2 nodes on B30R070R/B48R060R): a junction never sits on a line.
+    Left there, the hierarchy pass takes the edge entry's twin index for a node of the own record
+    (card 065/066, PC 0x364d44)."""
+    shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
+    def off(v, per):
+        # within half a unit of a line at this level's scale (32 x 48 parcels per degree at level 1,
+        # 8 x 12 at level 2): 2046.5 and up rounds to the cut node's key 2047 (2048 is clamped)
+        f = v * per * 2048; r = f - math.floor(f / 2048) * 2048
+        if r < 0.5 or r > 2046.5: return (math.floor(f / 2048 + 0.5) * 2048 + 1.125) / (per * 2048)
+        return None
+    moved = {}
+    for p, n in shared.items():
+        if n < 2: continue
+        lon, lat = p
+        # each axis on its own: a level-2 line is a level-1 line too, so the level-2 step
+        # (1.125 level-2 units = 4.5 level-1 units, about 3 m) clears both; else 4.5 level-1 units
+        nlon = off(lon + 924, 8) or off(lon + 924, 32)
+        nlat = off(lat, 12) or off(lat, 48)
+        if nlon is not None or nlat is not None:
+            moved[p] = [nlon - 924 if nlon is not None else lon, nlat if nlat is not None else lat]
+    for w in ways: w['nodes'] = [moved.get(tuple(q), q) for q in w['nodes']]
+    return moved
+
 def build_graphs(ways, cell, level=1, chain=True):
     """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)]."""
     yb, xb = tile_cell(cell)
@@ -81,12 +107,60 @@ def build_graphs(ways, cell, level=1, chain=True):
             P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
                                              touch_pts=collections.defaultdict(list)))
             q = []
+            lon0, lat0, w, h = parcel_geo(level, *pc)
             for p in run:
                 key = quant(p, pc, level)
+                ux, uy = (p[0] - lon0) / w * 2048, (p[1] - lat0) / h * 2048
+                on_line = min(abs(ux), abs(ux - 2048), abs(uy), abs(uy - 2048)) < 1e-3
+                if not on_line:
+                    # only a cut point sits on the parcel line; a vertex or junction that merely
+                    # rounds onto it stays one unit inside, or it merges with the cut node and that
+                    # gets two real links, which the factory never has (coarse064/edgedeg.txt)
+                    key = (min(2046, max(1, key[0])), min(2046, max(1, key[1])))
                 if not q or q[-1][0] != key: q.append((key, p))
             if len(q) < 2: continue
             P['runs'].append((q, wy))
             P['touch'][q[0][0]] += 2; P['touch'][q[-1][0]] += 2   # a run end is always a node
+            P['touch_pts'][q[0][0]].append(q[0][1]); P['touch_pts'][q[-1][0]].append(q[-1][1])
+            for key, p in q[1:-1]: P['touch'][key] += 1; P['touch_pts'][key].append(p)
+    # two ways crossing the parcel line within one unit of each other get one key, which would
+    # make a border node with two real links (the factory has none: coarse064/edgedeg.txt). Give
+    # the second and later crossing points the nearest free keys along the line. Both parcels
+    # rank the union of their points at the key and of their used keys on the line, so the
+    # twins still mirror even when one side dropped a run.
+    def mirror(key, sd):
+        gx, gy = key
+        return (0 if sd == 'right' else 2047 if sd == 'left' else gx, 0 if sd == 'top' else 2047 if sd == 'bottom' else gy)
+    def on_side(key, sd):
+        gx, gy = key
+        return {'right': gx == 2047, 'left': gx == 0, 'top': gy == 2047, 'bottom': gy == 0}[sd]
+    def corner(key): return key[0] in (0, 2047) and key[1] in (0, 2047)
+    remaps = {}
+    for pc, P in parcels.items():
+        remap = {}
+        for sd in SIDES:
+            N = parcels.get(neighbour(pc, sd, level))
+            mine = {k: {tuple(p) for p in v} for k, v in P['touch_pts'].items() if on_side(k, sd)}
+            theirs = {mirror(k, sd): {tuple(p) for p in v} for k, v in N['touch_pts'].items() if on_side(k, sd)} if N else {}
+            used = set(mine) | set(theirs)
+            along = 1 if sd in ('left', 'right') else 0
+            for key in sorted(used):
+                if corner(key): continue
+                pts = mine.get(key, set()) | theirs.get(key, set())
+                for pt in sorted(pts)[1:]:
+                    nk = next((k for d in range(1, 2047) for s in (d, -d)
+                               for k in [key[:along] + (key[along] + s,) + key[along + 1:]]
+                               if 1 <= k[along] <= 2046 and k not in used), None)
+                    if nk is None: continue
+                    used.add(nk)
+                    if pt in mine.get(key, ()): remap[(key, pt)] = nk
+        if remap: remaps[pc] = remap
+    for pc, remap in remaps.items():
+        P = parcels[pc]
+        P['touch'] = collections.Counter(); P['touch_pts'] = collections.defaultdict(list)
+        for q, wy in P['runs']:
+            q[:] = [(remap.get((key, tuple(p)), key), p) for key, p in q]
+            P['touch'][q[0][0]] += 2; P['touch'][q[-1][0]] += 2
             P['touch_pts'][q[0][0]].append(q[0][1]); P['touch_pts'][q[-1][0]].append(q[-1][1])
             for key, p in q[1:-1]: P['touch'][key] += 1; P['touch_pts'][key].append(p)
     # a junction that only lands on the parcel line by quantization coincidence (not a
@@ -666,6 +740,9 @@ def main():
         shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
         junctions = {p for p, n in shared.items() if n > 1}
         for w in ways: w['nodes'] = simplify(w['nodes'], tol, junctions)
+    moved = off_parcel_lines(ways)
+    for r in turns:
+        if tuple(r['via']) in moved: r['via'] = moved[tuple(r['via'])]
     ways2 = [dict(w) for w in ways if w['hw'] in l2]
     tol2 = P.l2_simplify_metres if P.l2_simplify_metres is not None else tol
     if tol2:
@@ -734,6 +811,8 @@ def main():
             boxes[level] = (math.ceil(max(lats) * 60), math.floor(min(lats) * 60),
                             math.floor(min(lons) * 60), math.ceil(max(lons) * 60))
         counts = sorted(len(Q['nodes']) for Q in parcels.values()) or [0]
+        if level == 1 and moved:
+            report.append(f'level 1: {len(moved)} junctions on a parcel line moved one level-2 unit inside the parcel east/north of it')
         if encode_parcels.no_twin:
             report.append(f'level {level}: {encode_parcels.no_twin} edge nodes with no node at the mirrored point '
                           f'across the edge, left without an edge entry')
