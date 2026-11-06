@@ -38,8 +38,15 @@ def emitted_l2_layer(paths):
     for pc, rec in sorted(records.items()):
         gids = {}
         for i, nd in enumerate(rec['nodes']):
-            edge = any(e['cls'] & 0x8000 for e in nd['entries'])
-            gid = ('edge', pc[1] * 2048 + nd['x'], pc[0] * 2048 + nd['y']) if edge else (pc, i)
+            sides = {e['cls'] & 0xe000 for e in nd['entries'] if e['cls'] & 0x8000}
+            if sides:
+                # both copies of a parcel-line node share one id: the copy at 2047 is the
+                # neighbour's copy at 0, one unit further on
+                x = 2048 if 0xa000 in sides and nd['x'] == 2047 else nd['x']
+                y = 2048 if 0x8000 in sides and nd['y'] == 2047 else nd['y']
+                gid = ('edge', pc[1] * 2048 + x, pc[0] * 2048 + y)
+            else:
+                gid = (pc, i)
             gids[i] = gid; nodes[gid].append((pc, i))
         ends = collections.defaultdict(list)
         for i, nd in enumerate(rec['nodes']):
@@ -56,7 +63,8 @@ def emitted_l2_layer(paths):
             direction = 1 if bits == (0x4000, 0x8000) else -1 if bits == (0x8000, 0x4000) else 0
             assert ei['w4'] == ej['w4'], (pc, cls, lid, ei['w4'], ej['w4'])
             links.append(dict(a=gids[i], b=gids[j], length=length, cls=cls, speed=speed,
-                              direction=direction, w4=ei['w4'], parcel=pc, child=(pc, lid)))
+                              direction=direction, w4=ei['w4'], parcel=pc, child=(pc, lid),
+                              next_a=gids[j], next_b=gids[i], pa=pc, pb=pc))
     return dict(nodes=nodes, links=links, level=2, records=records, paths=list(paths))
 
 
@@ -82,12 +90,6 @@ def child_node_ref(child, gid, parent, level):
     choices = [(pc, i) for pc, i in child['nodes'][gid] if parent_of(level, pc) == parent]
     assert choices, (level, parent, gid, child['nodes'][gid])
     return sorted(choices)[0]
-
-
-def node_ref(child, gid, parent, level):
-    """One resolving child parcel/node reference for this copy of a coarse node."""
-    pc, i = child_node_ref(child, gid, parent, level)
-    return child_word(level, pc), i
 
 
 def quant(level, parent, geo, origin):
@@ -140,7 +142,11 @@ def collapse(per):
                 speed = length / (a['length'] / a['speed'] + b['length'] / b['speed'])
                 merged = dict(a=x, b=y, length=length, cls=a['cls'], speed=speed,
                               direction=0 if fwd and back else 1 if fwd else -1,
-                              w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'])
+                              w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'],
+                              next_a=a['next_a' if a['a'] == x else 'next_b'],
+                              pa=a['pa' if a['a'] == x else 'pb'],
+                              next_b=b['next_b' if b['b'] == y else 'next_a'],
+                              pb=b['pb' if b['b'] == y else 'pa'])
                 links[:] = [link for k, link in enumerate(links) if k not in (p, q)] + [merged]
                 changed = True; break
 
@@ -150,9 +156,9 @@ def pairing_record(level, origin, parent, country, code, ordered, refs, adjacenc
     blocks = []
     for upper in range(len(ordered)):
         parcel, child = refs[upper]
-        blocks.append((parcel, child, upper, adjacency[upper]))
+        blocks.append((parcel, upper, child, adjacency[upper]))
     unit = [len(blocks), marker(level, *parent)]
-    for parcel, child, upper, entries in sorted(blocks):
+    for parcel, upper, child, entries in sorted(blocks):
         unit += [len(entries) << 12, upper, parcel, child]
         for e in entries: unit += e
     unit += [code[0], code[1]]
@@ -164,7 +170,20 @@ def pairing_record(level, origin, parent, country, code, ordered, refs, adjacenc
 SIDE = {(-1, 0): 0xe000, (1, 0): 0xa000, (0, -1): 0xc000, (0, 1): 0x8000}
 
 
-def encode_level(records, level, origin, country, occurrences, hierarchy=None):
+def next_ref(child, level, own, gid, next_gid, first_pc):
+    """A link triple's child reference: the next child node along the link in the node's own
+    child parcel, or, when the link leaves through the node's other copy across a child-parcel
+    line, that copy itself. Factory L4 and L5 link triples all fit this (coarse064)."""
+    own_pc, _ = own
+    if first_pc == own_pc:
+        copies = [k for pc, k in child['nodes'][next_gid] if pc == own_pc]
+    else:
+        copies = [k for pc, k in child['nodes'][gid] if pc == first_pc]
+    assert copies, (level, own, gid, next_gid, first_pc)
+    return child_word(level, first_pc), min(copies)
+
+
+def encode_level(child, records, level, origin, country, occurrences, hierarchy=None):
     """Encode prepared records after the next level's hierarchy membership is known."""
     hierarchy = hierarchy or set()
     for parent, R in records.items():
@@ -190,8 +209,8 @@ def encode_level(records, level, origin, country, occurrences, hierarchy=None):
         adjacency = [[] for _ in nodes]
         for l in R['links']:
             i, j = R['pos'][l['a']], R['pos'][l['b']]
-            adjacency[i].append((j, refs[j][0], refs[j][1]))
-            adjacency[j].append((i, refs[i][0], refs[i][1]))
+            adjacency[i].append((j,) + next_ref(child, level, R['refpc'][i], l['a'], l['next_a'], l['pa']))
+            adjacency[j].append((i,) + next_ref(child, level, R['refpc'][j], l['b'], l['next_b'], l['pb']))
         for i, (far_parent, far_i) in edge_far.items():
             far_ref = records[far_parent]['refs'][far_i]
             adjacency[i].append((far_i, far_ref[0], far_ref[1]))
@@ -200,6 +219,8 @@ def encode_level(records, level, origin, country, occurrences, hierarchy=None):
         pa = clarion_rd.parse_record(a); pb = clarion_rd.parse_part_b(b)
         assert clarion_rd.encode_record(pa) == a and clarion_rd.encode_part_b(pb) == b
         assert sorted(n['upper'] for n in pb['nodes']) == list(range(len(pa['nodes'])))
+        # part B addresses part-A nodes by index, so the encoder must have kept our node order
+        assert [(n['x'], n['y']) for n in pa['nodes']] == nodes, (level, parent)
         R.update(a=a, b=b, edges=edges)
 
 
@@ -216,20 +237,26 @@ def build_level(child, level, origin, country, allowed=None):
         for link in links:
             for gid in (link['a'], link['b']):
                 if gid not in gids: gids.append(gid)
-        gids.sort(key=lambda gid: (quant(level, parent, geo_of(child, gid), origin), repr(gid)))
+        ncls = {}
+        for link in links:
+            for gid in (link['a'], link['b']): ncls[gid] = min(ncls.get(gid, 15), link['cls'])
+        gids.sort(key=lambda gid: (ncls[gid], quant(level, parent, geo_of(child, gid), origin), repr(gid)))
         pos = {gid: i for i, gid in enumerate(gids)}
         for gid in gids: occurrences[gid].append((parent, pos[gid]))
         records[parent] = dict(gids=gids, pos=pos, links=links)
     for parent, R in records.items():
         R['nodes'] = [quant(level, parent, geo_of(child, gid), origin) for gid in R['gids']]
-        R['refs'] = [node_ref(child, gid, parent, level) for gid in R['gids']]
-    encode_level(records, level, origin, country, occurrences)
+        R['refpc'] = [child_node_ref(child, gid, parent, level) for gid in R['gids']]
+        R['refs'] = [(child_word(level, pc), i) for pc, i in R['refpc']]
+    encode_level(child, records, level, origin, country, occurrences)
     geo = {gid: geo_of(child, gid) for gid in occurrences}
     nodes = collections.defaultdict(list)
     links = []
     for parent, R in records.items():
         for gid, i in R['pos'].items(): nodes[gid].append((parent, i))
-        for link in R['links']: links.append(dict(link, parcel=parent, child=(parent, 0)))
+        for link in R['links']:
+            links.append(dict(link, parcel=parent, child=(parent, 0), next_a=link['b'], next_b=link['a'],
+                              pa=parent, pb=parent))
     return records, dict(nodes=nodes, links=links, level=level, geo=geo), occurrences
 
 
@@ -289,7 +316,7 @@ def build(ways, profile, l2_tiles, bbox=None):
     r4, layer4, occ4 = build_level(child, 4, origin, profile.country, FACTORY_CLASSES[4])
     r5, layer5, _ = build_level(layer4, 5, origin, profile.country, FACTORY_CLASSES[5])
     upper5 = set(layer5['nodes'])
-    encode_level(r4, 4, origin, profile.country, occ4, upper5)
+    encode_level(child, r4, 4, origin, profile.country, occ4, upper5)
     flags = {}
     for parent, R in r4.items():
         for gid in R['gids']:
