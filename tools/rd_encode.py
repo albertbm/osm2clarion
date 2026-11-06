@@ -163,13 +163,16 @@ def mirror_cell(cell, side):
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
-                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None):
+                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None, l1_next=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index,
     twin's L1 child index or None)}. Level 1 ships zlib; level 2 raw, as two parts, the second a
     per-node connection table.
     l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000).
     l1_pair: [(cell word, child index) or None] aligned with nodes, level 2 only -- the node's
-    L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block)."""
+    L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block).
+    l1_next: [(from a, from b)] aligned with links, level 2 only -- the L1 node next along the
+    link from each end's L1 twin; the descent (0x33aabc) looks that index up among the twin's
+    L1 entries and dereferences NULL when it is not one of them."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = ([class_word(c) for c in class_codes] if class_codes is not None else
               [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
@@ -189,13 +192,14 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         for end, other in ((i, j), (j, i)):
             slot[(end, k)] = len(adj[end])
             adj[end].append((pos[other], lid | (END_FLAG if end == j else 0), ncls[other] << 8 | low, a, bw,
-                             ow[0] if end == i else ow[1], link_w4[k] if link_w4 else 0))
+                             ow[0] if end == i else ow[1], link_w4[k] if link_w4 else 0,
+                             l1_next[k][0 if end == i else 1] if l1_next else None))
     real = {i: len(v) for i, v in adj.items()}
     edge_child = {}
     for i, e in edges.items():
         side, twin = e[0], e[1]
         edge_child[i] = e[2] if len(e) > 2 else None
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0, 0))
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0, 0, None))
     extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
@@ -220,7 +224,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         assert len(ents) <= 15, 'node %r has %d entries, too many for the count nibble' % (nodes[old], len(ents))
         flag = node_flags[old] if node_flags else END_FLAG if l2_twin and l2_twin[old] else 0
         body += [(len(ents) << 12) | x, ncls[old] << 12 | y, flag]
-        for k, (other, lid, cls, a, length, ow, w4) in enumerate(ents):
+        for k, (other, lid, cls, a, length, ow, w4, _) in enumerate(ents):
             ex = regulation_order(extras.get((old, k), ()), k)
             body += [other, w4, ow | len(ex) << 6, lid, cls, a, length] + ex
     live = [old for old in order if adj[old]]
@@ -252,12 +256,13 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     for old in stream_order:
         cw, child = pairs[old]
         pb += [len(adj[old]) << 12, pos_of[old], cw, child]
-        for other, lid, cls, a, length, _, _ in adj[old]:
+        for other, lid, cls, a, length, _, _, nxt in adj[old]:
             if cls & 0x8000:
                 tc = edge_child.get(old)
                 pb += [other, mirror_cell(cw, cls & 0xe000), tc if tc is not None else other]
             else:
-                pb += [other, cw, other]
+                # factory: w4 is the L1 node next along the link from the twin (36,326/36,326 on B30R070R)
+                pb += [other, cw, nxt if nxt is not None else other]
     pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)
