@@ -146,6 +146,14 @@ def build_graphs(ways, cell, level=1, chain=True):
                                        wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid,
                                        wy.get('dir', 0)))
         del P['runs'], P['touch'], P['touch_pts']
+        # a short triangle at a junction simplifies differently at each level: one level
+        # keeps the via-point, the other Douglas-Peucker's it away, leaving two links
+        # between the same pair of nodes for what is really one path. Keep the shorter.
+        by_pair = {}
+        for l in P['links']:
+            key = frozenset((l[0], l[1]))
+            if key not in by_pair or l[2] < by_pair[key][2]: by_pair[key] = l
+        P['links'] = list(by_pair.values())
         if chain: P['links'] = chain_links(P['links'])
         P['links'] = layer_order(P['links'], level)
     for pc, P in parcels.items():
