@@ -47,12 +47,18 @@ def scaled(q):
         assert m <= 7, 'quantity %r does not fit the three-bit multiplier' % q
     return m, v
 
-def cost_words(length_m, kmh, reserved=True):
+# Bits 14-15 of a level-2 length word: a per-link code the factory sets on 95% of L2 ends, the same
+# at both ends, 0 on 81% of L1 ends. Its meaning is not decoded; this is the factory's commonest
+# value per link class (B48R060R + B30R070R, census.txt), 0 where it has none.
+L2_LENGTH_TOP = {1: 0, 2: 0, 3: 1, 4: 1, 5: 3, 6: 1, 7: 3, 10: 2}
+
+def cost_words(length_m, kmh, reserved=True, length_top=0):
     """The entry's (travel time, length) word pair; generated L1 sets KIWI's reserved bit."""
     secs = length_m / (kmh / 3.6)
     mt, t = scaled(secs * 10)
     mb, b = scaled(length_m)
-    return (0x8000 if reserved else 0) | (mt << 12) | t, (mb << 12) | b
+    assert mb < 4 or not length_top, 'length multiplier collides with the top bits'
+    return (0x8000 if reserved else 0) | (mt << 12) | t, (length_top << 14) | (mb << 12) | b
 
 def class_word(cls):
     """The link class word: class in the high byte, then 0x90 | class (0x80 | class above 9)."""
@@ -187,7 +193,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
         # the travel-time reserved bit is a level-1 thing: factory L1 sets it on 77% of ends, L2 on 0.1%
-        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1)
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1,
+                           L2_LENGTH_TOP.get(cls_of[k] & 0xf, 0) if level == 2 else 0)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
@@ -201,7 +208,9 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         side, twin = e[0], e[1]
         edge_child[i] = e[2] if len(e) > 2 else None
         # parcel-edge travel time: factory L1 writes 0x8000 (80%), L2/L4/L5 write 0 (97-100%)
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000 if level == 1 else 0, 0, 0, 0, None))
+        # the edge entry's length word carries the first real entry's top bits (factory L2 82,557/82,656)
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000 if level == 1 else 0,
+                       adj[i][0][4] & 0xc000, 0, 0, None))
     extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
