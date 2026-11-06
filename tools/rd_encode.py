@@ -48,7 +48,7 @@ def scaled(q):
     return m, v
 
 def cost_words(length_m, kmh, reserved=True):
-    """The entry's (travel time, length) word pair; generated L1/L2 sets KIWI's reserved bit."""
+    """The entry's (travel time, length) word pair; generated L1 sets KIWI's reserved bit."""
     secs = length_m / (kmh / 3.6)
     mt, t = scaled(secs * 10)
     mb, b = scaled(length_m)
@@ -186,7 +186,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     slot = {}
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
-        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level not in (4, 5))
+        # the travel-time reserved bit is a level-1 thing: factory L1 sets it on 77% of ends, L2 on 0.1%
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
