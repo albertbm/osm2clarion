@@ -185,7 +185,13 @@ def build_graphs(ways, cell, level=1, chain=True):
         if renames:
             P['links'] = [(renames.get(l[0], l[0]), renames.get(l[1], l[1])) + l[2:] for l in P['links']]
     for pc, P in parcels.items():
-        keys = sorted(P['nodes'], key=lambda k: (k[0], k[1]))
+        # factory order: node class (lowest class among its links), then x, y; the unit-0 pair
+        # table counts nodes per class slot, so a slot must be one contiguous index range
+        ncls = {}
+        for l in P['links']:
+            c = fa_encode.layer_class(l[5], level)[1]
+            for k in (l[0], l[1]): ncls[k] = min(c, ncls.get(k, c))
+        keys = sorted(P['nodes'], key=lambda k: (ncls.get(k, 15), k[0], k[1]))
         P['order'] = keys; P['index'] = {k: i for i, k in enumerate(keys)}
         P['ring'] = not inside(pc)
     return parcels

@@ -175,7 +175,9 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
               [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
               [default] * len(links))
     ncls = node_classes(nodes, links, [c & 0xf for c in cls_of])
-    order = sorted(range(len(nodes)), key=lambda i: (nodes[i][0], nodes[i][1]))
+    # levels 1 and 2 order nodes by class then x, y, as the factory does and as rd_build indexes
+    # them; the coarse levels keep lev_graph's x, y order
+    order = sorted(range(len(nodes)), key=lambda i: ((ncls[i] if level in (1, 2) else 0), nodes[i][0], nodes[i][1]))
     pos = {old: new for new, old in enumerate(order)}
     adj = {i: [] for i in range(len(nodes))}
     slot = {}
@@ -231,7 +233,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         if len(comp) % 2: comp += b'\0'
         return out, comp
     if level in (4, 5): return out, None
-    # own index in x,y order is the key other blocks' triples address this node by; it stays
+    # own index in record order is the key other blocks' triples address this node by; it stays
     # fixed even though the stream below is written in a different order (sorted by cell word)
     pos_of = {old: k for k, old in enumerate(live)}
     pairs = {}
