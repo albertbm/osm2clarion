@@ -200,7 +200,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     for i, e in edges.items():
         side, twin = e[0], e[1]
         edge_child[i] = e[2] if len(e) > 2 else None
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000, 0, 0, 0, None))
+        # parcel-edge travel time: factory L1 writes 0x8000 (80%), L2/L4/L5 write 0 (97-100%)
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000 if level == 1 else 0, 0, 0, 0, None))
     extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
