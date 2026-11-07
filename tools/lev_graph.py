@@ -20,8 +20,6 @@ def part_a(raw):
     return raw[:2 * max(o + n for o, n in units if o != 0xffffffff)]
 
 
-def unscaled(word, mult_bits=7):
-    return (word & 0xfff) * 4 ** ((word >> 12) & mult_bits)
 
 
 def emitted_l2_layer(paths):
@@ -57,8 +55,8 @@ def emitted_l2_layer(paths):
             assert len(pair) == 2, (pc, cls, lid, len(pair))
             (i, ei), (j, ej) = pair
             # bits 14-15 of a level-2 length word are the factory's per-link code, not multiplier bits
-            length = (unscaled(ei['b'], 3) + unscaled(ej['b'], 3)) / 2
-            tenths = (unscaled(ei['a']) + unscaled(ej['a'])) / 2
+            length = (rd_encode.unscaled(ei['b']) + rd_encode.unscaled(ej['b'])) / 2
+            tenths = (rd_encode.unscaled(ei['a'], rd_encode.TIME_UNITS) + rd_encode.unscaled(ej['a'], rd_encode.TIME_UNITS)) / 2
             speed = length / (tenths / 10) * 3.6
             bits = ei['w5'] & 0xc000, ej['w5'] & 0xc000
             direction = 1 if bits == (0x4000, 0x8000) else -1 if bits == (0x8000, 0x4000) else 0

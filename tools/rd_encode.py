@@ -3,8 +3,11 @@
 """Encode a section-2 (road) level-1 record and directory from a node/link graph.
 
 Graph: nodes [(x, y)] in parcel units, links [(i, j, length_m)]. The per-entry words `a`
-(travel time) and `b` (length) are KIWI scaled values (KIWI 1.22 10.10.2): bits 14-12 a
-multiplier m, bits 11-0 the value, unit 4**m -- 0.1 s for time, 1 m for length.
+(travel time) and `b` (length) are scaled values: bits 13-12 a multiplier code, bits 11-0
+the value. KIWI 1.22 10.10.2 says the unit is 4**m; the factory cards double per step
+instead (codes 0-2: 1, 2, 4 m and 0.1, 0.2, 0.4 s, exact against L1 shape lengths and
+L2-over-L1 sums on B30R070R, B48R060R and LEV3456R). Code 3 is read off L5 straight-line
+fits only: 32 m and 6.4 s.
 """
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -38,14 +41,18 @@ def speed_of(hw, maxspeed=None, unit='km/h'):
         if 1 <= v <= 200: return v
     return SPEED_KMH.get(hw, DEFAULT_SPEED_KMH)
 
-def scaled(q):
-    """(m, value) with value <= MAXVAL and unit 4**m, m as small as it goes. q is in units."""
-    m, v = 0, max(1, round(q))
-    while v > MAXVAL:
-        m += 1
-        v = max(1, round(q / 4 ** m))
-        assert m <= 7, 'quantity %r does not fit the three-bit multiplier' % q
-    return m, v
+LENGTH_UNITS = (1, 2, 4, 32)        # metres per value step by multiplier code
+TIME_UNITS = (1, 2, 4, 64)          # tenths of a second per value step by multiplier code
+
+def scaled(q, units=LENGTH_UNITS):
+    """(code, value) with value <= MAXVAL, the smallest code that fits. q is in base units."""
+    for m, u in enumerate(units):
+        v = max(1, round(q / u))
+        if v <= MAXVAL: return m, v
+    raise ValueError('quantity %r does not fit the multiplier codes' % q)
+
+def unscaled(word, units=LENGTH_UNITS):
+    return (word & 0xfff) * units[(word >> 12) & 3]
 
 # Bits 14-15 of a level-2 length word: a per-link code the factory sets on 95% of L2 ends, the same
 # at both ends, 0 on 81% of L1 ends. Its meaning is not decoded; this is the factory's commonest
@@ -55,8 +62,8 @@ L2_LENGTH_TOP = {1: 0, 2: 0, 3: 1, 4: 1, 5: 3, 6: 1, 7: 3, 10: 2}
 def cost_words(length_m, kmh, reserved=True, length_top=0):
     """The entry's (travel time, length) word pair; generated L1 sets KIWI's reserved bit."""
     secs = length_m / (kmh / 3.6)
-    mt, t = scaled(secs * 10)
-    mb, b = scaled(length_m)
+    mt, t = scaled(secs * 10, TIME_UNITS)
+    mb, b = scaled(length_m, LENGTH_UNITS)
     assert mb < 4 or not length_top, 'length multiplier collides with the top bits'
     return (0x8000 if reserved else 0) | (mt << 12) | t, (length_top << 14) | (mb << 12) | b
 
