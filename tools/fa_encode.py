@@ -42,18 +42,20 @@ def speed_limit(maxspeed, unit='km/h'):
     if src != unit: v = 5 * round(v / 5)
     return v if v % 5 == 0 and 5 <= v <= 160 else None
 
-# OSM highway -> (level-1 layer, class), level-2 class, level-3 class; class follows road standard, not route prefix
+# OSM highway -> (level-1 layer, class), level-2 class, level-3 class; class follows road standard, not route prefix.
+# A road carried at level 2 keeps its level-2 class at level 1: on factory B30R070R every one of the 36,326
+# level-2 links steps onto a level-1 link of the same class, and classes 8 and 9 are level-1-only roads.
 CLASSES = {
     'motorway':       ((7, 1), 1, 3),
     'motorway_link':  ((7, 1), 1, 3),
-    'trunk':          ((6, 4), 3, 4),
-    'trunk_link':     ((6, 4), 3, 4),
-    'primary':        ((6, 5), 4, 5),
-    'primary_link':   ((6, 5), 4, 5),
+    'trunk':          ((6, 3), 3, 4),
+    'trunk_link':     ((6, 3), 3, 4),
+    'primary':        ((6, 4), 4, 5),
+    'primary_link':   ((6, 4), 4, 5),
     'secondary':      ((6, 5), 5, 6),
     'secondary_link': ((6, 5), 5, 6),
-    'tertiary':       ((5, 8), 7, 7),
-    'tertiary_link':  ((5, 8), 7, 7),
+    'tertiary':       ((6, 7), 7, 7),
+    'tertiary_link':  ((6, 7), 7, 7),
     'unclassified':   ((5, 8), 7, 7),
     'residential':    ((5, 8), 7, 7),
     'living_street':  ((5, 8), 7, 7),

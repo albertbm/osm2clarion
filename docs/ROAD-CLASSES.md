@@ -61,15 +61,17 @@ Layer 7 takes classes 1-2, layer 6 takes 3-7, layer 5 class 8, layer 4 class 9, 
 | OSM `highway` | L1 layer | L1 class | L2 class | L3 class | L4 class |
 |---|---|---|---|---|---|
 | `motorway`, `motorway_link` | 7 | 1 | 1 | 3 | 3 |
-| `trunk`, `trunk_link` | 6 | 4 | 3 | 4 | 4 |
-| `primary`, `primary_link` | 6 | 5 | 4 | 5 | 5 |
+| `trunk`, `trunk_link` | 6 | 3 | 3 | 4 | 4 |
+| `primary`, `primary_link` | 6 | 4 | 4 | 5 | 5 |
 | `secondary`, `secondary_link` | 6 | 5 | 5 | 6 | 6 |
-| `tertiary`, `tertiary_link` | 5 | 8 | 7 | 7 | n/a |
+| `tertiary`, `tertiary_link` | 6 | 7 | 7 | 7 | n/a |
 | `unclassified`, `residential`, `living_street` | 5 | 8 | 7 | 7 | n/a |
 | `service`, `track` | 4 | 9 | 7, never used | 7 | n/a |
 | anything else | 5 | 8 | 7 | 7 | n/a |
 
-The level-2 layer is 7 for classes 1 and 2, otherwise 6; levels 3 and 4 are always layer 6.
+A road that reaches level 2 has the same class at level 1: on the factory tile B30R070R each of the
+36,326 level-2 links steps onto a level-1 link of its own class, the level-1 shape of a link has the
+graph's class (ids pair per class), and classes 8 and 9 hold level-1-only roads. The level-2 layer is 7 for classes 1 and 2, otherwise 6; levels 3 and 4 are always layer 6.
 Only motorway, trunk and primary reach level 4 by default, and `tertiary` is the lowest value
 that reaches level 3 at all: `lev_roads.py` drops unclassified and below whatever level-3 class
 the table gives them. `service` is excluded from level 2 by `rd_build.L2CLASSES`, so its 7

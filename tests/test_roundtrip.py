@@ -653,7 +653,7 @@ class TestRoadGraph(unittest.TestCase):
                                                 classes=['trunk', 'trunk', 'residential'], ids=[1, 2, 1])
         rec = clarion_rd.parse_record(plain)
         got = sorted({(e['cls'] & 0xf, e['id'] & 0x1fff) for n in rec['nodes'] for e in n['entries']})
-        self.assertEqual(got, [(4, 1), (4, 2), (8, 1)], 'ids restart per class; the class names the group')
+        self.assertEqual(got, [(3, 1), (3, 2), (8, 1)], 'ids restart per class; the class names the group')
 
     def test_coarse_link_metadata(self):
         plain, _ = rd_encode.build_record_edges(4, 32, 896, 1, 2, self.NODES, self.LINKS, {}, country=352,
@@ -1359,7 +1359,7 @@ class TestLinkNumbering(unittest.TestCase):
         ids = rd_build.link_ids(P['links'])
         per = {}
         for l, i in zip(P['links'], ids): per.setdefault(fa_encode.layer_class(l[5], 1)[1], []).append(i)
-        self.assertEqual(sorted(per), [4, 5, 8, 9])
+        self.assertEqual(sorted(per), [3, 4, 8, 9])
         for cls, lst in per.items(): self.assertEqual(lst, list(range(1, len(lst) + 1)), 'class %d' % cls)
 
     def test_sections_pair(self):
@@ -1369,7 +1369,7 @@ class TestLinkNumbering(unittest.TestCase):
         n, bad = rd_check.link_pairing(shapes, clarion_rd.parse_record(rec[0]))
         self.assertEqual(bad, [])
         self.assertEqual(n, len(P['links']))
-        self.assertEqual([s['links'] for s in shapes if s['cls'] == 4], [[1, 2]], 'the trunk draws as one shape, links 1 and 2')
+        self.assertEqual([s["links"] for s in shapes if s["cls"] == 3], [[1, 2]], "the trunk draws as one shape, links 1 and 2")
 
     def test_level2_pairs_too(self):
         P, rec = self.parcel(2)
@@ -1646,13 +1646,13 @@ class TestRoadClasses(unittest.TestCase):
     DOC = {                        # highway: (L1 layer, L1 class, L2 class, L3 class)
         'motorway': (7, 1, 1, 3),
         'motorway_link': (7, 1, 1, 3),
-        'trunk': (6, 4, 3, 4),
-        'trunk_link': (6, 4, 3, 4),
-        'primary': (6, 5, 4, 5),
-        'primary_link': (6, 5, 4, 5),
+        'trunk': (6, 3, 3, 4),
+        'trunk_link': (6, 3, 3, 4),
+        'primary': (6, 4, 4, 5),
+        'primary_link': (6, 4, 4, 5),
         'secondary': (6, 5, 5, 6),
         'secondary_link': (6, 5, 5, 6),
-        'tertiary': (5, 8, 7, 7),
+        'tertiary': (6, 7, 7, 7),
         'unclassified': (5, 8, 7, 7),
         'residential': (5, 8, 7, 7),
         'living_street': (5, 8, 7, 7),
