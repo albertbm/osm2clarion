@@ -237,6 +237,34 @@ def load(path):
     return by
 
 
+def populated_cells(path, cells, city_buffer=400, landuse_buffer=100):
+    """Of a set of (my, r, mx, c) cells, the ones that meet a 'populated' extract
+    (extract_landuse.py --populated): place nodes buffered city_buffer metres, or
+    residential/commercial/industrial/retail landuse buffered landuse_buffer metres."""
+    import json
+    from shapely.geometry import box, shape
+    from shapely.ops import unary_union
+    places, landu = [], []
+    for f in json.load(open(path))['features']:
+        g, kind = shape(f['geometry']), f['properties'].get('kind')
+        if kind == 'place' and g.geom_type == 'Point':
+            places.append(g)
+        elif kind == 'populated_landuse':
+            landu.extend(polygons(g))
+    if not places and not landu:
+        return set()
+    lat = (sum(p.centroid.y for p in places) + sum(p.centroid.y for p in landu)) / (len(places) + len(landu))
+    to_m, to_deg = metric(lat)
+    region = to_deg(unary_union([to_m(p).buffer(city_buffer) for p in places]
+                                 + [to_m(p).buffer(landuse_buffer) for p in landu]))
+    kept = set()
+    for cell in cells:
+        lon0, lat0, w, h = cell_geo(*cell)
+        if region.intersects(box(lon0, lat0, lon0 + w, lat0 + h)):
+            kept.add(cell)
+    return kept
+
+
 def merge_blocks(polys, to_m, to_deg, gap=0.5, tol=2.0, min_area=30):
     """Touching footprints merged into blocks, simplified, tiny ones dropped."""
     from shapely.ops import unary_union
@@ -286,6 +314,7 @@ def main(argv):
     coast = opt('--coast', None)
     dense = int(opt('--dense', '0'))
     stats = opt('--stats', None)
+    cellpath = opt('--cells', None)
     src, outdir = argv
     hdr = dict(db_bounds=(4800, 1280, -1200, 4080), data_version='17/09/01/01', source=None)
     if template:
@@ -318,6 +347,9 @@ def main(argv):
         if dense:
             hard = Layer(*BLD, AREA, merge_blocks(by['building'], to_m, to_deg, gap=1.0, tol=4.0, min_area=60), floors)
     cells = set(box_cells(*map(float, bbox.split(',')))) if bbox else set()
+    if cellpath:
+        import json
+        cells &= {tuple(c) for c in json.load(open(cellpath))}
     for p in ([] if bbox else allp):
         a, b, c_, e = p.bounds
         for lon in (a, c_):

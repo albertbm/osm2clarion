@@ -21,8 +21,14 @@ RULES = [
     ('landuse', {'grass', 'meadow', 'village_green', 'recreation_ground', 'cemetery'}, 'park'),
 ]
 
+# Only classified with --populated, so a caller that never asks for it sees no new kinds.
+POPULATED_RULES = [
+    ('landuse', {'residential', 'commercial', 'industrial', 'retail'}, 'populated_landuse'),
+]
+PLACE_KINDS = {'city', 'town', 'village', 'hamlet'}
 
-def classify(tags, buildings=False):
+
+def classify(tags, buildings=False, populated=False):
     """water=river|canal makes a river rather than water."""
     if buildings and tags.get('building', 'no') != 'no':
         return 'building'
@@ -31,13 +37,17 @@ def classify(tags, buildings=False):
             if kind == 'water' and tags.get('water') in ('river', 'canal', 'stream'):
                 return 'river'
             return kind
+    if populated:
+        for key, values, kind in POPULATED_RULES:
+            if tags.get(key) in values:
+                return kind
     return None
 
 
 def main(argv):
     import osmium
     from shapely import wkb
-    from shapely.geometry import box, mapping
+    from shapely.geometry import box, mapping, Point
     clip = None
     if '--bbox' in argv:
         i = argv.index('--bbox')
@@ -51,13 +61,26 @@ def main(argv):
     buildings = '--buildings' in argv
     if buildings:
         argv.remove('--buildings')
+    populated = '--populated' in argv
+    if populated:
+        argv.remove('--populated')
     src, dest = argv
     fab = osmium.geom.WKBFactory()
     feats = []
 
     class H(osmium.SimpleHandler):
+        def node(self, n):
+            if not populated or n.tags.get('place') not in PLACE_KINDS or (kinds and 'place' not in kinds):
+                return
+            lon, lat = n.location.lon, n.location.lat
+            if clip is not None and not clip.contains(Point(lon, lat)):
+                return
+            feats.append({'type': 'Feature', 'properties': {'kind': 'place', 'osm': 'node/%d' % n.id,
+                                                              'name': n.tags.get('name')},
+                          'geometry': mapping(Point(lon, lat))})
+
         def area(self, a):
-            kind = classify({t.k: t.v for t in a.tags}, buildings)
+            kind = classify({t.k: t.v for t in a.tags}, buildings, populated)
             if kind is None or (kinds and kind not in kinds):
                 return
             try:
