@@ -1,19 +1,16 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
-# A generic address importer
+# Addresses: bring your own source
 
-Not built. This is the shape it should take.
+`addre_io`, `zcode_io` and `icode_io` write an address database onto a card, but
+nothing here reads one in. The Iceland build gets its rows from the Icelandic
+national registry; a build for another country needs its own source, in the
+same flat shape.
 
-`addre_io`, `zcode_io` and `icode_io` can write an address database, but nothing
-here reads one in. The Iceland build does that itself, against the Icelandic
-national registry, so the format knowledge and the country knowledge are tangled
-in a script this repo does not hold.
+## The shape
 
-Anyone with address data for their own country should be able to build a card.
-Getting the data is their problem; ingesting it should not be.
-
-## The input
-
-One flat row per address, as CSV or JSON lines, the same fields either way:
+One row per address, country code, up to four administrative levels (outermost
+first, blank where the country has fewer), street, house number, suffix,
+postcode, latitude and longitude:
 
 ```
 country_iso,level1,level2,level3,level4,street,number,suffix,postcode,lat,lon
@@ -23,34 +20,63 @@ country_iso,level1,level2,level3,level4,street,number,suffix,postcode,lat,lon
 Levels run outermost first and may be blank. The ladder's depth is whatever the
 data has, not a fixed set of names: Andorra is 3 deep, the UK 4, Italy 5, and
 `df[0x49]` has to match. Calling the columns `level1..n` rather than `region`,
-`province` and `city` keeps the importer out of the business of deciding what a
+`province` and `city` keeps the shape out of the business of deciding what a
 country's divisions are called.
 
-Coordinates are per address and required. A source that has none needs a join
-against road geometry first, which is the caller's problem, not this repo's.
+Coordinates are per address and required. A source with none needs a join
+against road geometry first - the caller's problem, not this repo's.
 
-## What the importer does
+The tier labels themselves can't come from the rows. The ISO entry carries
+seven slots of text - `COUNTRY / PARROQUIA / SETTLEMENT` for Andorra,
+`COUNTRY / REGION / PROVINCE / COMMUNIONE / BUILT-UP AREA` for Italy - and the
+unit shows them as given, so they're a small config beside the address rows,
+not something derived.
 
-All of it format work, none of it country-specific:
+## Source 1: a CSV
 
-- build the tier tree and the ICODE chains from the distinct level values
-- fold keys, stripping the diacritic one character for one, and keep the display
-  names as they came in
-- group house numbers into odd and even ranges per street per postcode
-- emit `ADDRE0nn`, `ZCODE0nn`, the ICODE tier table, the `COORD001` row and the
-  `.cmp`/`.ind` wrap
+Iceland's own source is Staðfangaskrá, the national address registry (CSV,
+plus a `;`-delimited `postnumeraskra` file mapping postcodes to towns). The
+columns that matter: `HEITI_NF` (street, nominative case), `HUSNR` (house
+number), `BOKST` (letter), `POSTNR` (postcode), `SVFNR` (municipality code),
+`N_HNIT_WGS84` / `E_HNIT_WGS84` (lat/lon). The Icelandic-registry reader is a
+country-specific script and stays outside this repo; `addre_io.py` is the
+writer it feeds, turning a row into an `ADDRE`/`ZCODE` record.
 
-## What it cannot infer
+A different country's registry will have different column names but the same
+shape: street, number, postcode, town or municipality, coordinates. Map those
+columns to the row above and the writers don't care where the data came from.
 
-The tier labels. The ISO entry carries seven slots of text:
-`COUNTRY / PARROQUIA / SETTLEMENT` for Andorra,
-`COUNTRY / REGION / PROVINCE / COMMUNIONE / BUILT-UP AREA` for Italy. The unit
-shows them and no amount of address data implies them. So a small config beside
-the rows: the ISO code, the tier labels in order, and which ordinal to write into.
+## Source 2: OSM
 
-## What stays outside
+Addresses tagged `addr:street` + `addr:housenumber` on nodes, ways or
+relations give the same rows without a national source. An Overpass query for
+one area:
 
-The adapter that produces the rows. For the Icelandic registry it is about thirty
-lines: street, number, suffix and postcode are columns, and the town comes from
-joining the postcode file. Someone starting from OSM writes a different adapter
-and reaches the same rows.
+```
+[out:json];
+area["name"="Reykjavík"]->.a;
+(
+  node["addr:street"]["addr:housenumber"](area.a);
+  way["addr:street"]["addr:housenumber"](area.a);
+  relation["addr:street"]["addr:housenumber"](area.a);
+);
+out center tags;
+```
+
+or by bounding box instead of a named area:
+
+```
+[out:json];
+(
+  node["addr:street"]["addr:housenumber"](64.08,-22.05,64.20,-21.65);
+  way["addr:street"]["addr:housenumber"](64.08,-22.05,64.20,-21.65);
+  relation["addr:street"]["addr:housenumber"](64.08,-22.05,64.20,-21.65);
+);
+out center tags;
+```
+
+`out center tags` gives a way or relation's centre point along with its tags,
+which is enough to fill the row above (`addr:street`, `addr:housenumber`,
+`addr:postcode`, `addr:city`, and the centre for lat/lon). The same tags can be
+read offline from a local `.osm.pbf` with `osmium`, for an area too large for
+one Overpass call.
