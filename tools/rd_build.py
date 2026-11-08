@@ -605,6 +605,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
+        rings = [all(L[k][11] in ('roundabout', 'circular') for k in g) for g in groups]
         found = find_signposts(L, nodes, idx, groups, signs, UPPER_NAMES) if signs and level == 1 else []
         gs = None
         if found:
@@ -613,14 +614,14 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             gs = {}
             for s in found: gs.setdefault(s['exit'][0], {})[s['exit'][1]] = 0
             fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs)
+                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings)
             occ = fa_encode.occurrence_words(fa_encode.build_record.last_index)
             subs = signpost_subs(found, occ)
             L_of_key = dict(zip((s['key'] for s in subs), sec4_write.sub_offsets(subs)))
             gs = {i: {n: L_of_key[occ[i][n] - 22] for n in o} for i, o in gs.items()}
             encode_parcels.signposts[pc] = subs
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs)
+                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)

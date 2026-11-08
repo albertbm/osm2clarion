@@ -74,7 +74,7 @@ def restyled(styles):
     """Per link, whether its header carries a style word: the first always, a later one only where it changes."""
     return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
-def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None):
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False):
     """Section-1 shape words for one link chain: start point, then each link's header and
     points, with x flags 0x4000/0x2000/0x1000/0x0800 marking link starts, style changes and
     ends (docs/GEOMETRY.md), and the one-way sense OR'd into bits 15-14 of y.
@@ -90,7 +90,9 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     def dirbits(n):
         d = dirs[n]
         return 0x4000 if d > 0 else 0x8000 if d < 0 else 0
-    if level == 1: out = [cls << 12, 0x0004, name_off, 0x8004, 0x0000]   # word 4: word offset of the name entry, 0xffff = none
+    # word 3 bits 14-12 = 7 on factory ring strings (Koln 89%, UK 95%, ~0% elsewhere): the
+    # 3-bit code section 2 carries in w4. Word 4: word offset of the name entry, 0xffff = none
+    if level == 1: out = [cls << 12, 0x7004 if ring else 0x0004, name_off, 0x8004, 0x0000]
     else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
     out += [0x0800 | sx, 0x2800 | sy | dirbits(0) | (0x1000 if 0 in gs else 0)]
@@ -211,7 +213,7 @@ def tail_of(plain):
     return tail[1], list(tail[8:8 + tail[1]])
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None, country=None, dirs=None, gs=None):
+                 styles=None, country=None, dirs=None, gs=None, rings=None):
     """A level-1 or level-2 road-shape record and its compressed form, shapes grouped by layer.
 
     gs, level 1 only: {chain index: {node occurrence: G}} as shape_words takes it. G is the
@@ -224,7 +226,8 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     if styles is None: styles = [None] * len(chains)
     if dirs is None: dirs = [None] * len(chains)
     if gs is None or level != 1: gs = {}
-    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i))
+    shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i),
+                          ring=bool(rings and rings[i]))
               for i, c in enumerate(chains)]
     if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
