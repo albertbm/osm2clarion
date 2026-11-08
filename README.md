@@ -15,12 +15,16 @@ the Nissan e-NV200 (QY8202PB), European and US market. The format is undocumente
 | Route guidance, including long routes on the coarse graph | works |
 | Roundabout ring markers | works |
 | Speed-limit signs | works |
-| Address database and search | testing; builder not moved here yet |
+| Speed cameras from OSM | extractor and writer exist, not wired into the Iceland build |
+| Address database and search | works: street search, City-first, house numbers, tested on the bench and in a car |
 | POI icons and search | works |
 | House numbers along a street | works |
-| Signposts, names on unnamed ramps | works |
+| Signposts, names on unnamed ramps | built and unit-tested, not wired into the Iceland build |
 | Lake, fjord and river names | not written |
 | Showing the card's own map version | unsolved |
+
+Addresses come from a CSV import (Iceland's own national registry, or any source in the
+same shape) or from OSM; see [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
 
 Only Iceland has been built: a country added to a card that lacked it. Updating a country
 the card already has is untested.
@@ -54,8 +58,12 @@ One TOML per region in `profiles/`. `profiles/iceland.toml` is the only one buil
 
 - The firmware rejects positions outside its shipment area (longitude -20 to 68 on European
   units). The map draws but the car never appears. A NAND patch fixes it; the card can't.
-- Only Iceland's four cells have been built. On a cell that already has data, the coarse
-  levels are replaced, not merged.
+- Stand-alone Iceland cards are built from scratch, own tiles and own coarse file. Adding
+  a country to a card that already carries others is untested; the coarse file is written
+  fresh, not merged into what is there.
+- Building outlines (25 m scale) are only drawn in populated areas - a place node or
+  residential/commercial/industrial/retail landuse within a couple hundred metres. A house
+  out in the open country gets no shape even where OSM has its footprint.
 - North of about 60° the 640-160 km views look stretched east-west, as on factory cards.
 
 ## Docs
@@ -67,7 +75,7 @@ One TOML per region in `profiles/`. `profiles/iceland.toml` is the only one buil
 | [BUILD-LOG.md](docs/BUILD-LOG.md) | what the unit accepted and refused |
 | [ROAD-CLASSES.md](docs/ROAD-CLASSES.md) | road widths and the OSM mapping |
 | [LEVEL5.md](docs/LEVEL5.md) | the coarse levels |
-| [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md) | plan for a generic address importer |
+| [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md) | addresses: bring your own source (CSV or OSM) |
 
 ## Licence
 
