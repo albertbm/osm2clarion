@@ -12,12 +12,13 @@ the Nissan e-NV200 (QY8202PB), European and US market. The format is undocumente
 | Feature | State |
 |---|---|
 | Coast, land, roads, road names | works |
-| Route guidance | works |
-| Speed-limit signs | work |
+| Route guidance, including long routes on the coarse graph | works |
+| Roundabout ring markers | works |
+| Speed-limit signs | works |
 | Address database and search | testing; builder not moved here yet |
-| POI icons and search | work in the emulator; branch `pois` |
-| House numbers along a street | testing; branch `house-ranges` |
-| Signposts, names on unnamed ramps | untested; branches `signposts`, `ramp-names` |
+| POI icons and search | works |
+| House numbers along a street | works |
+| Signposts, names on unnamed ramps | works |
 | Lake, fjord and river names | not written |
 | Showing the card's own map version | unsolved |
 
