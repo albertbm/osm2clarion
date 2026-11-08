@@ -1274,6 +1274,29 @@ class TestSpeedLimits(unittest.TestCase):
         styles = sorted(([v & 0x1000 for v in s['styles']] for s in shapes), key=len)
         self.assertEqual(styles, [[0x1000], [0, 0, 0]], 'bit 12 clear on one-way links only')
 
+    def test_rd_build_writes_roundabout_marker(self):
+        # a one-way triangle tagged junction=roundabout, plus a plain one-way spoke off node A
+        a, b, c, d = (-21.9000, 64.1300), (-21.8995, 64.1300), (-21.8995, 64.1304), (-21.9005, 64.1296)
+        ring = [dict(id=1, hw='residential', name=None, ref=None, dir=1, junction='roundabout', nodes=[a, b]),
+                dict(id=2, hw='residential', name=None, ref=None, dir=1, junction='roundabout', nodes=[b, c]),
+                dict(id=3, hw='residential', name=None, ref=None, dir=1, junction='roundabout', nodes=[c, a])]
+        spoke = dict(id=4, hw='service', name=None, ref=None, dir=1, nodes=[a, d])
+        parcels = rd_build.build_graphs(ring + [spoke], TestRoadChains.CELL, 1, True)
+        was, rd_build.COUNTRY = rd_build.COUNTRY, 352
+        try: recs = rd_build.encode_parcels(parcels, 1)
+        finally: rd_build.COUNTRY = was
+        (pc, rec), = recs.items()
+        self.assertEqual(rd_check.check(rec[0], 1, 352), ([], []))
+        g = clarion_rd.parse_record(rec[0])
+        qa, qb, qc, qd = (rd_build.quant(p, pc) for p in (a, b, c, d))
+        byxy = {(nd['x'], nd['y']): i for i, nd in enumerate(g['nodes'])}
+        ia, ib, ic, idd = (byxy[q] for q in (qa, qb, qc, qd))
+        def w4(i, j):
+            e = next(e for e in g['nodes'][i]['entries'] if e['other'] == j and not e['cls'] & 0x8000)
+            return e['w4']
+        self.assertEqual([w4(ia, ib), w4(ib, ic), w4(ic, ia)], [0x7000] * 3, 'every ring entry carries the marker')
+        self.assertEqual([w4(ia, idd), w4(idd, ia)], [0, 0], 'the spoke carries no marker')
+
     def test_dir_falls_back_to_oneway(self):
         pts = TestRoadChains.POINTS
         a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, oneway=True, nodes=pts[:3])

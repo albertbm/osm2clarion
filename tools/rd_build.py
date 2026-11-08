@@ -218,7 +218,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                     length = sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
                     P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
                                        wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid,
-                                       wy.get('dir', 0)))
+                                       wy.get('dir', 0), wy.get('junction')))
         del P['runs'], P['touch'], P['touch_pts']
         # a short triangle at a junction simplifies differently at each level: one level
         # keeps the via-point, the other Douglas-Peucker's it away, leaving two links
@@ -280,7 +280,7 @@ def chain_links(links):
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
     def key(c): return (c[0][5], c[0][4], c[0][6])
-    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) for l in reversed(c)]
+    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
     ends = collections.defaultdict(list)
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -579,11 +579,15 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                 l1_next.append((l1_next_node(l1_pair[idx[a]], pc, l1_adj, ga, gb),
                                 l1_next_node(l1_pair[idx[b]], pc, l1_adj, gb, ga)))
             encode_parcels.l1_next_missing += sum(x is None for pair in l1_next for x in pair)
+        # the factory marks a roundabout ring's own links (not its approach/exit spokes) with
+        # w4's top 3 bits all set, both ends alike, at both L1 and L2 -- measured on the Koln
+        # and UK factory tiles, never on a plain one-way link's entries
+        link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else 0 for l in P['links']]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
-                                               dirs=[l[10] for l in P['links']], ids=ids,
+                                               dirs=[l[10] for l in P['links']], ids=ids, link_w4=link_w4,
                                                oneway_regs=oneway_regs, l2_twin=l2_flags, l1_pair=l1_pair,
                                                l1_next=l1_next)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
