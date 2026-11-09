@@ -216,8 +216,11 @@ def delete(fs, job):
     fs.wr(job['ent'], bytes(e))
 
 
-def fat_time(ts):
-    t = time.localtime(ts)
+def fat_time(ts=None):
+    """DOS time/date pair. $SOURCE_DATE_EPOCH overrides ts when set, so two runs of
+    the same recipe stamp every write identically instead of each at its own wall clock."""
+    sde = os.environ.get('SOURCE_DATE_EPOCH')
+    t = time.localtime(float(sde) if sde else (ts if ts is not None else time.time()))
     return (struct.pack('<H', (t.tm_hour << 11) | (t.tm_min << 5) | (t.tm_sec // 2)),
             struct.pack('<H', ((t.tm_year - 1980) << 9) | (t.tm_mon << 5) | t.tm_mday))
 
