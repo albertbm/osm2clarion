@@ -65,6 +65,12 @@ One TOML per region in `profiles/`. `profiles/iceland.toml` is the only one buil
   residential/commercial/industrial/retail landuse within a couple hundred metres. A house
   out in the open country gets no shape even where OSM has its footprint.
 - North of about 60° the 640-160 km views look stretched east-west, as on factory cards.
+- In drive simulation, the 100 m and 200 m views stop drawing the route a few kilometres
+  from where it was calculated, at the edge of a 5x5 block of level-1 parcels around that
+  point; the unit recalculates once the car gets there. The 500 m and wider views show the
+  whole route. It showed up once builds covered more than one town and doesn't affect real
+  driving. Setting the level-1 link-direction flag and the two cost-word bits that factory
+  tiles carry on links an upper level covers did not change it.
 
 ## Docs
 
