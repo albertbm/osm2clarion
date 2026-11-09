@@ -586,6 +586,33 @@ def whole_card_diff(img_a, img_b):
     return sorted(ka - kb), sorted(kb - ka), diff, len(ka & kb)
 
 
+def section_sizes(path):
+    """{(section, level): (records, plain_bytes, raw_bytes)} over every section/level a tile
+    has, not just section 2 - a whole-file size change with no section-2 field change (a
+    compression-size effect of changed bits, or a change outside the ten rules' own fields)
+    needs this to find which section actually grew, instead of staying unexplained."""
+    out = {}
+    with TileScan(path) as t:
+        for sec in range(1, 5):
+            for lvl in range(1, 6):
+                recs = list(t.records(section=sec, level=lvl))
+                if recs:
+                    out[(sec, lvl)] = (len(recs), sum(len(r.plain()) for r in recs),
+                                        sum(len(r.raw()) for r in recs))
+    return out
+
+
+def section_size_diff(name, path_a, path_b):
+    """[(label, differs, (recs_a, plain_a, raw_a), (recs_b, plain_b, raw_b))] for every
+    (section, level) present in either tile, in section/level order."""
+    a, b = section_sizes(path_a), section_sizes(path_b)
+    rows = []
+    for key in sorted(set(a) | set(b)):
+        va, vb = a.get(key), b.get(key)
+        rows.append(('%s sec%d lvl%d' % (name, key[0], key[1]), va != vb, va, vb))
+    return rows
+
+
 ENTRY_FIELDS = ('w4', 'w5', 'id', 'cls', 'a', 'b')
 NODE_FIELDS = ('ncls', 'nflags', 'x', 'y')
 
@@ -711,9 +738,25 @@ def main(argv):
         print('== diff: field-level, by tile and level ==')
         for label, n, xor in field_rows:
             print('%s: %d changed%s' % (label, n, bit_note(xor)))
+
+        # Field-level diff above only decodes section 2 (the road graph). A tile's whole-card
+        # size can change through section 1 (background/shapes), section 4 (signposts) or
+        # compression alone (same bits, different entropy) with no section-2 field touched -
+        # that's a size change the field diff would otherwise hide. This checks every
+        # section/level's record count and both plain and raw (compressed) byte totals.
+        size_rows = []
+        for name in sorted(common):
+            size_rows += section_size_diff(os.path.basename(name), tiles[name], prev_tiles[name])
+        print('== diff: section sizes, by tile, section and level ==')
+        for label, differs, va, vb in size_rows:
+            mark = '  <-- DIFFERS' if differs else ''
+            print('%s: card(recs,plain,raw)=%s prev=%s%s' % (label, va, vb, mark))
+
         report['diff'] = dict(only_in_card=only_a, only_in_prev=only_b,
                               files_differing=[d[0] for d in diff],
-                              fields=[dict(field=l, changed=n, xor=xor) for l, n, xor in field_rows])
+                              fields=[dict(field=l, changed=n, xor=xor) for l, n, xor in field_rows],
+                              section_sizes=[dict(label=l, differs=d, card=va, prev=vb)
+                                             for l, d, va, vb in size_rows])
 
     if args.json:
         print(json.dumps(report, indent=2, default=str))
