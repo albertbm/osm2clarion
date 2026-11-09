@@ -174,7 +174,7 @@ def road_steps(B, also, to=None, by=None, area=None):
     if area:
         relations, sec4, _ = area_values(area)
         sel = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py', PBF, roads,
-               '--public', '--relations', ','.join(map(str, relations)), '--turns', TURNS, turns]
+               '--public', '--relations', ','.join(map(str, relations)), '--turns', TURNS, turns, '--ramp-names']
         seltool = t + '/osm_roads.py'
     else:
         sel = ['uv', 'run', '--with', 'osmium', 'python', HERE + '/gen_roads_path.py', PBF, TURNS, roads, turns]
