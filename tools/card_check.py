@@ -569,7 +569,8 @@ def extract_card(img):
 
 
 def whole_card_diff(img_a, img_b):
-    """(only_in_a, only_in_b, [(path, size_a, size_b, md5_a, md5_b)] differing), like imgcmp."""
+    """(only_in_a, only_in_b, [(path, size_a, size_b, md5_a, md5_b)] differing, common_count),
+    like imgcmp. common_count is len(files in both cards), so identical = common_count - len(diff)."""
     import fatread
 
     def take(p):
@@ -582,7 +583,7 @@ def whole_card_diff(img_a, img_b):
     a, b = take(img_a), take(img_b)
     ka, kb = set(a), set(b)
     diff = [(k, a[k][0], b[k][0], a[k][1], b[k][1]) for k in sorted(ka & kb) if a[k] != b[k]]
-    return sorted(ka - kb), sorted(kb - ka), diff
+    return sorted(ka - kb), sorted(kb - ka), diff, len(ka & kb)
 
 
 ENTRY_FIELDS = ('w4', 'w5', 'id', 'cls', 'a', 'b')
@@ -687,14 +688,18 @@ def main(argv):
 
     if args.prev and args.card:
         print('== diff: whole card, %s vs %s ==' % (args.card, args.prev))
-        only_a, only_b, diff = whole_card_diff(args.card, args.prev)
+        only_a, only_b, diff, common_count = whole_card_diff(args.card, args.prev)
         print('only in %s: %r' % (args.card, only_a))
         print('only in %s: %r' % (args.prev, only_b))
         for path, sa, sb, ma, mb in diff:
             print('  DIFFERS %-26s size %s -> %s  md5 %s -> %s' % (path, sa, sb, ma, mb))
 
+        # identical here is whole-card: common_count minus the DIFFERS above, not scoped to
+        # extract_card()'s MAPAL001/LEV3456R-only subset (that mismatch used to make this
+        # number meaningless - e.g. 5 road/lev files in common, 4 REFER001 files differing,
+        # reported as "1 identical" with no road tile involved in either number)
+        print('identical: %d files' % (common_count - len(diff)))
         prev_files = extract_card(args.prev)
-        print('identical: %d files' % (len(set(files) & set(prev_files)) - len(diff)))
         prev_tiles = {k: v for k, v in prev_files.items() if k.upper().startswith('MAPAL001/') and 'LEV3456R' not in k.upper()}
         common = set(tiles) & set(prev_tiles)
         field_rows = []
