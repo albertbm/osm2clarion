@@ -57,6 +57,11 @@
     "settlements": {}
   },
   "poi_python": "python3",
+  "roads_poc": {
+    "start": "KIRKJUSTRAETI",
+    "goal": "AUSTURSTRAETI",
+    "box": [-21.95, 64.13, -21.90, 64.15]
+  },
   "addr": {
     "format": "example",
     "box": [64.13, 64.15, -21.95, -21.90],
