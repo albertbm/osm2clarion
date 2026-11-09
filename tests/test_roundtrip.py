@@ -1239,7 +1239,7 @@ class TestSpeedLimits(unittest.TestCase):
 
     def test_rd_build_takes_maxspeed(self):
         pts = TestRoadChains.POINTS
-        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, maxspeed='30', nodes=pts[:3])
+        a = dict(id=1, hw='residential', name='Kirkjustraeti', ref=None, maxspeed='30', nodes=pts[:3])
         b = dict(a, id=2, maxspeed='50', nodes=pts[2:])
         c = dict(id=3, hw='service', name=None, ref=None, nodes=[pts[1], (-21.896, 64.127)])
         parcels = rd_build.build_graphs([a, b, c], TestRoadChains.CELL, 1, True)
@@ -1254,7 +1254,7 @@ class TestSpeedLimits(unittest.TestCase):
     def test_rd_build_writes_oneway(self):
         # a runs east, b is drawn west but joins a as one chain, so chain_links flips it
         pts = TestRoadChains.POINTS
-        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, dir=1, nodes=pts[:3])
+        a = dict(id=1, hw='residential', name='Kirkjustraeti', ref=None, dir=1, nodes=pts[:3])
         b = dict(a, id=2, dir=1, nodes=pts[2:][::-1])
         c = dict(id=3, hw='service', name=None, ref=None, nodes=[pts[1], (-21.896, 64.127)])
         parcels = rd_build.build_graphs([a, b, c], TestRoadChains.CELL, 1, True)
@@ -1299,7 +1299,7 @@ class TestSpeedLimits(unittest.TestCase):
 
     def test_dir_falls_back_to_oneway(self):
         pts = TestRoadChains.POINTS
-        a = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, oneway=True, nodes=pts[:3])
+        a = dict(id=1, hw='residential', name='Kirkjustraeti', ref=None, oneway=True, nodes=pts[:3])
         b = dict(a, id=2, oneway=True, nodes=pts[2:][::-1])
         c = dict(id=3, hw='service', name=None, ref=None, oneway=False, nodes=[pts[1], (-21.896, 64.127)])
         ways = [a, b, c]
@@ -1358,9 +1358,9 @@ class TestLinkNumbering(unittest.TestCase):
 
     def parcel(self, level=1):
         pts = TestRoadChains.POINTS
-        ways = [dict(id=1, hw='residential', name='Jonsgeisli', ref=None, nodes=pts[:3]),
+        ways = [dict(id=1, hw='residential', name='Kirkjustraeti', ref=None, nodes=pts[:3]),
                 dict(id=2, hw='trunk', name='Vesturlandsvegur', ref='1', nodes=[pts[2], (-21.893, 64.1315), pts[4]]),
-                dict(id=3, hw='residential', name='Gvendargeisli', ref=None, nodes=[pts[1], (-21.897, 64.127)]),
+                dict(id=3, hw='residential', name='Austurstraeti', ref=None, nodes=[pts[1], (-21.897, 64.127)]),
                 dict(id=4, hw='service', name=None, ref=None, nodes=[pts[3], (-21.892, 64.1333)]),
                 dict(id=5, hw='primary', name='Hofdabakki', ref=None, nodes=[(-21.893, 64.1315), (-21.890, 64.1290)])]
         parcels = rd_build.build_graphs(ways, TestRoadChains.CELL, level, True)
@@ -1429,7 +1429,7 @@ class TestRoadChains(unittest.TestCase):
 
     CELL = 'B60R080R'
     POINTS = [(-21.900 + 0.002 * i, 64.130 + 0.0004 * i) for i in range(5)]   # one parcel
-    WAY = dict(id=1, hw='residential', name='Jonsgeisli', ref=None, nodes=POINTS)
+    WAY = dict(id=1, hw='residential', name='Kirkjustraeti', ref=None, nodes=POINTS)
 
     def parcel(self, ways, chain=True):
         parcels = rd_build.build_graphs(ways, self.CELL, 1, chain)
