@@ -108,10 +108,11 @@ def parts(g):
 
 def no_holes(p):
     """Hole-free pieces of a polygon, cut through each hole; the unit fills outer rings only."""
-    from shapely.geometry import box
+    from shapely.geometry import Polygon, box
     if not p.interiors:
         return [p]
-    x = p.interiors[0].centroid.x
+    # a concave hole's centroid can lie outside it, and a cut there never removes the hole
+    x = Polygon(p.interiors[0]).representative_point().x
     a, b, c, d = p.bounds
     out = []
     for half in (box(a - 1, b - 1, x, d + 1), box(x, b - 1, c + 1, d + 1)):
