@@ -52,16 +52,19 @@ for req in CONFIG UNIT SLUG AREA BUILDDIR; do
   [ -n "$v" ] || { echo "missing --${req,,}" >&2; usage; exit 1; }
 done
 
-read -r PREFIX VERSION CFG_BASE CONSENT_CMD POI_PY ADDR_CSV POST_CSV <<EOF
-$(python3 - "$CONFIG" "$UNIT" <<'PY'
+# one field per line, since consent_cmd has spaces; bash 3.2 on macOS has no mapfile
+O2C_FIELDS=()
+while IFS= read -r o2c_line; do O2C_FIELDS+=("$o2c_line"); done < <(python3 - "$CONFIG" "$UNIT" <<'PY'
 import json, sys
 cfg = json.load(open(sys.argv[1]))
 u = cfg['units'][sys.argv[2]]
-print(cfg['card_naming']['prefix'], u['version'], u.get('base', '-'), u.get('consent_cmd', '-'),
-      cfg['poi_python'], cfg['data']['addresses'], cfg['data']['postcodes'])
+for v in (cfg['card_naming']['prefix'], u['version'], u.get('base', '-'), u.get('consent_cmd', '-'),
+          cfg['poi_python'], cfg['data']['addresses'], cfg['data']['postcodes']):
+    print(v)
 PY
 )
-EOF
+PREFIX="${O2C_FIELDS[0]}" VERSION="${O2C_FIELDS[1]}" CFG_BASE="${O2C_FIELDS[2]}" CONSENT_CMD="${O2C_FIELDS[3]}"
+POI_PY="${O2C_FIELDS[4]}" ADDR_CSV="${O2C_FIELDS[5]}" POST_CSV="${O2C_FIELDS[6]}"
 expand() { eval echo "$1"; }
 [ "$CFG_BASE" = "-" ] && CFG_BASE=""
 [ -n "$CFG_BASE" ] && CFG_BASE="$(expand "$CFG_BASE")"
