@@ -85,6 +85,13 @@ tile reaches 477 MB and the whole surface is 4.8 GiB, so the rebuild
 cases work through the smallest tiles until `READ_BUDGET` bytes have been read, 64 MiB by
 default.
 
+## test_card_check.py
+
+`tools/card_check.py`'s ten rules against hand-built record dicts shaped like
+`clarion_rd.parse_record`'s output, not real encoded bytes - enough to catch a rule
+crashing or flipping its pass/fail sense. No card needed; every rule also passes
+vacuously on an empty tile set, which is what a fresh clone exercises.
+
 The card is identified from what it states about itself: the `DATA VERSION` and `NAVTEQ`
 strings in a tile header, and `VER_INFO/DB_INFO.TXT`. Both databases are in
 `fixtures/reproduce.json`.
