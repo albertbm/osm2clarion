@@ -74,8 +74,9 @@ POST_CSV="$(expand "$POST_CSV")"
 export OSM2CLARION
 export O2C_CONFIG="$CONFIG"
 # fixed FAT write time, so two runs of the same recipe stamp identically; a caller
-# wanting a real timestamp in the image sets SOURCE_DATE_EPOCH before calling this
-export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-0}"
+# wanting a real timestamp in the image sets SOURCE_DATE_EPOCH before calling this.
+# 946684800 = 2000-01-01 00:00:00 UTC, safely past the FAT epoch (1980) in every timezone
+export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-946684800}"
 CARDS_DIR="${CARDS_DIR:-$HOME/cards}"
 # Default stage dir is under CARDS_DIR, not BUILDDIR: the stage holds whole card copies
 # (poi_apply/build_poicap's --base/--out), and cp -c/mv only clone for free on the same
