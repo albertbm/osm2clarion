@@ -587,9 +587,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         # upper-level link integrates. Factory B58R060R: set on 190,880/190,880 L1 links that an L2
         # link expands to, clear on 95,412/95,412 side links at the same nodes and on every class
         # 8/9/12 link; value 1 on every class 5 and 7 link, 1-3 by class on dual carriageways.
+        integrated = None
         if level == 1 and l2_hw is not None:
-            link_w4 = [w | (0x2 if l[5] in l2_hw else 0) for w, l in zip(link_w4, P['links'])]
+            integrated = [l[5] in l2_hw for l in P['links']]
+            link_w4 = [w | (0x2 if g else 0) for w, g in zip(link_w4, integrated)]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
+                                               integrated=integrated,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,

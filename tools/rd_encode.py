@@ -176,7 +176,8 @@ def mirror_cell(cell, side):
 
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
-                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None, l1_next=None):
+                       l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None, l1_next=None,
+                       integrated=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index,
     twin's L1 child index or None)}. Level 1 ships zlib; level 2 raw, as two parts, the second a
     per-node connection table.
@@ -199,8 +200,10 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     slot = {}
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
-        # the travel-time reserved bit is a level-1 thing: factory L1 sets it on 77% of ends, L2 on 0.1%
-        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1,
+        # only L1-only links set the travel-time reserved bit: factory L1 97% of them, integrated
+        # chain links none (B58R060R 18,418/18,418), L2 0.1%
+        integ = bool(integrated[k]) if integrated else False
+        a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1 and not integ,
                            L2_LENGTH_TOP.get(cls_of[k] & 0xf, 0) if level == 2 else 0)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
@@ -214,9 +217,10 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     for i, e in edges.items():
         side, twin = e[0], e[1]
         edge_child[i] = e[2] if len(e) > 2 else None
-        # parcel-edge travel time: factory L1 writes 0x8000 (80%), L2/L4/L5 write 0 (97-100%)
-        # the edge entry's length word carries the first real entry's top bits (factory L2 82,557/82,656)
-        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), 0x8000 if level == 1 else 0,
+        # the edge entry's cost words carry the real entry's top bits: travel time bit 15 (factory L1
+        # 80% set overall, 1% on integrated chains; L2/L4/L5 0) and the length word's bits 14-15
+        # (factory L2 82,557/82,656)
+        adj[i].append((twin, 0, side | ncls[i] << 8 | (adj[i][0][2] & 0xff), adj[i][0][3] & 0x8000,
                        adj[i][0][4] & 0xc000, 0, 0, None))
     extras = {}
     build_record_edges.regs_written = 0
