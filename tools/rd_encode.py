@@ -201,10 +201,11 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     for k, (i, j, length) in enumerate(links):
         lid = ids[k] if ids else k + 1
         # only L1-only links set the travel-time reserved bit: factory L1 97% of them, integrated
-        # chain links none (B58R060R 18,418/18,418), L2 0.1%
+        # chain links none (B58R060R 18,418/18,418), L2 0.1%. An integrated L1 link also takes its
+        # L2 link's length-top code (b bits 14-15), same chains, same count.
         integ = bool(integrated[k]) if integrated else False
         a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1 and not integ,
-                           L2_LENGTH_TOP.get(cls_of[k] & 0xf, 0) if level == 2 else 0)
+                           L2_LENGTH_TOP.get(cls_of[k] & 0xf, 0) if level == 2 or integ else 0)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)
         for end, other in ((i, j), (j, i)):
