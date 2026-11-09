@@ -525,7 +525,7 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to):
     return max(nbrs, key=lambda n: cosine(n[1]))[0]
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
-                   l1_index=None, signs=None, l1_adj=None):
+                   l1_index=None, signs=None, l1_adj=None, l2_hw=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
     encode_parcels.unpaired = []
@@ -583,6 +583,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         # w4's top 3 bits all set, both ends alike, at both L1 and L2 -- measured on the Koln
         # and UK factory tiles, never on a plain one-way link's entries
         link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else 0 for l in P['links']]
+        # w4 bits 1-2 (KIWI link direction, 7.A.8): 0 on a level-1-only link, 1-3 on a link that an
+        # upper-level link integrates. Factory B58R060R: set on 190,880/190,880 L1 links that an L2
+        # link expands to, clear on 95,412/95,412 side links at the same nodes and on every class
+        # 8/9/12 link; value 1 on every class 5 and 7 link, 1-3 by class on dual carriageways.
+        if level == 1 and l2_hw is not None:
+            link_w4 = [w | (0x2 if l[5] in l2_hw else 0) for w, l in zip(link_w4, P['links'])]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
@@ -788,7 +794,7 @@ def main():
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
                               l1_index=(l1_index if level == 2 else None), signs=signs,
-                              l1_adj=(l1_adj if level == 2 else None))
+                              l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None))
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)
