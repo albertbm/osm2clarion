@@ -1,0 +1,646 @@
+#!/usr/bin/env python3
+"""Build the generated map files, put them on a fresh copy of the unit's base card, and write
+the card's manifest.
+
+Each step runs its command into BUILD_DIR. The card then gets the generated LEV3456R.DAT (old clusters zeroed),
+its DRSTR size, MMAIN's level counts summed from every MAPAL001 header, and a CMP.LST made
+from the card's own .cmp files. The tiles and address files already on the card are not
+rewritten: the manifest checks them against what their steps produce now.
+
+The manifest covers every file in MAPAL001, REFER001, REFER002, HOUSE001 and the root index files.
+Each is one of:
+
+    generated   byte-identical to a step's output; the step's command and inputs are listed
+    edited      the base card's file with named fields rewritten by this build
+    leftover    no step produced it
+
+    build_gen_lev.py --config PATH --unit NAME --slug NAME BUILD_DIR [--base IMG] [--what TEXT]
+                     [--coast PATH] [--reuse]
+                     [--roads [--also NAME,NAME] [--to NAME,NAME [--by time]] | --area NAME[,NAME...] [--coarse-graph]]
+                     [--write lev|tiles,addr] [--addr-only NAME,NAME]
+                     [--landuse lon0,lat0,lon1,lat1 [--landuse-kinds forest,water,...] [--buildings LAYER:CLASS]
+                      [--house]]
+
+--config names the build's config file (unit table, areas, cells, data paths, card naming -
+see examples/config.json). Every build starts from a fresh cp -c of --base, which defaults to
+the unit's base card (config's card_naming.base_pattern). --unit picks the DATA VERSION every
+generated file carries (config units.*.version; the firmware checks it against the NAND) and
+the card build_icode_clean.py reads its two ICODE001.DAT files from (config units.*.icode). The
+card is written under CARDS/builds following card_naming.build_pattern, with its manifest
+beside it, one past the highest existing number, or the same number when the newest build is
+this slug on another unit (twins share a number). A line goes to the top of the cards log
+(config cards_log), status untested; --what is its "what changed" text (default: the slug).
+--reuse skips steps whose outputs exist.
+
+--roads adds the road steps: gen_roads_path.py picks the ways (--also adds whole streets,
+--to a route to each named street and the street itself, --by how that route is weighed),
+rd_build.py writes them into step 1's tiles, names in upper case, with a shape index per tile,
+sec4_write.py gives the config's sec4_cells their section 4, and the address step points its
+streets at the index. The card's tiles are then the rd step's, not bg_tiles'. --write names
+what assemble puts on the card (default lev); the rest is only checked against the card.
+
+--area builds named areas instead of a path: every drivable public road in their admin_level 6
+relations (config areas) into the areas' road cells, all given section 4; coarse roads at
+levels 3 to 5 in LEV3456R.DAT; and every address of those municipalities out of config's
+address CSV (config data.addresses/postcodes, addr_csv.py).
+--addr-only NAME,NAME keeps only those streets in ADDRE (towns and postcodes stay whole).
+
+--landuse adds a step that cuts OSM land use (forest, park, lakes; extract_landuse.py) to the
+box, and step 1 draws it into the tiles under the roads. --landuse capital names that area's
+box; --landuse area uses the union selected by --area.
+--landuse-kinds narrows the kinds.
+--buildings LAYER:CLASS adds OSM building footprints in that section-1 layer and class (a trial:
+no EUR class for buildings is known, see REPORT-buildings.md).
+--house writes the landuse box as HOUSE001 files, the level-0 map the unit draws at its
+building-scale zoom: merged building blocks, green areas, water and the sea, and buffered road
+polygons (house_encode.py, REPORT-building-scale.md); per-file counts land in house/stats.json.
+Only cells inside a populated area are written (a place node buffered --house-city-buffer
+metres, default 400, or a residential/commercial/industrial/retail landuse polygon buffered
+--house-landuse-buffer metres, default 100; housearea/PLAN.md). Off by default.
+"""
+import hashlib
+import json
+import os
+import re
+import struct
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+OSM = HERE                            # sibling format tools (rd_build.py, bg_tiles.py, ...)
+OSM_ROOT = os.path.dirname(HERE)      # this checkout's root (profiles/, git history)
+sys.path.insert(0, HERE)
+
+
+def _config_path():
+    argv = sys.argv[1:]
+    if '--config' in argv:
+        return argv[argv.index('--config') + 1]
+    path = os.environ.get('O2C_CONFIG') or os.environ.get('ICELAND_CONFIG')
+    if not path:
+        raise SystemExit('build_gen_lev.py needs --config PATH (or $O2C_CONFIG)')
+    return path
+
+
+from card_pack import ed_read, mmain, wrap  # noqa: E402
+from drstr_add import add as drstr_add, children, dir_records  # noqa: E402
+from clarion_tile import walk  # noqa: E402
+from drstr_sizes import set_sizes  # noqa: E402
+from fatedit import Editor  # noqa: E402
+import fatread  # noqa: E402
+import buildstamp  # noqa: E402
+
+_CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
+CONFIG = json.load(open(_CONFIG_FILE))
+REPO = os.path.dirname(os.path.dirname(_CONFIG_FILE))   # the country repo: <repo>/config/NAME.json
+CARDS = os.environ.get('CARDS_DIR', os.path.expanduser('~/cards'))  # override for scratch test builds
+CELLS = CONFIG['cells']
+VERSION = next(iter(CONFIG['units'].values()))['version']
+UNITS = {u: dict(version=c['version'],
+                  icode=c['icode'].replace('$CARDS', CARDS) if '$CARDS' in c['icode']
+                        else os.path.expanduser(c['icode']))
+          for u, c in CONFIG['units'].items()}
+CARD_PREFIX = CONFIG['card_naming']['prefix']
+CARD_BUILD_PATTERN = CONFIG['card_naming']['build_pattern']
+CARDS_LOG = CONFIG['cards_log']
+NAME = re.compile(r'%s-(\d{3})-(%s)-(.+)\.img$' % (CARD_PREFIX, '|'.join(CONFIG['card_naming']['units'])))
+SCOPE = ('MAPAL001', 'REFER001', 'REFER002', 'HOUSE001')
+ROOT_FILES = ('DRSTR001.DAT', 'MMAIN001.DAT', 'CMP.LST')
+PACKED = ['ADDRE001.DAT', 'ZCODE001.DAT', 'POINT001.DAT', 'INTER001.DAT', 'COORD001.DAT']
+SEC4_CELLS = CONFIG['sec4_cells']     # the tiles that carry roads get the build's section 4
+AREAS = {name: dict(relations=a['relations'], cells=a['cells'], bbox=tuple(a['bbox']))
+          for name, a in CONFIG['areas'].items()}
+# A HOUSE001 parcel whose buildings pass this many vertices gets the coarser blocks; the
+# busiest Grafarholt parcel of build 010 has 1,790 vertices in all layers
+HOUSE_DENSE = 900
+ADDR_ONLY = None      # --addr-only: the streets ADDRE keeps (build_addr_area0.py --only)
+PBF = os.path.expanduser(CONFIG['data']['pbf'])
+TURNS = os.path.expanduser(CONFIG['data']['turns'])
+ADDRESSES = os.path.expanduser(CONFIG['data']['addresses'])
+POSTCODES = os.path.expanduser(CONFIG['data']['postcodes'])
+
+
+sha = buildstamp.sha
+sha_file = buildstamp.sha_file
+
+
+def area_values(value):
+    names = value.split(',')
+    assert names and all(n in AREAS for n in names), value
+    relations = [r for n in names for r in AREAS[n]['relations']]
+    cells = [c for c in CELLS if any(c in AREAS[n]['cells'] for n in names)]
+    boxes = [AREAS[n]['bbox'] for n in names]
+    bbox = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+            max(b[2] for b in boxes), max(b[3] for b in boxes))
+    return relations, cells, bbox
+
+
+def box_text(box):
+    return ','.join(str(x) for x in box)
+
+
+def git_rev(path):
+    try:
+        rev = subprocess.run(['git', '-C', path, 'rev-parse', '--short', 'HEAD'],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        dirty = subprocess.run(['git', '-C', path, 'status', '--porcelain'],
+                               capture_output=True, text=True).stdout.strip()
+        return rev + ('+dirty' if dirty else '')
+    except (OSError, subprocess.CalledProcessError):
+        return 'not a git repository'
+
+
+def extract(img, path, dest):
+    """Copy one file off a card image, read-only, or from a directory of saved inputs."""
+    if os.path.isdir(img):
+        shutil.copyfile(os.path.join(img, path.replace('/', '_')), dest)
+        return
+    with fatread.Fat32(img) as fs:
+        for p, sz, c, _ in fs.walk():
+            if sz is not None and p.strip('/') == path:
+                data = fs.f.read_clusters(c, sz)
+                with open(dest, 'wb') as f:
+                    f.write(data)
+                return
+    raise SystemExit('%s not on %s' % (path, img))
+
+
+def road_steps(B, also, to=None, by=None, area=None):
+    """Ways, then rd_build into step 1's tiles, then section 4: the card's tiles."""
+    t = OSM; R = os.path.join(B, 'rd')
+    roads, turns = B + '/roads/roads.json', B + '/roads/turns.json'
+    if area:
+        relations, sec4, _ = area_values(area)
+        sel = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py', PBF, roads,
+               '--public', '--relations', ','.join(map(str, relations)), '--turns', TURNS, turns]
+        seltool = t + '/osm_roads.py'
+    else:
+        sel = ['uv', 'run', '--with', 'osmium', 'python', HERE + '/gen_roads_path.py', PBF, TURNS, roads, turns]
+        seltool = HERE + '/gen_roads_path.py'
+    sec4 = sec4 if area else SEC4_CELLS
+    cmds = []
+    for c in CELLS:
+        dest = R + '/%s.DAT' % c if c not in sec4 else R + '/%s.nosec4.DAT' % c
+        cmds.append(['python3', t + '/rd_build.py', '--profile', OSM_ROOT + '/profiles/iceland.toml', '--simplify', '2',
+                     '--l2-graph', '--upper-names', '--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
+                     '--shape-index', R + '/%s.shapes.json' % c])
+        if c in sec4:
+            cmds.append(['python3', t + '/sec4_write.py', dest, R + '/%s.DAT' % c, '--country', '352'])
+            cmds.append(['python3', t + '/shape_index.py', 'verify', R + '/%s.shapes.json' % c, R + '/%s.DAT' % c])
+    return [
+        dict(name='roads', cwd=REPO, cmds=[sel + (['--also', also] if also else []) + (['--to', to] if to else [])
+                                           + (['--by', by] if by else [])],
+             inputs=[PBF, TURNS], tools=[seltool],
+             products=[roads, turns], outputs={}),
+        dict(name='rd', cwd=REPO, cmds=cmds,
+             inputs=[roads, turns, OSM_ROOT + '/profiles/iceland.toml'] + [B + '/tiles/%s.DAT' % c for c in CELLS],
+             tools=[t + '/rd_build.py', t + '/rd_encode.py', t + '/fa_encode.py', t + '/shape_index.py',
+                    t + '/clarion_tile.py', t + '/clarion_bg.py', t + '/sec4_write.py'],
+             products=[R + '/%s.shapes.json' % c for c in CELLS],
+             outputs={'MAPAL001/%s.DAT' % c: ('file', R + '/%s.DAT' % c) for c in CELLS}),
+    ]
+
+
+HOUSE_CITY_BUFFER, HOUSE_LANDUSE_BUFFER = 400, 100   # metres; housearea/PLAN.md
+
+
+def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=HOUSE_LANDUSE_BUFFER):
+    """Building-scale (HOUSE001) only where OSM says someone lives: a place node (city,
+    town, village, hamlet) buffered city_buffer metres, or a residential/commercial/
+    industrial/retail landuse polygon buffered landuse_buffer metres (housearea/PLAN.md)."""
+    assert landuse, '--house needs --landuse for its box'
+    from house_encode import box_cells, file_name
+    t = OSM
+    all_cells = box_cells(*map(float, landuse.split(',')))
+    pj = B + '/house/populated.json'
+    if not os.path.exists(pj):
+        os.makedirs(os.path.dirname(pj), exist_ok=True)
+        subprocess.run(['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
+                         PBF, pj, '--bbox', landuse, '--populated', '--kinds', 'populated_landuse,place'],
+                        check=True)
+    cellsj = B + '/house/cells.json'
+    subprocess.run(['uv', 'run', '--with', 'shapely', 'python', '-c',
+                     'import json, sys; sys.path.insert(0, %r); from house_encode import populated_cells; '
+                     'cells = [tuple(c) for c in %r]; '
+                     'json.dump([list(c) for c in sorted(populated_cells(%r, cells, %r, %r))], open(%r, "w"))'
+                     % (t, [list(c) for c in all_cells], pj, city_buffer, landuse_buffer, cellsj)], check=True)
+    cells = {tuple(c) for c in json.load(open(cellsj))}
+    names = [file_name(*c) for c in cells]
+    bj, rj = B + '/house/landuse.json', B + '/house/roads.json'
+    return [dict(name='house', cwd=OSM_ROOT,
+                 cmds=[['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
+                        PBF, bj, '--bbox', landuse, '--buildings'],
+                       ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py',
+                        PBF, rj, '--box', landuse],
+                       ['uv', 'run', '--with', 'shapely', 'python', t + '/house_encode.py', bj,
+                        B + '/house', '--template', B + '/tiles/B60R080R.DAT', '--bbox', landuse, '--roads', rj,
+                        '--coast', coast, '--dense', str(HOUSE_DENSE), '--stats', B + '/house/stats.json',
+                        '--cells', cellsj]],
+                 inputs=[PBF, coast, pj], tools=[t + '/extract_landuse.py', t + '/osm_roads.py', t + '/house_encode.py',
+                                      t + '/bg_encode.py'],
+                 products=[bj, rj, B + '/house/stats.json', pj, cellsj],
+                 outputs={'HOUSE001/' + n: ('file', B + '/house/' + n) for n in names})]
+
+
+def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=None, landuse=None, kinds=None,
+          buildings=None, house=False, coarse_graph=False, city_buffer=HOUSE_CITY_BUFFER,
+          landuse_buffer=HOUSE_LANDUSE_BUFFER):
+    uv = ['uv', 'run', '--with', 'shapely', 'python']
+    t = OSM
+    lu = B + '/landuse/landuse.json'
+    lu_step = [dict(name='landuse', cwd=OSM_ROOT,
+                    cmd=['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
+                         PBF, lu, '--bbox', landuse] + (['--kinds', kinds + (',building' if buildings else '')]
+                                                        if kinds else []) + (['--buildings'] if buildings else []),
+                    inputs=[PBF], tools=[t + '/extract_landuse.py'], products=[lu], outputs={})] if landuse else []
+    addr = os.path.join(B, 'addr')
+    i1, i2 = os.path.join(B, 'in', 'REFER001_ICODE001.DAT'), os.path.join(B, 'in', 'REFER002_ICODE001.DAT')
+    tiles_out = {'MAPAL001/%s.DAT' % c: ('file', B + '/tiles/%s.DAT' % c) for c in CELLS}
+    shapes = [B + '/rd/%s.shapes.json' % c for c in CELLS] if roads else []
+    l2_tiles = [B + '/rd/%s.DAT' % c for c in CELLS] if area and coarse_graph else []
+    out = lu_step + [
+        dict(name='tiles', cwd=OSM_ROOT,
+             cmd=uv + [t + '/bg_tiles.py', '--profile', 'iceland', '--coastline', coast,
+                       '--data-version', VERSION] + (['--landuse', lu] if landuse else [])
+                 + (['--area-class', 'building=' + buildings] if buildings else []) + [B + '/tiles'],
+             inputs=[coast, OSM_ROOT + '/profiles/iceland.toml'] + ([lu] if landuse else []),
+             tools=[t + '/bg_tiles.py', t + '/bg_encode.py', t + '/clarion_bg.py', t + '/tile_header.py',
+                    t + '/clarion_tile.py'],
+             products=[p for _, p in tiles_out.values()] if roads else [],
+             outputs={} if roads else tiles_out),
+    ] + (road_steps(B, also, to, by, area) if roads else []) + \
+        (house_step(B, landuse, coast, city_buffer, landuse_buffer) if house else []) + [
+        dict(name='lev', cwd=OSM_ROOT,
+             cmd=uv + [t + '/lev_build.py', '--profile', 'iceland', '--coastline', coast]
+                 + (['--roads', B + '/roads/roads.json'] + [x for p in l2_tiles for x in ('--l2-tile', p)] if area else [])
+                 + ['--data-version', VERSION, B + '/LEV3456R.DAT'],
+             inputs=[coast, OSM_ROOT + '/profiles/iceland.toml'] + ([B + '/roads/roads.json'] if area else []) + l2_tiles,
+             tools=[t + '/lev_build.py', t + '/lev_file.py', t + '/bg_tiles.py', t + '/bg_encode.py',
+                    t + '/clarion_bg.py', t + '/tile_header.py'] + ([t + '/lev_roads.py', t + '/lev_coarse.py', t + '/fa_encode.py',
+                                                                      t + '/rd_build.py', t + '/rd_encode.py', t + '/clarion_rd.py',
+                                                                      t + '/lev_graph.py', t + '/tile_scan.py'] if area else []),
+             # with --area this reads the rd step's tiles and writes L2 nflags into them in
+             # place, so a correct rerun must re-stamp rd's outputs too, not just its own
+             mutates=(['rd'] if area and coarse_graph else []),
+             outputs={'MAPAL001/LEV3456R.DAT': ('file', B + '/LEV3456R.DAT')}),
+        dict(name='icode', cwd=REPO,
+             cmd=['python3', HERE + '/addr/build_icode_clean.py', i1, i2, addr],
+             inputs=[i1, i2], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
+                                        (icode_base, 'REFER002/ICODE001.DAT', i2)],
+             tools=[HERE + '/addr/build_icode_clean.py'],
+             note='reads the input ICODE files for their volume table (languages and frame kinds); '
+                  'REFER001 also copies their 18 POI genre frames byte for byte',
+             outputs={'REFER001/ICODE001.DAT': ('file', addr + '/REFER001_ICODE001.DAT'),
+                      'REFER002/ICODE001.DAT': ('file', addr + '/REFER002_ICODE001.DAT')}),
+        dict(name='addr', cwd=REPO,
+             cmd=['python3', HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
+                 + (['--area', area] if area else []) + (['--only', ADDR_ONLY] if area and ADDR_ONLY else [])
+                 + ['--addresses', ADDRESSES, '--postcodes', POSTCODES],
+             inputs=[ADDRESSES, POSTCODES] + shapes,
+             tools=[HERE + '/addr/build_addr_area0.py', HERE + '/addr/addr_csv.py', t + '/addre_io.py']
+                   + [HERE + '/addr/build_icode_clean.py'] + [
+                    t + '/zcode_io.py', t + '/point_io.py', t + '/frames.py', t + '/refer_header.py',
+                    t + '/shape_index.py'],
+             outputs=dict({'REFER001/%s.cmp' % n: ('cmp', addr + '/' + (n if n != 'COORD001.DAT' else 'REFER001_COORD001.DAT'))
+                           for n in PACKED},
+                          **{'REFER001/%s.ind' % n: ('ind', addr + '/' + (n if n != 'COORD001.DAT' else 'REFER001_COORD001.DAT'))
+                             for n in PACKED},
+                          **{'REFER002/COORD001.DAT': ('file', addr + '/REFER002_COORD001.DAT')}),
+             note='.cmp/.ind made by build_clean2.wrap (zlib level 6 per 64 KiB block)'),
+    ]
+    return out
+
+
+def tool_groups(tools):
+    """Split a step's tool files by which git worktree they live under, so a stamp's
+    diff check stays scoped to the files that step actually runs, not the whole repo."""
+    groups = []
+    for repo in (OSM_ROOT, REPO):
+        files = [p for p in tools if p.startswith(repo + os.sep)]
+        if files:
+            groups.append((repo, files))
+    return groups
+
+
+def prep(s):
+    """Fill in the fields buildstamp needs from this project's own step shape."""
+    s['args'] = s.get('cmds') or [s.get('cmd')]
+    s['output_files'] = sorted({p for _, p in s['outputs'].values()} | set(s.get('products', [])))
+    s['tool_groups'] = tool_groups(s.get('tools', []))
+    return s
+
+
+def run_steps(S, B, reuse):
+    os.makedirs(os.path.join(B, 'logs'), exist_ok=True)
+    os.makedirs(os.path.join(B, 'in'), exist_ok=True)
+    for s in S:
+        prep(s)
+
+    def run_cmds(s):
+        # extraction is cheap and read-only; always do it so a step's inputs can be
+        # hashed even before its first real run (e.g. the icode step's card-extracted files)
+        for img, path, dest in s.get('extract', []):
+            extract(img, path, dest)
+        for p in s['output_files']:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(os.path.join(B, 'logs', s['name'] + '.log'), 'w') as log:
+            for cmd in s.get('cmds', [s.get('cmd')]):
+                subprocess.run(cmd, cwd=s['cwd'], stdout=log, stderr=subprocess.STDOUT, check=True)
+
+    buildstamp.run_steps(B, S, reuse, run_cmds)
+
+
+def expected(S):
+    """{card path: (bytes, step, size the index lists)} for every file a step produces."""
+    out = {}
+    for s in S:
+        for path, (kind, src) in s['outputs'].items():
+            data = open(src, 'rb').read()
+            n = len(data)
+            if kind != 'file':
+                data = wrap(data)[0 if kind == 'cmp' else 1]
+            out[path] = (data, s, n)
+    return out
+
+
+def command(s):
+    return ' && '.join(' '.join(c) for c in s.get('cmds', [s.get('cmd')]))
+
+
+def cmp_lst(img):
+    """CMP.LST from the card's own .cmp files: sorted, NUL-separated, no trailing NUL."""
+    with fatread.Fat32(img) as fs:
+        names = ['\\SystemSD' + p[:-4].replace('/', '\\') for p, sz, _, _ in fs.walk()
+                 if sz is not None and p.endswith('.cmp')]
+    return '\0'.join(sorted(names)).encode('ascii')
+
+
+GROUPS = dict(lev=lambda p: p == 'MAPAL001/LEV3456R.DAT',
+              tiles=lambda p: p.startswith('MAPAL001/B'),
+              addr=lambda p: p.startswith(('REFER001/', 'REFER002/')) and 'ICODE' not in p,
+              house=lambda p: p.startswith('HOUSE001/'))
+
+
+def assemble(img, exp, groups):
+    """Write the chosen generated files (old clusters zeroed), then the index sizes, CMP.LST
+    and MMAIN's level counts."""
+    ed = Editor(img)
+    drs = ed_read(ed, '', 'DRSTR001.DAT')
+    sizes = {}
+    for path in sorted(exp):
+        if not any(GROUPS[g](path) for g in groups):
+            continue
+        data, _, n = exp[path]
+        d, name = path.split('/')
+        if ed.find(d, name) is not None and ed_read(ed, d, name) == data:
+            print('same   %s %d B' % (path, len(data)))
+            continue
+        ed.write(d, name, data)
+        print('wrote  %s %d B' % (path, len(data)))
+        if not name.endswith('.ind'):
+            sizes.setdefault(d, {})[name[:-4] if name.endswith('.cmp') else name] = n
+    for d, sz in sizes.items():
+        rec = [r for r in dir_records(drs) if r['name'] == d][0]
+        listed = {n for n, _, _ in children(drs, rec)}
+        new = [(n, s) for n, s in sorted(sz.items()) if n not in listed]
+        if new:
+            drs = drstr_add(drs, d, new)[0]
+        drs = set_sizes(drs, d, {n: s for n, s in sz.items() if n in listed})
+    lst = cmp_lst_ed(ed)
+    if ed_read(ed, '', 'CMP.LST') != lst:
+        ed.write('', 'CMP.LST', lst)
+        drs = set_sizes(drs, '/', {'CMP.LST': len(lst)})
+        print('CMP.LST rewritten')
+    ed.write('', 'DRSTR001.DAT', drs)
+    heads = [ed_read(ed, 'MAPAL001', g.name)[:0x400]
+             for g in ed.load('MAPAL001')[1] if g.name.endswith('.DAT')]
+    mm = bytearray(mmain(ed_read(ed, '', 'MMAIN001.DAT'), heads))
+    house = [g for g in ed.load('HOUSE001')[1] if g.name.endswith('.DAT')]
+    if house:   # section 5 level 0 counts the HOUSE001 files
+        p = 0x1ae
+        for sid, rows in walk(mm, 0x1ac, 4)[0]:
+            p += 2
+            for e in rows:
+                if (sid, e[0]) == (5, 0):
+                    struct.pack_into('>H', mm, p + 2, len(house))
+                p += 4
+    ed.write('', 'MMAIN001.DAT', bytes(mm))
+    free = ed.close()
+    print('clusters zeroed %d, free after %d' % (ed.zeroed, free))
+
+
+def cmp_lst_ed(ed):
+    """cmp_lst, read through the open editor."""
+    names = ['\\SystemSD\\%s\\%s' % (d, g.name[:-4]) for d in SCOPE
+             for g in ed.load(d)[1] if g.name.endswith('.cmp')]
+    return '\0'.join(sorted(names)).encode('ascii')
+
+
+def card_files(img):
+    out = {}
+    with fatread.Fat32(img) as fs:
+        for p, sz, c, _ in fs.walk():
+            parts = p.strip('/').split('/')
+            if sz is None:
+                continue
+            if (len(parts) == 2 and parts[0] in SCOPE) or (len(parts) == 1 and parts[0] in ROOT_FILES):
+                out['/'.join(parts)] = fs.f.read_clusters(c, sz) if sz else b''
+    return out
+
+
+def drstr_check(drs, files):
+    """Problems with the index's rows for the scoped folders, against the card."""
+    recs = {r['name']: r for r in dir_records(drs)}
+    bad = []
+    for d in SCOPE:
+        listed = {n: sz for n, typ, sz in children(drs, recs[d]) if typ == 0}
+        have = {}
+        for p, b in files.items():
+            if not p.startswith(d + '/'):
+                continue
+            n = p.split('/')[1]
+            if n.endswith('.ind'):
+                have[n[:-4]] = struct.unpack_from('<I', b)[0]    # indexed as one file, inflated size
+            elif not n.endswith('.cmp'):
+                have[n] = len(b)
+        for n in sorted(set(listed) | set(have)):
+            if listed.get(n) != have.get(n):
+                bad.append('%s/%s index %s card %s' % (d, n, listed.get(n), have.get(n)))
+    return bad
+
+
+def manifest(img, S, B, exp):
+    files = card_files(img)
+    recipe = os.path.abspath(__file__)
+    tools_rev = dict(osm2clarion=git_rev(OSM_ROOT), leaf_is_map=git_rev(REPO))
+    diff_dest = os.path.splitext(img)[0] + '.o2c.diff'
+    o2c_dirty, o2c_diff_sha = buildstamp.save_diff_if_dirty(OSM_ROOT, diff_dest)
+    osm2clarion = dict(head=buildstamp.git_head(OSM_ROOT), dirty=o2c_dirty, diff_sha256=o2c_diff_sha,
+                        diff_file=os.path.basename(diff_dest) if o2c_dirty else None)
+    leaf = buildstamp.repo_manifest_state(REPO)
+    rows = []
+    for path in sorted(files):
+        data = files[path]
+        row = dict(path=path, size=len(data), sha256=sha(data))
+        if path in exp and exp[path][0] == data:
+            s = exp[path][1]
+            row.update(status='generated', step=s['name'], command=command(s),
+                       inputs=[dict(path=p, sha256=sha_file(p)) for p in s['inputs']],
+                       tools=[dict(path=p, sha256=sha_file(p)) for p in s['tools']])
+            if s.get('extract'):
+                row['inputs_from'] = ['%s off %s' % (pp, i) for i, pp, _ in s['extract']]
+            if s.get('note'):
+                row['note'] = s['note']
+        elif path == 'CMP.LST' and data == cmp_lst(img):
+            row.update(status='generated', step='assemble', command=recipe + ' (cmp_lst)',
+                       note="the card's .cmp files, sorted")
+        elif path == 'DRSTR001.DAT':
+            bad = drstr_check(data, files)
+            row.update(status='edited', step='assemble', command=recipe + ' (set_sizes)',
+                       note="the base card's index of every folder; sizes rewritten by this build and "
+                            "build_gen_card/build_clean2 before it. Scoped rows checked against the card: "
+                            + ('all match' if not bad else '; '.join(bad)))
+        elif path == 'MMAIN001.DAT':
+            row.update(status='edited', step='assemble', command=recipe + ' (build_clean2.mmain)',
+                       note="the base card's master header; level counts summed from every MAPAL001 "
+                            "header, db bounds and NAVTEQ string kept (clean2 format constant 11)")
+        else:
+            row.update(status='leftover',
+                       note='differs from its step output' if path in exp else 'no step produces this file')
+        rows.append(row)
+    missing = sorted(set(exp) - set(files))
+    steps_out = [dict(name=s['name'], command=command(s), ran=s.get('ran'),
+                       stamp=buildstamp.load_stamp(buildstamp.stamp_path(B, s['name']))) for s in S]
+    return dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), tools=tools_rev,
+                osm2clarion=osm2clarion, leaf=leaf,
+                steps=steps_out, files=rows, missing_on_card=missing)
+
+
+def report(m):
+    by = {}
+    for r in m['files']:
+        by.setdefault(r['status'], []).append(r)
+    for st in ('generated', 'edited'):
+        for r in by.get(st, []):
+            print('%-9s %-28s %10d  %s  %s' % (st, r['path'], r['size'], r['sha256'][:12], r.get('step', '')))
+    left = by.get('leftover', [])
+    print()
+    if left:
+        print('!' * 72)
+        print('!!! %d LEFTOVER FILE%s: no step produced %s' % (len(left), 'S' if len(left) > 1 else '',
+                                                          'them' if len(left) > 1 else 'it'))
+        for r in left:
+            print('!!!   %-28s %10d  %s  (%s)' % (r['path'], r['size'], r['sha256'][:12], r['note']))
+        print('!' * 72)
+    else:
+        print('leftovers: none')
+    if m['missing_on_card']:
+        print('!!! produced but not on the card:', ', '.join(m['missing_on_card']))
+
+
+def builds():
+    """{(number, unit): slug} of the cards in CARDS/builds."""
+    out = {}
+    for f in os.listdir(CARDS + '/builds'):
+        m = NAME.match(f)
+        if m: out[(int(m.group(1)), m.group(2))] = m.group(3)
+    return out
+
+
+def next_number(unit, slug):
+    """One past the highest build number, or that number when the newest build is this slug
+    on another unit and this unit has no card with it yet."""
+    have = builds()
+    top = max((n for n, _ in have), default=0)
+    twins = [u for (n, u), s in have.items() if n == top and s == slug and u != unit]
+    return top if twins and (top, unit) not in have else top + 1
+
+
+def new_card(unit, slug, base=None):
+    default_base = CONFIG['card_naming']['base_pattern'].format(prefix=CARD_PREFIX, unit=unit)
+    base = os.path.abspath(os.path.expanduser(base or '%s/bases/%s' % (CARDS, default_base)))
+    n = next_number(unit, slug)
+    name = CARD_BUILD_PATTERN.format(prefix=CARD_PREFIX, number=n, unit=unit, slug=slug)
+    img = '%s/builds/%s' % (CARDS, name)
+    assert not os.path.exists(img), img
+    subprocess.run(['cp', '-c', base, img], check=True)
+    os.chmod(img, 0o644)       # the base is read-only and cp keeps its mode
+    print('card %s from %s' % (img, base))
+    return n, img, base
+
+
+def cards_line(n, unit, slug, what, base):
+    """Add the build to the top of the cards log, or add the unit to its twin's line."""
+    p = CARDS + '/' + CARDS_LOG
+    lines = open(p).read().split('\n')
+    head = next(i for i, l in enumerate(lines) if l.startswith('|---'))
+    for i in range(head + 1, len(lines)):
+        cells = [c.strip() for c in lines[i].split('|')]
+        if len(cells) > 4 and cells[1] == '%03d' % n and cells[4] == slug:
+            cells[3] = ', '.join(sorted(set(cells[3].split(', ')) | {unit}))
+            lines[i] = '| ' + ' | '.join(cells[1:-1]) + ' |'
+            break
+    else:
+        shown_base = os.path.relpath(base, CARDS) if os.path.commonpath((base, CARDS)) == CARDS else base
+        what = 'Base `%s`; %s' % (shown_base, what)
+        lines.insert(head + 1, '| %03d | %s | %s | %s | %s | untested |'
+                     % (n, time.strftime('%Y-%m-%d'), unit, slug, what))
+    open(p, 'w').write('\n'.join(lines))
+
+
+def main(argv):
+    if '--help' in argv or '-h' in argv:
+        print(__doc__)
+        return
+
+    def opt(name, default=None):
+        return argv[argv.index(name) + 1] if name in argv else default
+    unit, slug = opt('--unit'), opt('--slug')
+    if unit not in UNITS or not slug:
+        raise SystemExit(__doc__)
+    B = os.path.abspath([a for i, a in enumerate(argv)
+                         if not a.startswith('--') and (i == 0 or not argv[i - 1].startswith('--'))][0])
+    icode_base = UNITS[unit]['icode']
+    coast = opt('--coast', os.path.expanduser(CONFIG['data']['coast']))
+    also, to, by = opt('--also'), opt('--to'), opt('--by')
+    global VERSION
+    VERSION = UNITS[unit]['version']
+    os.environ['CLARION_DATA_VERSION'] = VERSION      # read by tools/addr/iceland_card.py
+    groups = opt('--write', 'lev').split(',')
+    assert set(groups) <= set(GROUPS), groups
+    area = opt('--area')
+    global ADDR_ONLY
+    ADDR_ONLY = opt('--addr-only')
+    if area:
+        area_values(area)
+    landuse = opt('--landuse')
+    if landuse in AREAS:
+        landuse = box_text(AREAS[landuse]['bbox'])
+    elif landuse == 'area':
+        assert area, '--landuse area needs --area'
+        landuse = box_text(area_values(area)[2])
+    S = steps(B, coast, icode_base, roads='--roads' in argv or bool(area), also=also, to=to, by=by, area=area,
+              landuse=landuse, kinds=opt('--landuse-kinds'), buildings=opt('--buildings'),
+              house='--house' in argv, coarse_graph='--coarse-graph' in argv,
+              city_buffer=float(opt('--house-city-buffer', HOUSE_CITY_BUFFER)),
+              landuse_buffer=float(opt('--house-landuse-buffer', HOUSE_LANDUSE_BUFFER)))
+    if '--house' in argv:
+        groups.append('house')
+    run_steps(S, B, '--reuse' in argv)
+    exp = expected(S)
+    n, img, base = new_card(unit, slug, opt('--base'))
+    assemble(img, exp, groups)
+    m = manifest(img, S, B, exp)
+    m.update(unit=unit, base=base, number=n, slug=slug)
+    for p in (os.path.join(B, 'manifest.json'), os.path.splitext(img)[0] + '.manifest.json'):
+        with open(p, 'w') as f:
+            json.dump(m, f, indent=1, ensure_ascii=False)
+    report(m)
+    cards_line(n, unit, slug, opt('--what', slug), base)
+    print('manifest:', os.path.splitext(img)[0] + '.manifest.json')
+
+
+if __name__ == '__main__':
+    main(sys.argv[1:])
