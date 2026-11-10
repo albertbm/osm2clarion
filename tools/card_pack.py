@@ -10,6 +10,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from clarion_tile import walk  # noqa: E402
+from tile_header import BOUNDS, BOUNDS2  # noqa: E402
 
 BLK = 65536
 
@@ -31,16 +32,28 @@ def mmain(m, headers):
     """MMAIN001.DAT's level table holds, per section and level, the sum of the level-table
     counts of every map file - exact on the stock .066 card for sections 1, 2 and 4. So the
     counts are summed from the files on this card; a section with no files on it goes to 0.
-    The db bounds and the NAVTEQ release string stay: writing the build's own box here makes
-    the unit reset for a map version-up on every boot (measured), and both are the values
-    every factory tile of this db cut carries."""
+    The db box at 0x184 (lon part repeated at 0x5d0) is taken from the map files too: the
+    unit derives tile cells from MMAIN's box, so it must be the box the tiles and LEV3456R
+    were cut on. The ZE0/ZE1 bases already carry that box; the ME0 base carries the stock
+    European one (lon -1200..4080), and keeping it left the Iceland cells unreachable
+    (blank map at a 3D fix). Writing the region's own small box instead makes
+    the unit reset for a map version-up on every boot (measured), so the box is the db
+    cut's, never the build area's. The NAVTEQ release string stays."""
     tot = {}
+    boxes = set()
     for h in headers:
+        boxes.add(h[BOUNDS:BOUNDS + 8])
         lv, _ = walk(h, 0x1ac, 4)
         for sid, rows in lv:
             for e in rows:
                 tot[(sid, e[0], e[1])] = tot.get((sid, e[0], e[1]), 0) + struct.unpack('>H', e[2:])[0]
+    if len(boxes) > 1:
+        raise ValueError('map files disagree on the db box: %s' % sorted(b.hex() for b in boxes))
     m = bytearray(m)
+    if boxes:
+        box = boxes.pop()
+        m[BOUNDS:BOUNDS + 8] = box
+        m[BOUNDS2:BOUNDS2 + 4] = box[2:6]   # lat min, lon min
     lv, _ = walk(m, 0x1ac, 4)
     p = 0x1ae
     for sid, rows in lv:

@@ -505,7 +505,7 @@ def manifest(img, S, B, exp):
         elif path == 'MMAIN001.DAT':
             row.update(status='edited', step='assemble', command=recipe + ' (build_clean2.mmain)',
                        note="the base card's master header; level counts summed from every MAPAL001 "
-                            "header, db bounds and NAVTEQ string kept (clean2 format constant 11)")
+                            "header, db box copied from those headers, NAVTEQ string kept")
         else:
             row.update(status='leftover',
                        note='differs from its step output' if path in exp else 'no step produces this file')
