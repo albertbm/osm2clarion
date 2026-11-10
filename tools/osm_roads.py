@@ -243,7 +243,18 @@ def predicates(g):
     return inside, cross
 
 
-def select(pbf, inside, cross, public=True):
+FERRY_SNAP_M = 50   # a ferry's harbour node sits right at the coastline the admin polygon
+                    # draws (measured within 1 m on Herjolfur's three endpoints); point-in-
+                    # polygon alone calls that outside, so snap it in by a short, fixed distance
+
+
+def _near(g, p, buffer_m):
+    """True if point p is within buffer_m (metres) of region g."""
+    import shapely
+    return g.distance(shapely.geometry.Point(p)) * 111320 <= buffer_m
+
+
+def select(pbf, inside, cross, public=True, g=None):
     import collections, osmium
     out, why = [], collections.Counter()
     class H(osmium.SimpleHandler):
@@ -254,12 +265,17 @@ def select(pbf, inside, cross, public=True):
             r = keep(t, hw) if public else (None if hw in KEEP or hw == 'ferry' else 'not a road class')
             if r: why[r] += 1; return
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
-            runs = clip(pts, inside, cross)
-            if not runs: why['outside'] += 1; return
-            # a tunnel or bridge can leave every municipality (a fjord floor), so keep it whole
-            if (t.get('tunnel') not in (None, 'no') or t.get('bridge') not in (None, 'no')) and runs != [pts]:
-                runs = [pts]; why['tunnel or bridge kept whole'] += 1
-            if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
+            # a ferry crosses open water no admin polygon covers; keep it whole once either
+            # harbour end is close enough to the region, rather than clip it against the coast
+            if hw == 'ferry' and g is not None and (_near(g, pts[0], FERRY_SNAP_M) or _near(g, pts[-1], FERRY_SNAP_M)):
+                runs = [pts]; why['ferry kept whole'] += 1
+            else:
+                runs = clip(pts, inside, cross)
+                if not runs: why['outside'] += 1; return
+                # a tunnel or bridge can leave every municipality (a fjord floor), so keep it whole
+                if (t.get('tunnel') not in (None, 'no') or t.get('bridge') not in (None, 'no')) and runs != [pts]:
+                    runs = [pts]; why['tunnel or bridge kept whole'] += 1
+                if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
             ow = oneway(t); d = dest_tags(t)
             for r in runs:
                 out.append(dict(id=w.id, hw=hw, name=t.get('name'), ref=t.get('ref'),
@@ -283,6 +299,7 @@ def main(argv):
         if '--ramp-names' in argv: name_ramps(ways)
         json.dump(ways, open(dest, 'w')); print('ways', len(ways))
         return
+    g = None
     if rel or box:
         g = region(pbf, rel, box, buf)
         inside, cross = predicates(g)
@@ -290,7 +307,7 @@ def main(argv):
         for k, v in sorted(getattr(region, 'names', {}).items()): print('  relation %d %s' % (k, v))
     else:
         inside, cross = (lambda p: True), None
-    ways, why = select(pbf, inside, cross, public='--public' in argv)
+    ways, why = select(pbf, inside, cross, public='--public' in argv, g=g)
     if '--ramp-names' in argv: name_ramps(ways)
     json.dump(ways, open(dest, 'w'), ensure_ascii=False)
     print('ways %d (%d pieces)' % (len({w['id'] for w in ways}), len(ways)))

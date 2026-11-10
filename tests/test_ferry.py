@@ -7,6 +7,11 @@ import fa_encode
 import osm_roads
 import rd_encode
 
+try:
+    import shapely
+except ImportError:
+    shapely = None
+
 
 class FerrySelection(unittest.TestCase):
     def test_route_ferry_open_to_cars_is_kept(self):
@@ -30,6 +35,12 @@ class FerrySelection(unittest.TestCase):
 
     def test_non_ferry_way_unaffected(self):
         self.assertIsNone(osm_roads.ferry_hw({'highway': 'primary'}))
+
+    @unittest.skipUnless(shapely, 'needs shapely')
+    def test_near_snaps_a_point_right_on_the_boundary(self):
+        g = shapely.box(0, 0, 1, 1)
+        self.assertTrue(osm_roads._near(g, (1.00001, 0.5), osm_roads.FERRY_SNAP_M))
+        self.assertFalse(osm_roads._near(g, (5, 5), osm_roads.FERRY_SNAP_M))
 
 
 class FerryEncoding(unittest.TestCase):
