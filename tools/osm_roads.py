@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping. --ramp-names names unnamed *_link ways after the road they lead to."""
+"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. A route=ferry way open to cars (motor_vehicle=yes or motorcar=yes) is kept too, as the synthetic highway class 'ferry'. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping. --ramp-names names unnamed *_link ways after the road they lead to."""
 import collections, json, math, sys
 
 KEEP = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential',
         'living_street', 'service', 'motorway_link', 'trunk_link', 'primary_link', 'secondary_link', 'tertiary_link'}
+
+
+def ferry_hw(tags):
+    """A route=ferry way open to cars, as the synthetic highway class 'ferry' (not in KEEP,
+    since it carries no highway tag of its own), or None."""
+    if tags.get('route') == 'ferry' and (tags.get('motor_vehicle') == 'yes' or tags.get('motorcar') == 'yes'):
+        return 'ferry'
+    return None
 
 
 def all_ways(pbf):
@@ -12,8 +20,8 @@ def all_ways(pbf):
     out = []
     class H(osmium.SimpleHandler):
         def way(self, w):
-            hw = w.tags.get('highway')
-            if hw not in KEEP: return
+            hw = w.tags.get('highway') or ferry_hw(w.tags)
+            if hw not in KEEP and hw != 'ferry': return
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
             if len(pts) < 2: return
             out.append(dict(id=w.id, hw=hw, name=w.tags.get('name'), ref=w.tags.get('ref'),
@@ -32,12 +40,14 @@ SERVICE_NOT = {'parking_aisle', 'driveway', 'drive-through', 'parking'}
 NOCAR = {'no', 'private'}
 
 
-def keep(tags):
+def keep(tags, hw=None):
     """Why a way is left out, or None to keep it."""
-    hw = tags.get('highway')
+    if hw is None: hw = tags.get('highway')
     if hw == 'service':
         if not tags.get('name'): return 'service, unnamed'
         if tags.get('service') in SERVICE_NOT: return 'service=' + tags['service']
+    elif hw == 'ferry':
+        pass   # already gated on motor_vehicle/motorcar=yes by ferry_hw
     elif hw not in DRIVE:
         return 'not a road class'
     if tags.get('access') in NOCAR or tags.get('motor_vehicle') in NOCAR or tags.get('motorcar') in NOCAR:
@@ -239,8 +249,9 @@ def select(pbf, inside, cross, public=True):
     class H(osmium.SimpleHandler):
         def way(self, w):
             t = w.tags
-            if 'highway' not in t: return
-            r = keep(t) if public else (None if t['highway'] in KEEP else 'not a road class')
+            hw = t.get('highway') or ferry_hw(t)
+            if hw is None: return
+            r = keep(t, hw) if public else (None if hw in KEEP or hw == 'ferry' else 'not a road class')
             if r: why[r] += 1; return
             pts = [(n.lon, n.lat) for n in w.nodes if n.location.valid()]
             runs = clip(pts, inside, cross)
@@ -251,7 +262,7 @@ def select(pbf, inside, cross, public=True):
             if len(runs) > 1 or len(runs[0]) != len(pts): why['clipped at the boundary'] += 1
             ow = oneway(t); d = dest_tags(t)
             for r in runs:
-                out.append(dict(id=w.id, hw=t['highway'], name=t.get('name'), ref=t.get('ref'),
+                out.append(dict(id=w.id, hw=hw, name=t.get('name'), ref=t.get('ref'),
                                 oneway=t.get('oneway'), junction=t.get('junction'),
                                 dir=ow, maxspeed=t.get('maxspeed'), nodes=[list(p) for p in r]))
                 if d: out[-1]['dest'] = d
