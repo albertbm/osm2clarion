@@ -41,9 +41,10 @@ AREA_F20 = 0x180         # every area frame, 38 of 38 across both files
 ENTRY_TAIL = b'\xff' * 10
 
 TOWNS = ('REYKJAVÍK', 'AKRANES', 'EYRARBAKKI', 'GARÐABÆR', 'GARÐABÆR (ÁLFTANES)', 'GARÐUR',
-         'GRINDAVÍK', 'HAFNARFJÖRÐUR', 'HVERAGERÐI', 'KEFLAVÍKURFLUGVÖLLUR', 'KJÓS',
-         'KÓPAVOGUR', 'MOSFELLSBÆR', 'REYKJANESBÆR', 'SANDGERÐI', 'SELFOSS', 'SELTJARNARNES',
-         'STOKKSEYRI', 'VOGAR', 'ÞORLÁKSHÖFN', 'ÖLFUS')
+         'GRINDAVÍK', 'HAFNARFJÖRÐUR', 'HELLA', 'HVERAGERÐI', 'HVOLSVÖLLUR',
+         'KEFLAVÍKURFLUGVÖLLUR', 'KJÓS', 'KÓPAVOGUR', 'MOSFELLSBÆR', 'REYKJANESBÆR',
+         'SANDGERÐI', 'SELFOSS', 'SELTJARNARNES', 'STOKKSEYRI', 'VESTMANNAEYJAR', 'VÍK',
+         'VOGAR', 'ÞORLÁKSHÖFN', 'ÖLFUS')
 
 
 def addr(off):
