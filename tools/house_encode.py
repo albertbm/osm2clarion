@@ -109,6 +109,11 @@ def parts(g):
 def no_holes(p):
     """Hole-free pieces of a polygon, cut through each hole; the unit fills outer rings only."""
     from shapely.geometry import Polygon, box
+    # repeated clipping leaves slivers with a hole of 1e-29 deg^2 on a polygon of 1e-08:
+    # floating-point noise, not a real hole, and a cut can never remove one that small
+    holes = [r for r in p.interiors if Polygon(r).area > max(1e-14, p.area * 1e-9)]
+    if len(holes) != len(p.interiors):
+        p = Polygon(p.exterior, holes)
     if not p.interiors:
         return [p]
     # a concave hole's centroid can lie outside it, and a cut there never removes the hole
