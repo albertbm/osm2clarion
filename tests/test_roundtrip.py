@@ -1684,7 +1684,7 @@ class TestRoadClasses(unittest.TestCase):
     }
 
     def test_table(self):
-        self.assertEqual(set(fa_encode.CLASSES), set(self.DOC) | {'tertiary_link'})
+        self.assertEqual(set(fa_encode.CLASSES), set(self.DOC) | {'tertiary_link', 'ferry'})
         for hw, (layer, c1, c2, c3) in self.DOC.items():
             (l1, cls1), cls2, cls3 = fa_encode.CLASSES[hw]
             self.assertEqual((l1, cls1, cls2, cls3), (layer, c1, c2, c3), hw)
@@ -1862,7 +1862,7 @@ class TestProfiles(unittest.TestCase):
         self.assertFalse(P.shift)
         self.assertEqual(P.west_meshes, 0)
         self.assertEqual(P.land, clarion_profile.LAND)
-        self.assertEqual(P.l2_classes, clarion_profile.L2CLASSES_WIDE)
+        self.assertEqual(P.l2_classes, clarion_profile.L2CLASSES_WIDE | {'ferry'})
 
     def test_europe_box_and_its_mesh_origin(self):
         lat_max, lat_min, lon_min, lon_max = clarion_profile.EUROPE_BOUNDS
@@ -1889,10 +1889,10 @@ class TestProfiles(unittest.TestCase):
             clarion_profile.load('no-such-region')
 
     def test_l2_class_spellings(self):
-        self.assertEqual(clarion_profile.l2_classes('narrow'), clarion_profile.L2CLASSES_NARROW)
-        self.assertEqual(clarion_profile.l2_classes('wide'), clarion_profile.L2CLASSES_WIDE)
-        self.assertEqual(clarion_profile.l2_classes('motorway,trunk'), {'motorway', 'trunk'})
-        self.assertEqual(clarion_profile.l2_classes(['service']), {'service'})
+        self.assertEqual(clarion_profile.l2_classes('narrow'), clarion_profile.L2CLASSES_NARROW | {'ferry'})
+        self.assertEqual(clarion_profile.l2_classes('wide'), clarion_profile.L2CLASSES_WIDE | {'ferry'})
+        self.assertEqual(clarion_profile.l2_classes('motorway,trunk'), {'motorway', 'trunk', 'ferry'})
+        self.assertEqual(clarion_profile.l2_classes(['service']), {'service', 'ferry'})
 
     def test_take_arg(self):
         argv = ['tool', '--profile', 'iceland', '--out', 'x']

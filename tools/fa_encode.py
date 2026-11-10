@@ -7,6 +7,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
 
 STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
+FERRY_STYLE = 0x001e  # measured on every class-10 shape at both levels; style_word's oneway
+                      # bit would also clear bit 12, but a ferry link is two-way
 
 def style_word(limit, oneway=False):
     """Level-1 style word for a posted limit, or STYLE for none; bit 12 clear marks one-way."""
@@ -61,13 +63,18 @@ CLASSES = {
     'living_street':  ((5, 8), 7, 7),
     'service':        ((4, 9), 7, 7),
     'track':          ((4, 9), 7, 7),
+    'ferry':          ((0, 10), 10, 10),
 }
 DEFAULT = ((5, 8), 7, 7)
 
 def layer_class(hw, level, layer=None):
     """(layer, class) for one OSM highway value at level 1 or 2."""
     (l1, c1), c2, _ = CLASSES.get(hw, DEFAULT)
-    lay, cls = (l1, c1) if level == 1 else (7 if c2 in (1, 2) else 6, c2)
+    if level == 1:
+        lay, cls = l1, c1
+    else:
+        cls = c2
+        lay = 0 if cls == 10 else (7 if cls in (1, 2) else 6)   # a ferry stays in layer 0 at L2 too
     return (layer if layer is not None else lay), cls
 
 def restyled(styles):
@@ -101,7 +108,9 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
         # key placeholder: build_record overwrites it once it knows every node's other
         # occurrences in the record; 0xffff here matches a node with no twin at all
         if level == 1: out += ([styles[n]] if fresh[n] else []) + [0xffff] + ([gs[n]] if n in gs else []) + [lid]
-        else: out += [style_word(None, oneway=dirs[n] != 0), lid] if n == 0 else [lid]
+        # a ferry link is two-way, but style_word's oneway test would still clear its bit 12
+        elif n == 0: out += [FERRY_STYLE if cls == 10 else style_word(None, oneway=dirs[n] != 0), lid]
+        else: out += [lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
             first = k == 0; link_end = k == len(pts) - 1; chain_end = n == len(chain) - 1

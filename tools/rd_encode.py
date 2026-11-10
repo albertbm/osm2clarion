@@ -29,6 +29,7 @@ SPEED_KMH = {
     'living_street': 15,
     'service': 30,
     'track': 30,
+    'ferry': 151.2,   # reproduces the factory's class-10 ratio (ferry/RESULT.md): a = round(L_m / 4.2)
 }
 DEFAULT_SPEED_KMH = 50
 

@@ -108,14 +108,17 @@ class Profile:
 
 
 def l2_classes(spec):
-    """A set of OSM highway values from "wide", "narrow", a list or a comma string."""
+    """A set of OSM highway values from "wide", "narrow", a list or a comma string. A ferry
+    always reaches level 2, whatever a profile's road-width policy says; it isn't a road class."""
     if isinstance(spec, list):
-        return set(spec)
-    if spec == 'narrow':
-        return set(L2CLASSES_NARROW)
-    if spec == 'wide':
-        return set(L2CLASSES_WIDE)
-    return set(spec.split(','))
+        base = set(spec)
+    elif spec == 'narrow':
+        base = set(L2CLASSES_NARROW)
+    elif spec == 'wide':
+        base = set(L2CLASSES_WIDE)
+    else:
+        base = set(spec.split(','))
+    return base | {'ferry'}
 
 
 def default():

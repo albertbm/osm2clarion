@@ -611,7 +611,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             if n and n not in labels: labels.append(n)
         _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(n, 0xffff) for n in label_of]
-        styles = [[fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
+        # a ferry link is two-way, but style_word's oneway test would still clear its bit 12
+        styles = [[fa_encode.FERRY_STYLE if L[k][5] == 'ferry' else
+                   fa_encode.style_word(fa_encode.speed_limit(L[k][7], SPEED_UNIT), L[k][10] != 0) for k in g]
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
         rings = [all(L[k][11] in ('roundabout', 'circular') for k in g) for g in groups]
