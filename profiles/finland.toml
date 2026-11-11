@@ -25,12 +25,18 @@ osm = "build/finland-latest.osm.pbf"
 # Roads of the admin_level 8 relation, one tile. A build area is one relation and one cell.
 relations = [569407]
 cells = ["B58R050R"]
-bbox = { lon_min = 25.26, lon_max = 26.06, lat_min = 61.84, lat_max = 62.43 }
+bbox = [25.26, 61.84, 26.06, 62.43]   # lon_min, lat_min, lon_max, lat_max
 
 [grid]
 # The cells holding Finland, as the card names them.
-cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R", "B68R050R"]
+# Left out: build.py derives them from the boxes below and the tiles on the base card.
 bbox = { lon_min = 19.0, lon_max = 31.6, lat_min = 59.7, lat_max = 70.1 }
+# The mainland (west of 20.5 E is only sea) and Aland, so the cells west of 20 E and north of
+# 64 N, which hold no Finnish land, stay out.
+boxes = [
+  { lon_min = 20.5, lon_max = 31.6, lat_min = 59.7, lat_max = 70.1 },
+  { lon_min = 19.0, lon_max = 21.1, lat_min = 59.7, lat_max = 60.6 },
+]
 
 [roads]
 # as the Iceland profile

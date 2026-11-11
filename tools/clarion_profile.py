@@ -65,6 +65,8 @@ class Profile:
         self.cells = list(grid.get('cells', []))
         self.bounds = tuple(grid['bounds']) if 'bounds' in grid else EUROPE_BOUNDS
         self.bbox = grid.get('bbox')
+        # boxes narrower than one bbox, for a region whose outline a rectangle over-covers
+        self.boxes = list(grid.get('boxes', [])) or ([self.bbox] if self.bbox else [])
 
         shift = data.get('shift', {})
         self.shift = bool(shift.get('enabled', False))
@@ -94,6 +96,7 @@ class Profile:
         self.coarse_labels = lab.get('coarse', '')
 
         self.targets = data.get('targets', {})
+        self.raw = data
         self.build = data.get('build', {})
         self.areas = data.get('areas', {})
 
@@ -130,6 +133,27 @@ def l2_classes(spec):
     else:
         base = set(spec.split(','))
     return base | {'ferry'}
+
+
+def cell_box(name):
+    """(lon_min, lat_min, lon_max, lat_max) in degrees of a cell named B<hex>R<hex>R."""
+    lat = int(name[1:3], 16) * 2 / 3
+    lon = 100 - int(name[4:7], 16)
+    return lon, lat, lon + 8, lat + 16 / 3
+
+
+def cells_for(boxes, available):
+    """The cells among `available` (tile names) that a box touches, one arc-minute of overlap
+    allowed, since neighbouring cells overlap by that much on some cards. Each box is a table
+    with lon_min, lon_max, lat_min and lat_max."""
+    m = 1 / 60
+    out = []
+    for n in sorted(available):
+        x0, y0, x1, y1 = cell_box(n)
+        if any(b['lon_min'] < x1 + m and b['lon_max'] > x0 - m and b['lat_min'] < y1 + m and b['lat_max'] > y0 - m
+               for b in boxes):
+            out.append(n)
+    return out
 
 
 def default():
