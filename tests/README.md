@@ -34,6 +34,18 @@ Seven cases need `shapely`, and skip without it. Six compare `bg_encode`, which 
 imported without shapely, against the two local copies of its record and directory builders
 that the other cases use. If those drift apart, those six fail.
 
+## test_format.py
+
+The two map formats in `clarion_format`: X08-03-00 for QY8 units and X08-02-00 for QY7.
+Headers in both formats rebuild through `tile_header.check`, the record codec gives `58 85`
+or `78 9c` with the right padding, and a QY7 section 2 level 2 directory reads back with its
+512-byte slot bodies. One case runs `tile_recode.py` on a factory QY7 tile and expects it
+back byte for byte; it skips without one:
+
+```
+OSM2CLARION_QY7_TILE=B68R048R.DAT python3 -m unittest tests.test_format
+```
+
 ## test_signposts.py
 
 Section 4 signposts: `sec4_write.encode` against the record layout in SECTION4-draft.md, the

@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The two map formats in clarion_format: X08-03-00 (QY8) and X08-02-00 (QY7). Built in code."""
+"""The two map formats in clarion_format: X08-03-00 (QY8) and X08-02-00 (QY7).
+
+Built in code. One case reads a factory QY7 tile and skips without it:
+
+    OSM2CLARION_QY7_TILE=B68R048R.DAT python3 -m unittest tests.test_format
+"""
 import os
 import struct
 import sys
+import tempfile
 import unittest
 import zlib
 from pathlib import Path
@@ -15,6 +21,7 @@ import clarion_format
 import clarion_profile
 import clarion_tile
 import tile_header
+import tile_recode
 import tile_scan
 
 QY7, QY8 = clarion_format.X08_02, clarion_format.X08_03
@@ -109,6 +116,28 @@ class TestFormats(unittest.TestCase):
         self.assertIs(clarion_profile.Profile({'format': 'x08-02'}).fmt, QY7)
         with self.assertRaises(SystemExit):
             clarion_profile.Profile({'format': 'x08-04'})
+
+    def test_recode_synthetic(self):
+        d, _ = sec2_level2_tile(QY7)
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = os.path.join(tmp, 'a.DAT'), os.path.join(tmp, 'b.DAT')
+            Path(src).write_bytes(d)
+            fmt, nrec, nz, differ = tile_recode.recode(src, out)
+            self.assertEqual((fmt, nrec, nz, differ), (QY7, 2, 2, []))
+            self.assertEqual(Path(out).read_bytes(), d)
+
+
+@unittest.skipUnless(os.environ.get('OSM2CLARION_QY7_TILE'), 'set OSM2CLARION_QY7_TILE to a factory QY7 tile')
+class TestFactoryQY7(unittest.TestCase):
+
+    def test_recode_is_byte_identical(self):
+        src = os.environ['OSM2CLARION_QY7_TILE']
+        with tempfile.TemporaryDirectory() as tmp:
+            out = os.path.join(tmp, 'out.DAT')
+            fmt, _, _, differ = tile_recode.recode(src, out)
+            self.assertIs(fmt, QY7)
+            self.assertEqual(differ, [])
+            self.assertEqual(tile_recode.sha(out), tile_recode.sha(src))
 
 
 if __name__ == '__main__':
