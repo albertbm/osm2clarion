@@ -300,6 +300,19 @@ class TestQY7Roads(unittest.TestCase):
         _, items = self.shape_record(QY8)
         self.assertEqual(items[0][6:], [0xe, 8, 0xd])
 
+    def test_area_of_takes_the_nearest_parcel(self):
+        old = rd_build.AREA_BASE
+        try:
+            rd_build.AREA_BASE = {(1, 93, 949, 11, 23): (6, 2, 4), (1, 93, 949, 11, 30): (6, 2, 9)}
+            rd_build.area_of.grid = None
+            self.assertEqual(rd_build.area_of(1, (93, 949, 11, 23)), (6, 2, 4))
+            self.assertEqual(rd_build.area_of(1, (93, 949, 12, 25)), (6, 2, 4))
+            self.assertEqual(rd_build.area_of(1, (93, 949, 11, 28)), (6, 2, 9))
+            self.assertEqual(rd_build.area_of(1, (94, 950, 0, 31)), (0, 0, 0))
+        finally:
+            rd_build.AREA_BASE = old
+            rd_build.area_of.grid = None
+
     def test_latin1_labels(self):
         self.assertEqual(QY7.text('JYVÄSKYLÄ'), b'JYV\xc4SKYL\xc4')
         self.assertEqual(QY7.text('ČEŠ'), b'CES')

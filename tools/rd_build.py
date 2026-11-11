@@ -17,6 +17,8 @@ SPEED_UNIT = 'km/h'   # the unit the country's signs are posted in, from the pro
 FMT = clarion_format.DEFAULT
 # --keep-names: (level, y, x, row, col) -> (label bytes, count) already in that parcel's background record
 KEEP_BASE = None
+# QY7: (level, y, x, row, col) -> the three area codes the source tile's own names items carry there
+AREA_BASE = None
 
 
 def use_profile(P):
@@ -622,6 +624,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
         rings = [all(L[k][11] in ('roundabout', 'circular') for k in g) for g in groups]
+        area = area_of(level, pc) if AREA_BASE is not None else None
         found = find_signposts(L, nodes, idx, groups, signs, UPPER_NAMES) if signs and level == 1 else []
         gs = None
         if found:
@@ -630,14 +633,14 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             gs = {}
             for s in found: gs.setdefault(s['exit'][0], {})[s['exit'][1]] = 0
             fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings)
+                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area)
             occ = fa_encode.occurrence_words(fa_encode.build_record.last_index)
             subs = signpost_subs(found, occ)
             L_of_key = dict(zip((s['key'] for s in subs), sec4_write.sub_offsets(subs)))
             gs = {i: {n: L_of_key[occ[i][n] - 22] for n in o} for i, o in gs.items()}
             encode_parcels.signposts[pc] = subs
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings)
+                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items, base)
@@ -775,6 +778,10 @@ def main():
         for w in ways2: w['nodes'] = simplify(w['nodes'], tol2, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
+    if FMT.area_items:
+        global AREA_BASE
+        AREA_BASE = factory_areas(sec1)
+        report.append(f'area codes read from {len(AREA_BASE)} parcels of the source tile')
     if keep_names:
         global KEEP_BASE
         KEEP_BASE, odd = factory_labels(sec1)
@@ -943,6 +950,49 @@ def factory_labels(sec1):
                     elif h[0] != 6 or n != h[1]: odd += 1; continue
                     out[(L['level'], D['y'], x, row, (r['k'] - 1) // 2)] = (lab, n)
     return out, odd
+
+
+def factory_areas(sec1):
+    """{(level, y, x, row, col): (a, b, c)}: the area codes most of a parcel's names items
+    carry for our country. An item is a length-prefixed run of words, nine for one area."""
+    out = {}
+    for L in sec1['levels']:
+        for D in L['dirs']:
+            x = (D['x'] + FMT.x_base) & 0xffff
+            for row, s in D['slots'].items():
+                for r in s['recs']:
+                    if r['k'] % 2 == 0: continue
+                    p = FMT.inflate(r['raw']); w = struct.unpack_from('>22H', p)
+                    if w[11] == 0xffff: continue
+                    sec = p[4 * w[11]:4 * (w[11] + w[12])]; h = struct.unpack_from('>12H', sec)
+                    if h[4] == 0xffff: continue
+                    sub = sec[4 * h[4]:]; o = 16; seen = collections.Counter()
+                    for _ in range(struct.unpack_from('>H', sub, 2)[0]):
+                        if o + 18 > len(sub): break
+                        it = struct.unpack_from('>9H', sub, o)
+                        if it[1] < 9: break
+                        if it[3:6] == (6, 0x0bc0, COUNTRY): seen[it[6:9]] += 1
+                        o += 2 * it[1]
+                    if seen: out[(L['level'], D['y'], x, row, (r['k'] - 1) // 2)] = seen.most_common(1)[0][0]
+    return out
+
+
+def area_of(level, pc, reach=8):
+    """A parcel's area codes: its own, else those of most parcels on the nearest ring within
+    reach that has any, else zeros, which the factory writes too."""
+    per = 32 // DIRM[level]   # parcels to a mesh
+    if area_of.grid is None:
+        area_of.grid = {(lv, y * (32 // DIRM[lv]) + row, x * (32 // DIRM[lv]) + col): a
+                        for (lv, y, x, row, col), a in AREA_BASE.items()}
+    y, x, row, col = pc
+    R, C = y * per + row, x * per + col
+    for d in range(reach + 1):
+        ring = collections.Counter(area_of.grid[(level, R + dr, C + dc)]
+                                   for dr in range(-d, d + 1) for dc in range(-d, d + 1)
+                                   if max(abs(dr), abs(dc)) == d and (level, R + dr, C + dc) in area_of.grid)
+        if ring: return ring.most_common(1)[0][0]
+    return (0, 0, 0)
+area_of.grid = None
 
 
 def replace_names(plain, section):
