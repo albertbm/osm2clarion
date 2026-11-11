@@ -2,9 +2,12 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) in the even pair of a level-1 background directory:
 header, a geometry unit of twelve layer pairs, then the shapes, one per drawn link chain."""
-import collections, os, struct, sys, zlib
+import collections, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
+import clarion_format
+
+FMT = clarion_format.DEFAULT   # set by rd_build from the profile
 
 STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
 FERRY_STYLE = 0x001e  # measured on every class-10 shape at both levels; style_word's oneway
@@ -260,14 +263,13 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     if len(tail) % 2: tail.append(0)
     if level == 1:
         w = [code[0], code[1], 0x00fa, 0x347a, 0x2aef, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
-             11 + len(unit) // 2, len(tail) // 2, 0x8104, country, 0]
+             11 + len(unit) // 2, len(tail) // 2, FMT.shape_w19, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>%dH' % len(tail), *tail)
     else:
         w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
              0xffff, 0, 0, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
-    c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(plain) + c.flush()
-    if len(comp) % 2: comp += b'\0'
+    comp = FMT.deflate(plain)
     build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off), country)
                                for i in order]
     # where each chain landed, in record words: the address files point at these
@@ -360,19 +362,20 @@ def parse_record(plain, level=1):
             p += L
     return (w[0], w[1]), g, shapes
 
-def names_section(labels, items):
-    """Names section: road-label entries plus one sub-table item per shape. Returns (bytes, {label: word offset})."""
+def names_section(labels, items, base=(b'', 0)):
+    """Names section: road-label entries plus one sub-table item per shape. Returns (bytes, {label: word offset}).
+    base: (label bytes, count) already in the record, kept in front so their offsets still hold."""
     import struct as _s
-    body = b''; offs = {}
+    body = base[0]; offs = {}
     for name in labels:
-        text = name.encode('utf-8')
+        text = FMT.text(name)
         if len(text) % 2: text += b'\0'
         offs[name] = (24 + len(body)) // 2
         body += _s.pack('>HHHHH', 0x00ff, 0x2000, 0, 0, len(text)) + text
     while len(body) % 4: body += b'\0'
     sub = _s.pack('>HH', 8, len(items)) + b'\xff\xff\x00\x00' * 3 + b''.join(_s.pack('>9H', *it) for it in items)
     while len(sub) % 4: sub += b'\0'
-    hdr = _s.pack('>HH', 6, len(labels)) + b'\xff\xff\x00\x00' + _s.pack('>HH', (24 + len(body)) // 4, len(items)) + b'\xff\xff\x00\x00' * 3
+    hdr = _s.pack('>HH', 6, base[1] + len(labels)) + b'\xff\xff\x00\x00' + _s.pack('>HH', (24 + len(body)) // 4, len(items)) + b'\xff\xff\x00\x00' * 3
     return hdr + body + sub, offs
 
 def chains_from_links(links, way_of, chain=False):

@@ -9,9 +9,11 @@ instead (codes 0-2: 1, 2, 4 m and 0.1, 0.2, 0.4 s, exact against L1 shape length
 L2-over-L1 sums on B30R070R, B48R060R and LEV3456R). Code 3 is read off L5 straight-line
 fits only: 32 m and 6.4 s.
 """
-import math, os, struct, sys, zlib
+import math, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg, clarion_format, fa_encode
+
+FMT = clarion_format.DEFAULT   # set by rd_build from the profile
 
 CLASS = 0x0898
 END_FLAG = 0x2000    # on the link-id word of the entry at the link's drawn last point
@@ -76,11 +78,16 @@ def pair_slot(cls):
     """Pair index at u4..u25 for a node class: 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up at u24."""
     return 1 if cls <= 2 else 2 if cls <= 7 else 3 if cls == 8 else 4 if cls == 9 else 10
 
-def unit_head(ncls, degree):
-    """Unit 0's 26 header words from each node's class and its count of real link ends (parcel-edge connections excluded)."""
+def unit_head(ncls, degree, end_cls=None):
+    """Unit 0's 26 header words from each node's class and its count of real link ends (parcel-edge connections excluded).
+    end_cls, per node the class of each real end's link: counts ends by those (X08-02) instead of by the node's class."""
     pairs = [[0, 0] for _ in range(11)]
-    for c, d in zip(ncls, degree):
-        pairs[pair_slot(c)][0] += 1; pairs[pair_slot(c)][1] += d
+    for i, (c, d) in enumerate(zip(ncls, degree)):
+        pairs[pair_slot(c)][0] += 1
+        if end_cls is None:
+            pairs[pair_slot(c)][1] += d
+        else:
+            for e in end_cls[i]: pairs[pair_slot(e)][1] += 1
     nn, nl = len(ncls), sum(degree)
     assert all(n < 0x10000 and l < 0x10000 for n, l in pairs), 'a pair overflows its u16'
     return [nn >> 16, nn & 0xffff, nl >> 16, nl & 0xffff] + [w for p in pairs for w in p]
@@ -129,9 +136,7 @@ def build_record(level, y0, x0, row, col, nodes, links, compress=True, speeds=No
     assert len(out) == 54
     out += struct.pack('>%dH' % len(unit), *unit)
     if not compress: return out, out          # level-2 records ship raw
-    c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(out) + c.flush()
-    if len(comp) % 2: comp += b'\0'
-    return out, comp
+    return out, FMT.deflate(out)
 
 def oneway_bits(d):
     """The w5 bits for a link's (i end, j end): d = 1 one-way i to j, -1 j to i, 0 both ways.
@@ -253,13 +258,12 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
             body += [other, w4, ow | len(ex) << 6, lid, cls, a, length] + ex
     live = [old for old in order if adj[old]]
     nn = len(live)
-    unit = unit_head([ncls[old] for old in live], [real[old] for old in live]) + body
+    ends = [[e[2] & 0xf for e in adj[old][:real[old]]] for old in live] if FMT.ends_by_link else None
+    unit = unit_head([ncls[old] for old in live], [real[old] for old in live], ends) + body
     out, hdr = record_head(level, y0, x0, row, col, [(0x1b, len(unit))], country)
     out += struct.pack('>%dH' % len(unit), *unit)
     if level == 1:
-        c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); comp = c.compress(out) + c.flush()
-        if len(comp) % 2: comp += b'\0'
-        return out, comp
+        return out, FMT.deflate(out)
     if level in (4, 5): return out, None
     # own index in record order is the key other blocks' triples address this node by; it stays
     # fixed even though the stream below is written in a different order (sorted by cell word)
@@ -294,10 +298,9 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
 
 def make_dir(level, y0, x0, recs, fmt=clarion_format.DEFAULT):
     """Section-2 directory: one pair per column, 32 slots of parcel rows. X08-03 writes kind
-    0x1046 at both levels; X08-02 level 2 has 512-byte slots, and only its empty form is known."""
+    0x1046 at both levels; X08-02 level 2 has 512-byte slots, two pairs to a column."""
     typ = dict(fmt.levels[2])[level]
     body = clarion_format.slot_body(2, typ); npairs = body // 8
-    assert fmt is clarion_format.X08_03 or not recs, 'X08-02 section 2 records are not written yet'
     x0 -= fmt.x_base
     slots = {}
     for row, cols in sorted(recs.items()):
@@ -306,6 +309,12 @@ def make_dir(level, y0, x0, recs, fmt=clarion_format.DEFAULT):
             if level == 1:
                 pairs[col] = struct.pack('>II', len(comp) // 2, len(plain) // 2)
                 rlist.append(dict(k=col, raw=comp, words=len(plain) // 2))
+            elif fmt is not clarion_format.X08_03:
+                # X08-02: the two parts are zlib records of their own, in pairs 2c and 2c+1
+                for k, part in ((2 * col, plain), (2 * col + 1, comp)):
+                    z = fmt.deflate(part)
+                    pairs[k] = struct.pack('>II', len(z) // 2, len(part) // 2)
+                    rlist.append(dict(k=k, raw=z, words=len(part) // 2))
             else:
                 pairs[col] = struct.pack('>II', len(plain) // 2, len(comp) // 2)
                 rlist.append(dict(k=col, raw=plain + comp, words=len(comp) // 2))
