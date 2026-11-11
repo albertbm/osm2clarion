@@ -5,7 +5,8 @@ X08-03-00 is the ZENRIN database on QY8 units, X08-02-00 the HITACHI one on QY7 
 The container, grid and record layouts are shared. What differs is measured on the 2014
 QY7 card (QSD-357-101) against the 2014 and 2017 QY8 European cards: a few header strings
 and constants, the fill around the level and box tables, the length of the section table,
-the section 2 level types, and the zlib window and padding of a record.
+the section 2 level types, the zlib window and padding of a record, and how a directory
+stores its mesh x.
 
 A tile names its own format in its FORMAT VERSION string, so a reader takes it from the
 header; a writer takes it from the profile's `format`.
@@ -16,7 +17,7 @@ FORMAT_OFF = 0xa0
 
 
 class Format:
-    def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad):
+    def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -27,6 +28,7 @@ class Format:
         self.zmagic = zmagic            # the two bytes a compressed record starts with
         self.wbits = wbits
         self.pad = pad                  # a compressed record is zero-padded to this many bytes
+        self.x_base = x_base            # directories and section tables store mesh x minus this
 
     def is_zlib(self, raw):
         return raw[:2] == self.zmagic
@@ -57,7 +59,7 @@ X08_03 = Format(
     zero=((0x4ac, 0x4ed), (0x52c, 0x5cc), (0x5d6, 0x800), (0x800 + 6 * 300, 0x1000)),
     table_fill=0xff, sect_slots=300,
     levels={1: _SEC1, 2: [(5, 0x81), (4, 0x81), (2, 0x81), (1, 0x90)], 4: _SEC4},
-    zmagic=b'\x58\x85', wbits=13, pad=2)
+    zmagic=b'\x58\x85', wbits=13, pad=2, x_base=0)
 
 # All 46 tile and LEV headers on the QY7 card rebuild from these.
 X08_02 = Format(
@@ -69,7 +71,7 @@ X08_02 = Format(
     zero=((0x4ac, 0x5cc), (0x5d6, 0x800), (0x800 + 6 * 341, 0x1000)),
     table_fill=0x00, sect_slots=341,
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
-    zmagic=b'\x78\x9c', wbits=15, pad=4)
+    zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03

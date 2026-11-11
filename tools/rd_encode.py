@@ -11,7 +11,7 @@ fits only: 32 m and 6.4 s.
 """
 import math, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_bg, fa_encode
+import clarion_bg, clarion_format, fa_encode
 
 CLASS = 0x0898
 END_FLAG = 0x2000    # on the link-id word of the entry at the link's drawn last point
@@ -292,10 +292,13 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     partb += struct.pack('>%dH' % len(pb), *pb)
     return out, partb
 
-def make_dir(level, y0, x0, recs):
-    """Section-2 directory: kind 0x1046, one pair per column, 32 slots of parcel rows."""
-    typ = {1: 0x90, 2: 0x81}[level]
-    body = 256; npairs = body // 8
+def make_dir(level, y0, x0, recs, fmt=clarion_format.DEFAULT):
+    """Section-2 directory: one pair per column, 32 slots of parcel rows. X08-03 writes kind
+    0x1046 at both levels; X08-02 level 2 has 512-byte slots, and only its empty form is known."""
+    typ = dict(fmt.levels[2])[level]
+    body = clarion_format.slot_body(2, typ); npairs = body // 8
+    assert fmt is clarion_format.X08_03 or not recs, 'X08-02 section 2 records are not written yet'
+    x0 -= fmt.x_base
     slots = {}
     for row, cols in sorted(recs.items()):
         pairs = [b'\xff' * 8] * npairs; rlist = []
@@ -308,5 +311,6 @@ def make_dir(level, y0, x0, recs):
                 rlist.append(dict(k=col, raw=plain + comp, words=len(comp) // 2))
         slots[row] = dict(body=b''.join(pairs), recs=rlist)
     n = {1: 1, 2: 4}[level]
-    return dict(kind=0x1046, ab=(32, 32), y=y0, x=x0, typ=typ, body=body, nslots=32, slots=slots,
-                empty_bodies={i: b'\xff' * body for i in range(32) if i not in slots}, box=(y0 + n, y0, x0, x0 + n))
+    return dict(kind=(12 + 32 * (4 + body)) // 2, ab=(32, 32), y=y0, x=x0 & 0xffff, typ=typ, body=body, nslots=32,
+                slots=slots, empty_bodies={i: b'\xff' * body for i in range(32) if i not in slots},
+                box=(y0 + n, y0, x0 & 0xffff, (x0 + n) & 0xffff))

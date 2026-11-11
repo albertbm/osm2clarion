@@ -22,8 +22,9 @@ zero, and the file ends at the next 256-byte boundary. Level 6's directory head 
 size as 10 halfwords, not the 12 it spans. write() lays the file out from these
 rules alone, so a byte-exact rebuild of a stock file proves the rules.
 
-The header is tile_header's except seven bytes: a coarse file has 00ffffffffffff at 0x4ed
-where a tile has 01011000000120.
+The header is tile_header's except, in X08-03, seven bytes: a coarse file has
+00ffffffffffff at 0x4ed where a tile has 01011000000120. An X08-02 coarse header is the
+tile's. Records use the format's zlib header; X08-02 streams rebuild with its tile codec.
 
     lev_file.py --check FILE...            rebuild each file and compare, records kept as stored
     lev_file.py --check --decode FILE...   the same with every record decoded and re-encoded
@@ -32,6 +33,7 @@ import struct
 import sys
 import zlib
 
+import clarion_format
 import tile_header
 from clarion_tile import addr_of, enc_addr, pad256, walk
 
@@ -41,15 +43,18 @@ ABSENT = 0xffffffff
 ZLIB = b'\x58\x85'
 
 
-def header(**fields):
+def header(fmt=clarion_format.DEFAULT, **fields):
     """A coarse header from the fields tile_header.author takes."""
-    h = tile_header.author(**fields)
-    off, b = COARSE
-    h[off:off + len(b)] = b
+    h = tile_header.author(**fields, fmt=fmt)
+    if fmt is clarion_format.X08_03:
+        off, b = COARSE
+        h[off:off + len(b)] = b
     return h
 
 
-def compress(plain):
+def compress(plain, fmt=clarion_format.DEFAULT):
+    if fmt is not clarion_format.X08_03:
+        return fmt.deflate(plain)
     # memLevel 6 and a 4-byte pad rebuild every stock coarse stream; tile encoders use 8 and 2
     c = zlib.compressobj(6, zlib.DEFLATED, 13, 6)
     out = c.compress(plain) + c.flush()
@@ -68,10 +73,10 @@ def rawrec(a, b=b''):
     return dict(raw=(a, b))
 
 
-def rec_bytes(r):
+def rec_bytes(r, fmt=clarion_format.DEFAULT):
     """(bytes, pair) for a record."""
     if 'plain' in r:
-        z = r.get('z') or compress(r['plain'])
+        z = r.get('z') or compress(r['plain'], fmt)
         return z, (len(z) // 2, len(r['plain']) // 2)
     a, b = r['raw']
     return a + b, (len(a) // 2, len(b) // 2)
@@ -83,8 +88,9 @@ def read(d, decode=False):
     and a row None or a list of records (None where absent). A zlib record keeps its stored
     stream as 'z' unless decode is set."""
     fields, sect = tile_header.fields(bytes(d[:0x1000]))
+    fmt = clarion_format.of_header(d[:0x1000])
     levels, _ = walk(d, tile_header.LEVEL_OFF, 4)
-    out = dict(fields=fields, sections=[])
+    out = dict(fields=fields, sections=[], fmt=fmt)
     for (sid, lv), (ta, count) in zip(levels, sect):
         ta = addr_of(ta)
         nw = struct.unpack_from('>H', d, ta)[0]
@@ -97,14 +103,14 @@ def read(d, decode=False):
                 assert w[o] == 2 + 6 * w[o + 1]
                 for g in range(w[o + 1]):
                     y1, y0, x0, x1, hi, lo = w[o + 2 + 6 * g:o + 8 + 6 * g]
-                    L['dirs'].append(read_dir(d, addr_of(hi << 16 | lo), (y1, y0, x0, x1), decode))
+                    L['dirs'].append(read_dir(d, addr_of(hi << 16 | lo), (y1, y0, x0, x1), decode, fmt.zmagic))
             assert len(L['dirs']) == struct.unpack('>H', e[2:])[0]
             sec['levels'].append(L)
         out['sections'].append(sec)
     return out
 
 
-def read_dir(d, da, box, decode):
+def read_dir(d, da, box, decode, zmagic=ZLIB):
     size, nrows, cols, y, x, typ = struct.unpack_from('>6H', d, da)
     pairs = 1 if nrows == cols == 1 else ((2 * size - 12) // nrows - 4) // 8
     assert head_size(nrows, cols, pairs) == size, (hex(da), size)
@@ -120,7 +126,7 @@ def read_dir(d, da, box, decode):
             for ln, X in pr:
                 if ln == ABSENT:
                     recs.append(None)
-                elif d[b:b + 2] == ZLIB:
+                elif d[b:b + 2] == zmagic:
                     z = bytes(d[b:b + 2 * ln])
                     plain = zlib.decompress(z)
                     assert len(plain) == 2 * X
@@ -159,7 +165,8 @@ def head_size(nrows, cols, pairs):
 
 
 def write(lev):
-    """The file's bytes, laid out by the stock rules."""
+    """The file's bytes, laid out by the stock rules, in lev['fmt'] (X08-03 when absent)."""
+    fmt = lev.get('fmt', clarion_format.DEFAULT)
     out = bytearray(TABLE1)
 
     def put(b):
@@ -190,7 +197,7 @@ def write(lev):
                         if r is None:
                             head += b'\xff' * 8
                             continue
-                        b, pair = rec_bytes(r)
+                        b, pair = rec_bytes(r, fmt)
                         head += struct.pack('>II', *pair)
                         block += b
                     put(block)
@@ -199,7 +206,7 @@ def write(lev):
     f = dict(lev['fields'])
     f['level_groups'] = [(sec['id'], [(L['level'], L['typ'], len(L['dirs'])) for L in sec['levels']])
                          for sec in lev['sections']]
-    h = header(**f)
+    h = header(fmt, **f)
     for i, (a, c) in enumerate(sect):
         struct.pack_into('>IH', h, tile_header.SECT_OFF + 6 * i, a, c)
     out[:TABLE1] = h
