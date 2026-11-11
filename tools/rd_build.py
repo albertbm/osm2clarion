@@ -212,6 +212,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                     if item[0] != dedup[-1][0]: dedup.append(item)
                 if len(dedup) >= 2: kept.append((dedup, wy))
             P['runs'] = kept
+        cands = []   # (part, way, run) of every link, in run order
         for rid, (q, wy) in enumerate(P['runs']):
             start = 0
             for i in range(1, len(q)):
@@ -220,21 +221,33 @@ def build_graphs(ways, cell, level=1, chain=True):
                 # split a run that closes on itself, so no link joins a node to itself
                 parts =[seg[:len(seg) // 2 + 1], seg[len(seg) // 2:]] if seg[0][0] == seg[-1][0] and len(seg) > 2 else [seg]
                 for part in parts:
-                    if part[0][0] == part[-1][0]: continue
-                    for key, p in (part[0], part[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
-                    length = sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
-                    P['links'].append((part[0][0], part[-1][0], max(1.0, length), wy['id'], wy.get('name'),
-                                       wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in part[1:-1]], rid,
-                                       wy.get('dir', 0), wy.get('junction')))
+                    if part[0][0] != part[-1][0]: cands.append((part, wy, rid))
         del P['runs'], P['touch'], P['touch_pts']
-        # a short triangle at a junction simplifies differently at each level: one level
-        # keeps the via-point, the other Douglas-Peucker's it away, leaving two links
-        # between the same pair of nodes for what is really one path. Keep the shorter.
-        by_pair = {}
-        for l in P['links']:
-            key = frozenset((l[0], l[1]))
-            if key not in by_pair or l[2] < by_pair[key][2]: by_pair[key] = l
-        P['links'] = list(by_pair.values())
+        # Two links between one pair of nodes: a crescent that leaves a street and comes back
+        # to it, or the two sides of a split road. The shortest stays whole and each other
+        # one is cut at a middle point, which becomes a node, so both roads are on the map.
+        # One with no point to cut at is the same path twice and is dropped.
+        pairs = collections.defaultdict(list)
+        for i, (part, wy, rid) in enumerate(cands):
+            pairs[frozenset((part[0][0], part[-1][0]))].append(i)
+        def length(part): return sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
+        cut_at = {}
+        for ends, idx in pairs.items():
+            if len(idx) == 1: continue
+            short = min(idx, key=lambda i: length(cands[i][0]))
+            for i in idx:
+                if i == short: continue
+                part = cands[i][0]
+                mids = [j for j in range(1, len(part) - 1) if part[j][0] not in ends]
+                cut_at[i] = mids[len(mids) // 2] if mids else None
+        for i, (part, wy, rid) in enumerate(cands):
+            j = cut_at.get(i, 0)
+            if j is None: continue
+            for piece in ([part[:j + 1], part[j:]] if j else [part]):
+                for key, p in (piece[0], piece[-1]): P['nodes'].setdefault(key, dict(geo=p, edge=None))
+                P['links'].append((piece[0][0], piece[-1][0], max(1.0, length(piece)), wy['id'], wy.get('name'),
+                                   wy['hw'], wy.get('ref'), wy.get('maxspeed'), [k for k, _ in piece[1:-1]], rid,
+                                   wy.get('dir', 0), wy.get('junction')))
         if chain: P['links'] = chain_links(P['links'])
         P['links'] = layer_order(P['links'], level)
     for pc, P in parcels.items():

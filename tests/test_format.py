@@ -363,6 +363,21 @@ class TestQY7Roads(unittest.TestCase):
         finally:
             fa_encode.FMT = old
 
+    def test_two_roads_between_one_pair_of_nodes_both_stay(self):
+        old = (rd_build.ORIGIN, rd_build.FMT, fa_encode.FMT, rd_encode.FMT, rd_build.COUNTRY, rd_build.SPEED_UNIT)
+        try:
+            rd_build.use_profile(clarion_profile.load('finland'))
+            a, b = (25.7400, 62.2400), (25.7420, 62.2400)
+            ways = [dict(id=1, hw='residential', name='Suora', nodes=[a, b]),
+                    dict(id=2, hw='residential', name='Mutka', nodes=[a, (25.7405, 62.2406), (25.7415, 62.2406), b]),
+                    dict(id=3, hw='residential', name='Toinen', nodes=[a, b])]
+            parcels = rd_build.build_graphs(ways, 'B58R050R', 1, True)
+            links = [l for P in parcels.values() for l in P['links']]
+            self.assertEqual(sorted(l[3] for l in links), [1, 2, 2], 'the crescent is cut in two, the copy is dropped')
+            self.assertEqual(len({frozenset((l[0], l[1])) for l in links}), 3, 'no two links share both ends')
+        finally:
+            rd_build.ORIGIN, rd_build.FMT, fa_encode.FMT, rd_encode.FMT, rd_build.COUNTRY, rd_build.SPEED_UNIT = old
+
     def test_area_of_takes_the_nearest_parcel(self):
         old = rd_build.AREA_BASE
         try:
