@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import clarion_format
 import clarion_profile
 import clarion_tile
+import fa_encode
 import rd_build
 import rd_encode
 import road_strip
@@ -242,6 +243,62 @@ class TestRoadStrip(unittest.TestCase):
 
 
 class TestQY7Roads(unittest.TestCase):
+
+    NODES = [(100, 200), (300, 400), (500, 600), (700, 800)]
+    # three links meet at node 1
+    CHAINS = [[(1, 0, 1, []), (2, 1, 2, [])], [(3, 1, 3, [])]]
+
+    def shape_record(self, fmt, level=1, **kw):
+        old = fa_encode.FMT
+        fa_encode.FMT = fmt
+        try:
+            plain, _ = fa_encode.build_record(level, 0x5d, 949, 11, 23, self.NODES, self.CHAINS, country=246, **kw)
+            return struct.unpack('>%dH' % (len(plain) // 2), plain), fa_encode.build_record.last_items
+        finally:
+            fa_encode.FMT = old
+
+    def test_style_word_two_way_bit(self):
+        old = fa_encode.FMT
+        try:
+            fa_encode.FMT = QY7
+            self.assertEqual(fa_encode.style_word(None), 0x201e)
+            self.assertEqual(fa_encode.style_word(50), 0x2029)
+            self.assertEqual(fa_encode.style_word(50, oneway=True), 0x0029)
+            fa_encode.FMT = QY8
+            self.assertEqual(fa_encode.style_word(None), fa_encode.STYLE)
+            self.assertEqual(fa_encode.style_word(50, oneway=True), 0x0029)
+        finally:
+            fa_encode.FMT = old
+
+    def test_level1_string_header_and_tail(self):
+        w7, _ = self.shape_record(QY7, rings=[False, True])
+        w8, _ = self.shape_record(QY8, rings=[False, True])
+        g = 22
+        self.assertEqual(w7[g], 1, 'one node with three links')
+        self.assertEqual(w8[g], 0)
+        at = g + 2 * w7[g + 1 + 2 * 5]   # both chains default to layer 5
+        self.assertEqual(w7[at + 3:at + 6:2], (0, 0))
+        self.assertEqual(w8[at + 3:at + 6:2], (0x0004, 0x8004))
+        self.assertEqual(w7[at + w7[at] + 3], 0x7000, 'the ring keeps its code')
+        self.assertEqual(w8[at + w8[at] + 3], 0x7004)
+        self.assertEqual(w7[17:19], (0xffff, 0), 'no tail')
+        self.assertEqual(len(w7), g + 2 * w7[8])
+        self.assertEqual(fa_encode.tail_of(struct.pack('>%dH' % len(w7), *w7)), (0, []))
+        self.assertEqual(w8[17], 11 + w8[8])
+
+    def test_level2_string_takes_the_ring_code(self):
+        w7, _ = self.shape_record(QY7, level=2, rings=[True, False])
+        w8, _ = self.shape_record(QY8, level=2, rings=[True, False])
+        at = 22 + 2 * w7[22 + 2 * 6]
+        self.assertEqual((w7[at + 3], w8[at + 3]), (0x7000, 0))
+        self.assertEqual(w7[at + 9], 0x201e)
+
+    def test_names_item_area_codes(self):
+        for level in (1, 2):
+            _, items = self.shape_record(QY7, level=level, area=(6, 2, 4))
+            self.assertEqual(items[0][3:], [6, 0x0bc0, 246, 6, 2, 4])
+        _, items = self.shape_record(QY8)
+        self.assertEqual(items[0][6:], [0xe, 8, 0xd])
 
     def test_latin1_labels(self):
         self.assertEqual(QY7.text('JYVÄSKYLÄ'), b'JYV\xc4SKYL\xc4')

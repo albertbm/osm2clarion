@@ -13,6 +13,19 @@ counts a node under its class in both, but a link end under its node's class in 
 A QY7 section 2 level 2 record is QY8's two parts, each its own zlib record in pairs 2c and
 2c+1 of a 512-byte slot (all 61 columns on B68R058R).
 
+The road-shape record differs in more places, all measured on B58R050R of the QY7 card:
+words 3 and 5 of a level-1 link string lack the QY8 constants (177,782 of 177,782 strings
+have no low nibble in word 3 and 0 in word 5); a two-way link sets bit 13 of its style word
+where QY8 sets bit 12 (18,593 two-way against 1,399 one-way starts), a ferry included; a
+record with no restricted link has no tail table, where QY8 writes one of plain runs (1,518
+records without, none with runs alone); a level-2 string carries the 3-bit code of its
+links' graph word 4 in word 3 (706 ring strings); and the names item ends in three area
+codes at both levels, where the QY8 build writes its own constants.
+
+The first word of a level-1 unit counts the parcel's nodes with three or more links. That
+holds on both formats (3,000 of 3,000 records on B58R050R and on B60R048R, 983 of 983 on the
+QY8 tile B68R058R), but the QY8 build has always written 0 there and still does.
+
 A tile names its own format in its FORMAT VERSION string, so a reader takes it from the
 header; a writer takes it from the profile's `format`.
 """
@@ -23,7 +36,8 @@ FORMAT_OFF = 0xa0
 
 class Format:
     def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base,
-                 codec, shape_w19, ends_by_link):
+                 codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
+                 ferry_style=0x001e, tail_runs=True, junction_count=False, l2_code=False, area_items=False):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -38,6 +52,14 @@ class Format:
         self.codec = codec              # label text
         self.shape_w19 = shape_w19      # word 19 of a level-1 road-shape record
         self.ends_by_link = ends_by_link  # graph header counts a link end under its link's class, not its node's
+        self.shape_w3 = shape_w3        # constant in word 3 of a level-1 link string
+        self.shape_w5 = shape_w5        # word 5 of a level-1 link string
+        self.twoway = twoway            # style word bit of a two-way link
+        self.ferry_style = ferry_style  # style word of a ferry link
+        self.tail_runs = tail_runs      # a record with nothing restricted still has a tail of plain runs
+        self.junction_count = junction_count  # the level-1 unit's first word is written, not left 0
+        self.l2_code = l2_code          # a level-2 string's word 3 takes the ring code
+        self.area_items = area_items    # a names item ends in the parcel's three area codes
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -88,7 +110,9 @@ X08_02 = Format(
     zero=((0x4ac, 0x5cc), (0x5d6, 0x800), (0x800 + 6 * 341, 0x1000)),
     table_fill=0x00, sect_slots=341,
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
-    zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True)
+    zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
+    shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, junction_count=True,
+    l2_code=True, area_items=True)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03

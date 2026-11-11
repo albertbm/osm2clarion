@@ -14,9 +14,10 @@ FERRY_STYLE = 0x001e  # measured on every class-10 shape at both levels; style_w
                       # bit would also clear bit 12, but a ferry link is two-way
 
 def style_word(limit, oneway=False):
-    """Level-1 style word for a posted limit, or STYLE for none; bit 12 clear marks one-way."""
-    w = STYLE if not limit or limit % 5 or not 5 <= limit <= 160 else 0x1020 | (limit // 5 - 1)
-    return w & ~0x1000 if oneway else w
+    """Level-1 style word for a posted limit, or the plain one for none. A one-way link
+    clears the two-way bit, bit 12 on QY8 and bit 13 on QY7."""
+    w = 0x1e if not limit or limit % 5 or not 5 <= limit <= 160 else 0x20 | (limit // 5 - 1)
+    return w if oneway else w | FMT.twoway
 
 def limit_of(style):
     """The posted limit a style word carries, or None."""
@@ -93,7 +94,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     start node of link n, occurrence len(chain) the chain's last node. The occurrence's y
     gets bit 0x1000 and G follows its key word (SECTION4-draft.md section 7)."""
     if cls is None: cls = 8 if level == 1 else 7
-    if styles is None or level != 1: styles = [STYLE] * len(chain)
+    if styles is None or level != 1: styles = [style_word(None)] * len(chain)
     if dirs is None: dirs = [0] * len(chain)
     if gs is None or level != 1: gs = {}
     fresh = restyled(styles)
@@ -102,8 +103,9 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
         return 0x4000 if d > 0 else 0x8000 if d < 0 else 0
     # word 3 bits 14-12 = 7 on factory ring strings (Koln 89%, UK 95%, ~0% elsewhere): the
     # 3-bit code section 2 carries in w4. Word 4: word offset of the name entry, 0xffff = none
-    if level == 1: out = [cls << 12, 0x7004 if ring else 0x0004, name_off, 0x8004, 0x0000]
-    else: out = [cls << 12, 0x0000, name_off, 0x0000, 0x0000]
+    code = 0x7000 if ring else 0
+    if level == 1: out = [cls << 12, code | FMT.shape_w3, name_off, FMT.shape_w5, 0x0000]
+    else: out = [cls << 12, code if FMT.l2_code else 0, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
     out += [0x0800 | sx, 0x2800 | sy | dirbits(0) | (0x1000 if 0 in gs else 0)]
     npts = 1
@@ -112,7 +114,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
         # occurrences in the record; 0xffff here matches a node with no twin at all
         if level == 1: out += ([styles[n]] if fresh[n] else []) + [0xffff] + ([gs[n]] if n in gs else []) + [lid]
         # a ferry link is two-way, but style_word's oneway test would still clear its bit 12
-        elif n == 0: out += [FERRY_STYLE if cls == 10 else style_word(None, oneway=dirs[n] != 0), lid]
+        elif n == 0: out += [FMT.ferry_style if cls == 10 else style_word(None, oneway=dirs[n] != 0), lid]
         else: out += [lid]
         pts = list(inner) + [nodes[b]]
         for k, (x, y) in enumerate(pts):
@@ -196,10 +198,12 @@ def identical_node_keys(chains, styles, at, order, gs=None):
                 out[occ[k][0]] = occ[ks[p - 1]][1]   # previous occurrence's x word; p=0 wraps to the last
     return out
 
-def item_words(shape, level=1, name_off=0xffff, country=None):
-    """Names sub-table item for a shape; word 5 is the ISO 3166 country code."""
+def item_words(shape, level=1, name_off=0xffff, country=None, area=None):
+    """Names sub-table item for a shape; word 5 is the ISO 3166 country code. area is the
+    three area codes a QY7 item ends in at both levels, or None for the QY8 forms."""
     assert country, 'item_words needs the country code'
     npts = shape[1] & 0x3fff   # word 1 is 0x8000 | points
+    if area is not None: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, *area]
     if level == 1: return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 0xe, 8, 0xd]
     named = name_off != 0xffff
     return [0x8000, 9, 0x8000 | (2 * max(0, npts - 2)), 6, 0x0bc0, country, 1, 1 if named else 0, name_off if named else 0]
@@ -218,14 +222,22 @@ def tail_count(items):
     return sum(x >> 8 for x in items if not x & 0x8000 and x & 0xff == 1)
 
 def tail_of(plain):
-    """A built record's tail: (item count, items). Level 1 only."""
+    """A built record's tail: (item count, items). Level 1 only; (0, []) without a tail."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     off, cnt = w[17], w[18]
+    if off == 0xffff: return 0, []
     tail = w[2 * off: 2 * off + 2 * cnt]
     return tail[1], list(tail[8:8 + tail[1]])
 
+def junctions(chains):
+    """Nodes of a parcel that three or more links meet at."""
+    deg = collections.Counter()
+    for c in chains:
+        for lid, a, b, inner in c: deg[a] += 1; deg[b] += 1
+    return sum(1 for n in deg.values() if n >= 3)
+
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None, country=None, dirs=None, gs=None, rings=None):
+                 styles=None, country=None, dirs=None, gs=None, rings=None, area=None):
     """A level-1 or level-2 road-shape record and its compressed form, shapes grouped by layer.
 
     gs, level 1 only: {chain index: {node occurrence: G}} as shape_words takes it. G is the
@@ -241,7 +253,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i),
                           ring=bool(rings and rings[i]))
               for i, c in enumerate(chains)]
-    if level == 1: unit = [0x0000] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
+    if level == 1: unit = [junctions(chains) if FMT.junction_count else 0] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
     order = []; at = {}
     for lay in sorted({l for l, _ in lc}):
@@ -261,16 +273,17 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     items = tail_items(len(shapes) + nlinks)
     tail = [0x0004, len(items), 0xffff, 0x0000, 0xffff, 0x0000, 0xffff, 0x0000] + items
     if len(tail) % 2: tail.append(0)
+    if not FMT.tail_runs: tail = []   # nothing here is restricted, and QY7 then has no tail
     if level == 1:
         w = [code[0], code[1], 0x00fa, 0x347a, 0x2aef, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
-             11 + len(unit) // 2, len(tail) // 2, FMT.shape_w19, country, 0]
+             11 + len(unit) // 2 if tail else 0xffff, len(tail) // 2, FMT.shape_w19, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit) + struct.pack('>%dH' % len(tail), *tail)
     else:
         w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0,
              0xffff, 0, 0, country, 0]
         plain = struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
     comp = FMT.deflate(plain)
-    build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off), country)
+    build_record.last_items = [item_words(shapes[i], level, (name_offs[i] if name_offs else name_off), country, area)
                                for i in order]
     # where each chain landed, in record words: the address files point at these
     build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
