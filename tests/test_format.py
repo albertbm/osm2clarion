@@ -20,6 +20,8 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import clarion_format
 import clarion_profile
 import clarion_tile
+import rd_encode
+import road_strip
 import tile_header
 import tile_recode
 import tile_scan
@@ -125,6 +127,53 @@ class TestFormats(unittest.TestCase):
             fmt, nrec, nz, differ = tile_recode.recode(src, out)
             self.assertEqual((fmt, nrec, nz, differ), (QY7, 2, 2, []))
             self.assertEqual(Path(out).read_bytes(), d)
+
+
+class TestRoadStrip(unittest.TestCase):
+
+    def test_empty_section2_dirs(self):
+        self.assertEqual(rd_encode.make_dir(1, 0x68, 952, {})['kind'], 0x1046)
+        self.assertEqual(rd_encode.make_dir(2, 0x68, 952, {})['x'], 952)
+        d = rd_encode.make_dir(2, 0x68, 952, {}, QY7)
+        self.assertEqual((d['kind'], d['body'], d['typ'], d['x']), (0x2046, 512, 0x91, 0xffb8))
+
+    def test_extended_marker(self):
+        self.assertTrue(tile_scan.is_extended(0x800000d0, 0x110))
+        self.assertTrue(tile_scan.is_extended(0xffffffff, 0x7fffffff))
+        self.assertFalse(tile_scan.is_extended(0x7fffffff, 0x7fffffff))
+        self.assertFalse(tile_scan.is_extended(0xd0, 0x110))
+
+    def test_cut_road_block(self):
+        bg, names, road, extra = b'B' * 8, b'N' * 4, b'R' * 12, b'\x02\x42\0\0'
+        w = [0] * 22
+        w[2], w[20] = 0xfa, 0xf6
+        w[7], w[8] = 12, 3
+        w[9], w[10] = 15, 2
+        w[11], w[12] = 17, 1
+        for i in (13, 15, 17):
+            w[i] = 0xffff
+        rec = struct.pack('>22H', *w) + extra + road + bg + names
+        out = road_strip.cut_road_block(rec)
+        v = struct.unpack_from('>22H', out)
+        self.assertEqual((v[7], v[8], v[9], v[10], v[11], v[12], v[20]), (0xffff, 0, 11, 2, 13, 1, 0xf6))
+        self.assertEqual(out[44:], bg + names)
+        self.assertIs(road_strip.cut_road_block(out), out)
+
+    def test_strip_synthetic(self):
+        d, _ = sec2_level2_tile(QY7)
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = os.path.join(tmp, 'B68R048R.DAT'), os.path.join(tmp, 'out.DAT')
+            Path(src).write_bytes(d)
+            cell, n_in, nkept, _ = road_strip.strip(src, out, QY7)
+            self.assertEqual((cell, n_in, nkept), ('B68R048R', 2, 0))
+            b = Path(out).read_bytes()
+            self.assertEqual(tile_header.check(b[:0x1000]), [])
+            with tile_scan.TileScan(b) as t:
+                self.assertEqual([s for s, _ in t.sections()], [1, 2])
+                self.assertEqual(list(t.records()), [])
+                self.assertEqual(len(list(t._dirs(2))), 2)
+            with self.assertRaises(SystemExit):
+                road_strip.strip(src, out, QY8)
 
 
 @unittest.skipUnless(os.environ.get('OSM2CLARION_QY7_TILE'), 'set OSM2CLARION_QY7_TILE to a factory QY7 tile')

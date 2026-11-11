@@ -1,0 +1,27 @@
+# Finland, built on a QY7 (X08-02-00) European card.
+#
+# Finland lies inside the shipped database box, so no shift. Every Finland tile on the
+# 2014 QY7 card is shared with Sweden, Norway or Estonia.
+
+name = "finland"
+description = "Finland on the 2014 QY7 European database"
+country = 246            # ISO 3166 numeric; every road record carries it
+format = "x08-02"        # QY7 units
+
+[source]
+osm = "build/finland-latest.osm.pbf"
+roads = "build/roads_finland.json"
+coastline = "build/coast_finland.json"
+
+[grid]
+# The cells holding Finland, as the card names them.
+cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R", "B68R050R"]
+bbox = { lon_min = 19.0, lon_max = 31.6, lat_min = 59.7, lat_max = 70.1 }
+
+[roads]
+simplify_metres = 2
+speed_unit = "km/h"
+
+[targets]
+default = "v2014"
+v2014 = { label = "2014 QY7 European database", volume = "QSD-357-101" }
