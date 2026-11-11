@@ -3,7 +3,7 @@
 """Build a card from a profile.
 
     ./build.py --profile NAME --base CARD --out OUT.img [--work DIR] [--osm PBF] [--area NAME,...]
-               [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR] [--only STEP | --from STEP] [--list]
+               [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR] [--map-from CARD] [--only STEP | --from STEP] [--list]
 
 Everything specific to a region, a unit or a data source is in profiles/NAME.toml. [build] mode
 picks the chain:
@@ -235,7 +235,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     m = pattern.match(os.path.basename(out))
     if not m or os.path.basename(os.path.dirname(out)) != 'builds':
         raise SystemExit('--out must be CARDS/builds/%s-NNN-%s-SLUG.img' % (naming['prefix'], '|'.join(naming['units'])))
-    unit, slug = m.group(2), m.group(3)
+    number, unit, slug = int(m.group(1)), m.group(2), m.group(3)
     cards = os.path.dirname(os.path.dirname(out))
     manifest = out[:-4] + '.manifest.json'
     area_arg = areas or ','.join(cfg['areas'])
@@ -266,7 +266,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     def cards_step():
         prep()
         cmd = [py, tool('build_gen_lev.py'), '--config', conf, '--unit', unit, '--slug', slug, work, '--reuse',
-               '--base', base, '--area', area_arg]
+               '--number', str(number), '--base', base, '--area', area_arg]
         if B.get('landuse'): cmd += ['--landuse', B['landuse']]
         if B.get('house'): cmd += ['--house']
         cmd += ['--write', args.get('write') or B['write']]
@@ -307,8 +307,20 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
             return
         cmd = expand(cmd).replace('{img}', out)
         print('\n$', cmd, flush=True)
-        subprocess.run(cmd, shell=True, check=True, env=env_v)
+        r = subprocess.run(cmd, shell=True, env=env_v, capture_output=True, text=True)
+        print(r.stdout + r.stderr, end='')
+        # a base that carries the patch already is fine; nnt exits 1 for it
+        if r.returncode and 'already patched' not in r.stdout + r.stderr:
+            raise SystemExit('consent step failed (exit %d)' % r.returncode)
         stamp('me0_consent', cfg['units'][unit]['consent_cmd'], out)
+
+    def map_step():
+        prep()
+        run(py, tool('build_gen_lev.py'), '--config', conf, '--unit', unit, '--slug', slug, work,
+            '--number', str(number), '--base', base, '--map-from', args['map-from'],
+            '--what', args.get('what') or slug, env=env)
+        if not os.path.exists(out):
+            raise SystemExit('the build wrote another card than %s' % out)
 
     def check():
         run('shasum', '-a', '256', out)
@@ -316,6 +328,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if os.path.exists(checker):
             run(py, checker, '--card', out, *(['--prev', args['prev']] if args.get('prev') else []), env=env)
 
+    if args.get('map-from'):
+        return [('prep', prep), ('map', map_step), ('check', check)]
     return [('prep', prep), ('cards', cards_step), ('poi', poi), ('icons', icons), ('addr', addr),
             ('consent', consent), ('check', check)]
 
@@ -325,7 +339,7 @@ def main():
     P = clarion_profile.take_arg(argv)
     args = {}
     flags = ('--base', '--out', '--work', '--osm', '--area', '--local', '--what', '--prev', '--stage',
-             '--write', '--from', '--only')
+             '--write', '--map-from', '--from', '--only')
     for flag in flags:
         if flag in argv:
             i = argv.index(flag)

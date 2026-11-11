@@ -15,7 +15,8 @@ Each is one of:
     leftover    no step produced it
 
     build_gen_lev.py --config PATH --unit NAME --slug NAME BUILD_DIR [--base IMG] [--what TEXT]
-                     [--coast PATH] [--reuse]
+                     [--coast PATH] [--reuse] [--number N]
+                     [--map-from CARD]
                      [--roads [--also NAME,NAME] [--to NAME,NAME [--by time]] | --area NAME[,NAME...] [--coarse-graph]]
                      [--write lev|tiles,addr] [--addr-only NAME,NAME]
                      [--landuse lon0,lat0,lon1,lat1 [--landuse-kinds forest,water,...] [--buildings LAYER:CLASS]
@@ -28,9 +29,14 @@ generated file carries (config units.*.version; the firmware checks it against t
 the card build_icode_clean.py reads its two ICODE001.DAT files from (config units.*.icode). The
 card is written under CARDS/builds following card_naming.build_pattern, with its manifest
 beside it, one past the highest existing number, or the same number when the newest build is
-this slug on another unit (twins share a number). A line goes to the top of the cards log
+this slug on another unit (twins share a number), or the number --number gives. A line goes to the top of the cards log
 (config cards_log), status untested; --what is its "what changed" text (default: the slug).
 --reuse skips steps whose outputs exist.
+
+--map-from CARD writes the map, address and POI files of a finished card onto this unit's base, as
+they are: nothing is generated, restamped or recompressed, so the DATA VERSION stays the source
+card's. The target keeps its own app, settings and ICODE files and gets a refreshed index. This is
+"build once, write per unit"; BUILD_DIR is only a place for the config.
 
 --roads adds the road steps: gen_roads_path.py picks the ways (--also adds whole streets,
 --to a route to each named street and the street itself, --by how that route is weighed),
@@ -85,7 +91,7 @@ def _config_path():
 
 
 from card_pack import ed_read, mmain, wrap  # noqa: E402
-from drstr_add import add as drstr_add, children, dir_records  # noqa: E402
+from drstr_add import add as drstr_add, children, dir_records, remove as drstr_remove  # noqa: E402
 from clarion_tile import walk  # noqa: E402
 from drstr_sizes import set_sizes  # noqa: E402
 from fatedit import Editor  # noqa: E402
@@ -383,12 +389,29 @@ GROUPS = dict(lev=lambda p: p == 'MAPAL001/LEV3456R.DAT',
               house=lambda p: p.startswith('HOUSE001/'))
 
 
+def purge(ed, drs, d, keep):
+    """Delete the files in folder d that `keep` (a set of card paths) lacks, and their index rows.
+    ICODE files and the dot entries stay. Returns the index."""
+    gone = [g.name for g in ed.load(d)[1] if '%s/%s' % (d, g.name) not in keep
+            and 'ICODE' not in g.name and not g.name.startswith('.')]
+    for n in gone:
+        ed.delete(d, n)
+        print('deleted %s/%s' % (d, n))
+    rec = [r for r in dir_records(drs) if r['name'] == d][0]
+    listed = {n for n, _, _ in children(drs, rec)}
+    # the index lists a packed file once, by its plain name
+    rows = {n[:-4] if n.endswith('.cmp') else n for n in gone if not n.endswith('.ind')} & listed
+    return drstr_remove(drs, d, sorted(rows)) if rows else drs
+
+
 def assemble(img, exp, groups):
     """Write the chosen generated files (old clusters zeroed), then the index sizes, CMP.LST
     and MMAIN's level counts."""
     ed = Editor(img)
     drs = ed_read(ed, '', 'DRSTR001.DAT')
     sizes = {}
+    if 'house' in groups:   # the building-scale folder is all this build's; leftovers of an older card go
+        drs = purge(ed, drs, 'HOUSE001', set(exp))
     for path in sorted(exp):
         if not any(GROUPS[g](path) for g in groups):
             continue
@@ -436,6 +459,30 @@ def cmp_lst_ed(ed):
     names = ['\\SystemSD\\%s\\%s' % (d, g.name[:-4]) for d in SCOPE
              for g in ed.load(d)[1] if g.name.endswith('.cmp')]
     return '\0'.join(sorted(names)).encode('ascii')
+
+
+def copy_map(img, src):
+    """Write the map, address and POI files of the finished card `src` onto the fresh card `img`
+    as they are: nothing is regenerated or restamped, and the target's app, settings and ICODE
+    files stay its own. Files the target has in those folders and `src` lacks are deleted, the
+    index and CMP.LST are refreshed for the target, and MMAIN is the source's. Returns the
+    paths copied."""
+    files = {p: b for p, b in card_files(src).items() if p.split('/')[0] in SCOPE and 'ICODE' not in p}
+    exp = {}
+    for p, b in files.items():
+        n = struct.unpack_from('<I', files[p[:-4] + '.ind'])[0] if p.endswith('.cmp') else len(b)
+        exp[p] = (b, None, n)
+    ed = Editor(img)
+    drs = ed_read(ed, '', 'DRSTR001.DAT')
+    for d in SCOPE:
+        drs = purge(ed, drs, d, set(files))
+    ed.write('', 'DRSTR001.DAT', drs)
+    ed.close()
+    assemble(img, exp, list(GROUPS))
+    ed = Editor(img)
+    ed.write('', 'MMAIN001.DAT', card_files(src)['MMAIN001.DAT'])
+    ed.close()
+    return sorted(files)
 
 
 def card_files(img):
@@ -558,10 +605,10 @@ def next_number(unit, slug):
     return top if twins and (top, unit) not in have else top + 1
 
 
-def new_card(unit, slug, base=None):
+def new_card(unit, slug, base=None, number=None):
     default_base = CONFIG['card_naming']['base_pattern'].format(prefix=CARD_PREFIX, unit=unit)
     base = os.path.abspath(os.path.expanduser(base or '%s/bases/%s' % (CARDS, default_base)))
-    n = next_number(unit, slug)
+    n = number or next_number(unit, slug)
     name = CARD_BUILD_PATTERN.format(prefix=CARD_PREFIX, number=n, unit=unit, slug=slug)
     img = '%s/builds/%s' % (CARDS, name)
     assert not os.path.exists(img), img
@@ -590,6 +637,27 @@ def cards_line(n, unit, slug, what, base):
     open(p, 'w').write('\n'.join(lines))
 
 
+def map_from(unit, slug, src, base, number, what, B):
+    """Build once, write per unit: a card of `unit` carrying the map files of the finished card `src`."""
+    src = os.path.abspath(os.path.expanduser(src))
+    n, img, base = new_card(unit, slug, base, number)
+    paths = copy_map(img, src)
+    got, want = card_files(img), card_files(src)
+    bad = [p for p in paths if got.get(p) != want[p]]
+    if bad:
+        raise SystemExit('copied files differ from %s: %s' % (src, ', '.join(bad)))
+    bad = drstr_check(got['DRSTR001.DAT'], got)
+    if bad:
+        raise SystemExit('index rows off: ' + '; '.join(bad))
+    m = dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
+             map_from=src, tools=dict(osm2clarion=git_rev(OSM_ROOT)),
+             files=[dict(path=p, size=len(want[p]), sha256=sha(want[p]), status='copied') for p in paths])
+    with open(os.path.splitext(img)[0] + '.manifest.json', 'w') as f:
+        json.dump(m, f, indent=1, ensure_ascii=False)
+    cards_line(n, unit, slug, what, base)
+    print('copied %d files from %s' % (len(paths), src))
+
+
 def main(argv):
     if '--help' in argv or '-h' in argv:
         print(__doc__)
@@ -602,6 +670,9 @@ def main(argv):
         raise SystemExit(__doc__)
     B = os.path.abspath([a for i, a in enumerate(argv)
                          if not a.startswith('--') and (i == 0 or not argv[i - 1].startswith('--'))][0])
+    if opt('--map-from'):
+        return map_from(unit, slug, opt('--map-from'), opt('--base'), int(opt('--number', 0)),
+                        opt('--what', slug), B)
     icode_base = UNITS[unit]['icode']
     coast = opt('--coast', os.path.expanduser(CONFIG['data']['coast']))
     also, to, by = opt('--also'), opt('--to'), opt('--by')
@@ -630,7 +701,7 @@ def main(argv):
         groups.append('house')
     run_steps(S, B, '--reuse' in argv)
     exp = expected(S)
-    n, img, base = new_card(unit, slug, opt('--base'))
+    n, img, base = new_card(unit, slug, opt('--base'), int(opt('--number', 0)))
     assemble(img, exp, groups)
     m = manifest(img, S, B, exp)
     m.update(unit=unit, base=base, number=n, slug=slug)
