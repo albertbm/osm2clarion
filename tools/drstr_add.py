@@ -100,6 +100,37 @@ def add(d, dirname, new, last=None):
     return bytes(out), rows, total
 
 
+def remove(d, dirname, names):
+    """Drop the listed file rows from a directory; the rest of the index keeps its order."""
+    recs = dir_records(d)
+    tgt = [r for r in recs if r['name'] == dirname][0]
+    rows = children(d, tgt)
+    gone = set(names)
+    unknown = gone - {n for n, _, _ in rows}
+    assert not unknown, 'not listed under %s: %s' % (dirname, sorted(unknown))
+    rows = [r for r in rows if r[0] not in gone]
+    blocks = [rows if r['name'] == dirname else children(d, r) for r in recs]
+    head = bytearray(len(recs) * DIR_REC)
+    off = len(head)
+    for r, rws in zip(recs, blocks):
+        struct.pack_into('<20sHHH', head, r['i'], r['name'].encode('ascii').ljust(20, b'\0'),
+                         r['own'], r['parent'], len(rws))
+        struct.pack_into('<I', head, r['i'] + 0x24, off)
+        off += CHILD_REC * len(rws)
+    out = bytearray(head)
+    for rws in blocks:
+        for n, t, s in rws:
+            out += child_bytes(n, t, s)
+    total = sum(s for _, _, s in rows) & 0xffffffff
+    pr = [r for r in recs if r['own'] == tgt['parent']][0]
+    po = struct.unpack_from('<I', out, pr['i'] + 0x24)[0]
+    for k in range(pr['cnt']):
+        p = po + CHILD_REC * k
+        if out[p:p + 20].rstrip(b'\0').decode() == dirname:
+            struct.pack_into('<I', out, p + 0x1c, total)
+    return bytes(out)
+
+
 def main(argv):
     last = None
     if '--after' in argv:
