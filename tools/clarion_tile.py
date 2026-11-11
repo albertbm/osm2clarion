@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Clarion X08-03-00 map tile: read the container into objects and write it back. Header is 0x1000 bytes (strings, level table at 0x1ac, bbox table at 0x2ac, section table at 0x800); past it, each section has a table, directories and record blocks, all 256-byte aligned. Addresses are u32: (offset // 2048) << 8 | (offset % 2048) // 256."""
-import struct, zlib
+"""Clarion X08-03-00 or X08-02-00 map tile: read the container into objects and write it back. Header is 0x1000 bytes (strings, level table at 0x1ac, bbox table at 0x2ac, section table at 0x800); past it, each section has a table, directories and record blocks, all 256-byte aligned. Addresses are u32: (offset // 2048) << 8 | (offset % 2048) // 256."""
+import os, struct, sys, zlib
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_format
 
 SLOTS = 32
 LEVEL_OFF, BBOX_OFF, SECT_OFF, TABLE1_OFF = 0x1ac, 0x2ac, 0x800, 0x1000
@@ -20,6 +22,7 @@ def walk(d, off, elen):
 
 def read_tile(d):
     t = dict(header=bytearray(d[:TABLE1_OFF]), sections=[], order=[])
+    fmt = clarion_format.of_header(d[:TABLE1_OFF])
     levels, _ = walk(d, LEVEL_OFF, 4)
     sect_entries = []
     p = SECT_OFF
@@ -43,7 +46,7 @@ def read_tile(d):
                 for k in range(gcnt):
                     y1, y0, x0, x1, z, tg = w[o+2+6*k:o+8+6*k]
                     D = read_dir(d, addr_of((z << 16) | tg), box=(y1, y0, x0, x1), nslots=16 if level == 3 else SLOTS,
-                                section=sid)
+                                section=sid, typ=typ, fmt=fmt)
                     di = len(L['dirs']); L['dirs'].append(D)
                     t['order'].append((D['off'], 'dir', si, li, di))
                     if D['slots']:
@@ -55,10 +58,11 @@ def read_tile(d):
     t['order'].sort()
     return t
 
-def read_dir(d, off, box, nslots=SLOTS, section=1):
-    kind, a, b, y, x, typ = struct.unpack_from('>HHHHHH', d, off)
-    body = 512 if section == 1 else 256   # slot body size is per section, not per kind; 0x2146/0x2346 are section 1 too
-    D = dict(off=off, kind=kind, ab=(a, b), y=y, x=x, typ=typ, box=box, body=body, slots={}, nslots=nslots)
+def read_dir(d, off, box, nslots=SLOTS, section=1, typ=None, fmt=clarion_format.DEFAULT):
+    """typ is the level's type from the level table, which decides the slot body size."""
+    kind, a, b, y, x, dtyp = struct.unpack_from('>HHHHHH', d, off)
+    body = clarion_format.slot_body(section, typ)   # not the kind word; 0x2146/0x2346 are section 1 too
+    D = dict(off=off, kind=kind, ab=(a, b), y=y, x=x, typ=dtyp, box=box, body=body, slots={}, nslots=nslots)
     p = off + 12
     for i in range(nslots):
         tag = struct.unpack_from('>I', d, p)[0]
@@ -71,8 +75,8 @@ def read_dir(d, off, box, nslots=SLOTS, section=1):
                 ln, X = words[2*k], words[2*k+1]
                 if ln in (0xffffffff, 0x7fffffff): continue
                 # zlib records: ln = compressed words, X = inflated words.
-                # raw records (no 58 85 magic): two parts of ln and X words.
-                n = 2*ln if d[q:q+2] == b'\x58\x85' else 2*(ln + X)
+                # raw records (no zlib magic): two parts of ln and X words.
+                n = 2*ln if fmt.is_zlib(d[q:q+2]) else 2*(ln + X)
                 recs.append(dict(k=k, raw=d[q:q+n], words=X)); q += n
             D['slots'][i] = dict(tag=tag, body=raw, recs=recs, block_off=addr_of(tag), block_end=q)
         else:

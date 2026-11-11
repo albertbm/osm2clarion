@@ -1,49 +1,51 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The 0x1000-byte header of an X08-03-00 map tile, written from its parts.
+"""The 0x1000-byte header of an X08-03-00 or X08-02-00 map tile, written from its parts.
 
 A factory header holds five things that change between tiles or between database cuts:
 the DATA VERSION string (0xe0), the NAVTEQ release string (0x3b0), the database box (0x184,
 repeated in part at 0x5d0), the level table (0x1ac) and the box table (0x2ac). The section
 table at 0x800 is filled by clarion_tile.write_tile. Everything else is the same byte for
 byte in all 156 tile headers of the 2014, 2015 and 2016 European cards, and is written here
-from constants. check() rebuilds a header from its five fields alone, so that claim can be
-tested on any card.
+from constants. The X08-02-00 (QY7) constants are in clarion_format; all 46 headers on the
+2014 QY7 card rebuild from them. check() rebuilds a header from its five fields alone, so
+that claim can be tested on any card.
 
     tile_header.py --check FILE...      rebuild each header and compare
 """
+import os
 import struct
 import sys
 
-IDENT = {0x00: 'CLARION', 0x40: 'ZENRIN', 0x80: 'CLA-NAVI06-01',
-         0xa0: 'FORMAT VERSION X08-03-00', 0x162: 'V06.00.00'}
-# raw constants by offset, outside the 0xff fill
-CONSTS = {0x160: '1600', 0x182: '24ff', 0x18c: '3f' * 20, 0x3ac: '0100',
-          0x4ed: '01011000000120', 0x5cc: '80000000', 0x5d4: '0b0b'}
-ZERO = ((0x4ac, 0x4ed), (0x52c, 0x5cc), (0x5d6, 0x800), (0x800 + 6 * 300, 0x1000))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_format
+
+# the X08-03-00 values, which most callers still read directly
+_F = clarion_format.X08_03
+IDENT, CONSTS, ZERO, LEVELS = _F.ident, _F.consts, _F.zero, _F.levels
 DATA_VERSION, SOURCE, BOUNDS, BOUNDS2 = 0xe0, 0x3b0, 0x184, 0x5d0
-LEVEL_OFF, BOX_OFF, SECT_OFF, SECT_SLOTS = 0x1ac, 0x2ac, 0x800, 300
-
-# section id -> its (level, type) rows, in the order every factory tile lists them
-LEVELS = {1: [(6, 0x80), (5, 0x90), (4, 0x91), (3, 0x91), (2, 0x91), (1, 0x92)],
-          2: [(5, 0x81), (4, 0x81), (2, 0x81), (1, 0x90)],
-          4: [(1, 0x93)]}
+LEVEL_OFF, BOX_OFF, SECT_OFF, SECT_SLOTS = 0x1ac, 0x2ac, 0x800, _F.sect_slots
+TABLES_END = 0x3ac
 
 
-def author(level_groups, box_rows, db_bounds, data_version, source=None):
+def author(level_groups, box_rows, db_bounds, data_version, source=None, fmt=None):
     """level_groups: [(section id, [(level, type, count), ...]), ...]
     box_rows:     [(section id, [(level, flag, (y1, y0, x0, x1) arc-minutes), ...]), ...]
     db_bounds:    (lat max, lat min, lon min, lon max) in arc-minutes
     data_version: 'yy/mm/dd/nn', checked by the firmware against the NAND
     source:       the release string at 0x3b0, or None to leave it out
-    The section table is left as 300 empty slots for write_tile to fill."""
+    fmt:          a clarion_format.Format; X08-03-00 when None
+    The section table is left as empty slots for write_tile to fill."""
+    fmt = fmt or clarion_format.DEFAULT
     h = bytearray(b'\xff' * 0x1000)
-    for a, b in ZERO:
+    for a, b in fmt.zero:
         h[a:b] = bytes(b - a)
-    for off, text in IDENT.items():
+    if fmt.table_fill != 0xff:
+        h[LEVEL_OFF:TABLES_END] = bytes([fmt.table_fill]) * (TABLES_END - LEVEL_OFF)
+    for off, text in fmt.ident.items():
         s = text.encode('utf-16-be')
         h[off:off + len(s)] = s
-    for off, hexs in CONSTS.items():
+    for off, hexs in fmt.consts.items():
         b = bytes.fromhex(hexs)
         h[off:off + len(b)] = b
     s = ('DATA VERSION ' + data_version).encode('utf-16-be')
@@ -69,21 +71,22 @@ def author(level_groups, box_rows, db_bounds, data_version, source=None):
         h[p], h[p + 1] = sid, len(rows); p += 2
         for lvl, flag, box in rows:
             struct.pack_into('>BB4h', h, p, lvl, flag, *box); p += 10
-    assert p <= 0x3ac, 'box table runs into the constant at 0x3ac'
+    assert p <= TABLES_END, 'box table runs into the constant at 0x3ac'
 
-    for i in range(SECT_SLOTS):
+    for i in range(fmt.sect_slots):
         struct.pack_into('>IH', h, SECT_OFF + 6 * i, 0xffffffff, 0)
     return h
 
 
-def level_groups(t):
+def level_groups(t, fmt=None):
     """The level table for a clarion_tile object: each section's rows with its directory
     counts. A section's rows are the format's full list for that id, so a level with no
     directories still appears with count 0, as in every factory tile."""
+    levels = (fmt or clarion_format.DEFAULT).levels
     out = []
     for sec in t['sections']:
         have = {L['level']: len(L['dirs']) for L in sec['levels']}
-        out.append((sec['id'], [(lvl, typ, have.get(lvl, 0)) for lvl, typ in LEVELS[sec['id']]]))
+        out.append((sec['id'], [(lvl, typ, have.get(lvl, 0)) for lvl, typ in levels[sec['id']]]))
     return out
 
 
@@ -113,9 +116,9 @@ def fields(h):
 
 
 def check(h):
-    """Rebuild a header from its fields; return the offsets that differ."""
+    """Rebuild a header from its fields, in the format it names; return the offsets that differ."""
     f, sect = fields(h)
-    b = author(**f)
+    b = author(**f, fmt=clarion_format.of_header(h))
     for i, (a, c) in enumerate(sect):
         struct.pack_into('>IH', b, SECT_OFF + 6 * i, a, c)
     return [i for i in range(0x1000) if b[i] != h[i]]

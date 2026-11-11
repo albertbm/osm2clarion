@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Walk a map tile without loading it. `clarion_tile.read_tile` builds the whole container as objects, costing roughly seven times the file size; on the factory tile B48R060R (477 MB) the obvious scan reached 45 GB and swapped the machine. This walks the same structure through mmap, one record at a time, for counting, tallying and searching; use `clarion_tile` to write."""
-import mmap, struct, zlib
+import mmap, os, struct, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_format
 
 SLOTS = 32
 LEVEL_OFF, BBOX_OFF, SECT_OFF, TABLE1_OFF = 0x1ac, 0x2ac, 0x800, 0x1000
@@ -23,14 +25,14 @@ class Rec:
 
     @property
     def is_zlib(self):
-        return self.tile.m[self.off:self.off + 2] == b'\x58\x85'
+        return self.tile.fmt.is_zlib(self.tile.m[self.off:self.off + 2])
 
     def raw(self):
         return bytes(self.tile.m[self.off:self.off + self.n])
 
     def plain(self):
         """Decompressed body, or the raw bytes if the record is not compressed."""
-        return zlib.decompress(self.raw()) if self.is_zlib else self.raw()
+        return self.tile.fmt.inflate(self.raw())
 
     def kind(self):
         """The u16 at +4 of the decompressed body: 0x00fa is a road-shape record."""
@@ -47,9 +49,10 @@ class TileScan:
         """path, or the tile's bytes when it was read off a card image."""
         if isinstance(path, (bytes, bytearray, memoryview)):
             self.f, self.m = None, path
-            return
-        self.f = open(path, 'rb')
-        self.m = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
+        else:
+            self.f = open(path, 'rb')
+            self.m = mmap.mmap(self.f.fileno(), 0, access=mmap.ACCESS_READ)
+        self.fmt = clarion_format.of_header(self.m[:TABLE1_OFF])
 
     def close(self):
         if self.f:
@@ -105,10 +108,11 @@ class TileScan:
 
     def records(self, section=None, level=None, even_only=False):
         """Yield Rec for every record, reading only directory bytes as it goes."""
+        types = {(sid, e[0]): e[1] for sid, lv in self._walk(LEVEL_OFF, 4) for e in lv}
         for sid, lev, doff, nslots in self._dirs(section):
             if level is not None and lev != level:
                 continue
-            body = 512 if sid == 1 else 256   # slot body size is per section, not per kind; 0x2146/0x2346 are section 1 too
+            body = clarion_format.slot_body(sid, types[(sid, lev)])   # not the kind word
             p = doff + 12
             for slot in range(nslots):
                 tag = struct.unpack_from('>I', self.m, p)[0]
@@ -118,7 +122,7 @@ class TileScan:
                         ln, X = struct.unpack_from('>II', self.m, p + 4 + 8 * k)
                         if ln in (0xffffffff, 0x7fffffff):
                             continue
-                        n = 2 * ln if self.m[q:q + 2] == b'\x58\x85' else 2 * (ln + X)
+                        n = 2 * ln if self.fmt.is_zlib(self.m[q:q + 2]) else 2 * (ln + X)
                         if not (even_only and k % 2):
                             yield Rec(self, sid, lev, doff, slot, k, q, n, X)
                         q += n

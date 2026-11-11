@@ -11,8 +11,14 @@ needs, the sea label and the road settings. See profiles/iceland.toml.
 
 Every tool takes --profile and falls back to its own defaults without one, so a single
 step can still be run by hand.
+
+`format = "x08-02"` at the top level builds for a QY7 unit; it defaults to "x08-03", the QY8
+format. clarion_format holds what differs.
 """
 import os, sys, tomllib
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_format
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -46,6 +52,9 @@ class Profile:
         self.description = data.get('description', '')
         # ISO 3166 numeric, written into every section-2 record; None makes rd_build refuse
         self.country = data.get('country')
+        # the map format the unit reads: "x08-03" (QY8, the default) or "x08-02" (QY7)
+        self.format = data.get('format', clarion_format.DEFAULT.name)
+        self.fmt = clarion_format.get(self.format)
 
         src = data.get('source', {})
         self.osm = self.resolve(src.get('osm'))
@@ -148,7 +157,7 @@ def take_arg(argv, flag='--profile'):
 if __name__ == '__main__':
     P = load(sys.argv[1] if len(sys.argv) > 1 else 'iceland')
     print(P)
-    for k in ('description', 'country', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
+    for k in ('description', 'country', 'format', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
               'west_meshes', 'sea', 'simplify_metres', 'l2_simplify_metres', 'skip', 'l2_classes', 'l2_graph',
               'coarse_classes', 'speed_unit', 'land', 'targets'):
         print('%-22s %s' % (k, getattr(P, k)))
