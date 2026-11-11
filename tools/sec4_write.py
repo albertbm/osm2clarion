@@ -12,6 +12,10 @@ a chain of sub-records, then a text block. A parcel without signposts gets the f
 
     sec4_write.py in.DAT out.DAT --country 352 [--meshes y,x,y,x ...] [--signposts side.json]
 
+The format comes from the tile's own header. A tile that already has a section 4, as
+road_strip.py leaves one, keeps its records: the parcels with roads that lack one get theirs
+and the directories they need are added.
+
 side.json is what `rd_build.py --signposts side.json` writes: per parcel the sub-records,
 whose node keys and link refs are word offsets into that parcel's 0x00fa record, and whose
 link-word indices the road record already carries as G words. The layout here must give
@@ -21,8 +25,9 @@ sides get it from.
 Only our own tiles. Do not point this at a factory tile: it calls clarion_tile.read_tile,
 which is banned there.
 """
-import json, os, struct, sys, zlib
+import json, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import clarion_format
 import clarion_tile
 
 TEMPLATE = bytes.fromhex(
@@ -173,14 +178,10 @@ def sign_text(dest, upper=False):
     return text.upper() if upper else text
 
 
-def record(row, col, country, subs=None):
+def record(row, col, country, subs=None, fmt=clarion_format.DEFAULT):
     """(plain, compressed) for one parcel; without subs the 56-byte country-only form."""
     p = encode(dict(code=parcel_code(row, col), country=country, subs=subs))
-    c = zlib.compressobj(6, zlib.DEFLATED, 13, 8)
-    comp = c.compress(p) + c.flush()
-    if len(comp) % 2:
-        comp += b'\0'
-    return p, comp
+    return p, fmt.deflate(p)
 
 
 def road_parcels(t):
@@ -197,20 +198,33 @@ def road_parcels(t):
     return {m: {s: sorted(set(c)) for s, c in rows.items() if c} for m, rows in out.items()}
 
 
-def make_dir(y, x, rows, country, signs=None):
-    """One level-1 section-4 directory for mesh (y, x); signs = {(row, col): subs}."""
+def make_dir(y, x, rows, country, signs=None, fmt=clarion_format.DEFAULT):
+    """One level-1 section-4 directory for mesh (y, x), x as a directory stores it;
+    signs = {(row, col): subs}."""
     D = dict(off=0, kind=DIR_KIND, ab=(SLOTS, PAIRS), y=y, x=x, typ=DIR_TYPE,
-             box=(y + 1, y, x, x + 1), body=256, slots={}, nslots=SLOTS,
+             box=(y + 1, y, x, (x + 1) & 0xffff), body=256, slots={}, nslots=SLOTS,
              empty_bodies={i: ABSENT * PAIRS for i in range(SLOTS)})
-    for slot in sorted(rows):
-        body = bytearray(ABSENT * PAIRS)
-        recs = []
-        for col in rows[slot]:
-            plain, comp = record(y * 32 + slot, x * 32 + col, country, (signs or {}).get((slot, col)))
-            struct.pack_into('>II', body, 8 * col, len(comp) // 2, len(plain) // 2)
-            recs.append(dict(k=col, raw=comp, words=len(plain) // 2))
-        D['slots'][slot] = dict(tag=0, body=bytes(body), recs=recs)
+    add_records(D, rows, country, signs, fmt)
     return D
+
+
+def add_records(D, rows, country, signs=None, fmt=clarion_format.DEFAULT):
+    """Give the parcels in rows = {slot: [column, ...]} a record, and return how many were
+    written. A parcel that has one keeps it unless signs names it."""
+    y, x, n = D['y'], (D['x'] + fmt.x_base) & 0xffff, 0
+    for slot in sorted(rows):
+        s = D['slots'].get(slot) or dict(tag=0, body=ABSENT * PAIRS, recs=[])
+        body, recs = bytearray(s['body']), {r['k']: r for r in s['recs']}
+        for col in rows[slot]:
+            subs = (signs or {}).get((slot, col))
+            if col in recs and subs is None:
+                continue
+            plain, comp = record(y * 32 + slot, x * 32 + col, country, subs, fmt)
+            struct.pack_into('>II', body, 8 * col, len(comp) // 2, len(plain) // 2)
+            recs[col] = dict(k=col, raw=comp, words=len(plain) // 2); n += 1
+        D['slots'][slot] = dict(tag=0, body=bytes(body), recs=[recs[k] for k in sorted(recs)])
+        D.get('empty_bodies', {}).pop(slot, None)
+    return n
 
 
 def bbox_minutes(parcels):
@@ -229,15 +243,16 @@ def bbox_minutes(parcels):
     return y1, y0, x0, x1
 
 
-def patch_header(hdr, ndirs, box):
+def patch_header(hdr, ndirs, box, fmt=clarion_format.DEFAULT):
     """Append a section-4 group to the level table at 0x1ac and the box table at 0x2ac."""
     hdr = bytearray(hdr)
+    fill = bytes([fmt.table_fill])
     n = struct.unpack_from('>H', hdr, 0x1ac)[0]
     p = 0x1ae
     for _ in range(n):
         p += 2 + 4 * hdr[p + 1]
     assert p + 6 <= 0x2ac, 'level table would run into the box table'
-    assert hdr[p:p + 6] == b'\xff' * 6, 'level table slack is not free: %s' % hdr[p:p + 6].hex()
+    assert hdr[p:p + 6] == fill * 6, 'level table slack is not free: %s' % hdr[p:p + 6].hex()
     hdr[p:p + 6] = struct.pack('>BBBBH', 4, 1, 1, DIR_TYPE, ndirs)
     struct.pack_into('>H', hdr, 0x1ac, n + 1)
 
@@ -245,7 +260,7 @@ def patch_header(hdr, ndirs, box):
     p = 0x2ae
     for _ in range(n):
         p += 2 + 10 * hdr[p + 1]
-    assert hdr[p:p + 12] == b'\xff' * 12, 'box table slack is not free: %s' % hdr[p:p + 12].hex()
+    assert hdr[p:p + 12] == fill * 12, 'box table slack is not free: %s' % hdr[p:p + 12].hex()
     hdr[p:p + 12] = struct.pack('>BBBB4h', 4, 1, 1, 0, *box)
     struct.pack_into('>H', hdr, 0x2ac, n + 1)
 
@@ -259,7 +274,26 @@ def patch_header(hdr, ndirs, box):
     return bytes(hdr)
 
 
-def load_signs(path):
+def update_header(hdr, ndirs, box):
+    """Set the directory count of an existing section-4 group and widen its box to take in box."""
+    hdr = bytearray(hdr)
+    p = 0x1ae
+    for _ in range(struct.unpack_from('>H', hdr, 0x1ac)[0]):
+        if hdr[p] == 4:
+            assert hdr[p + 1] == 1 and hdr[p + 2] == 1, 'section 4 has more than level 1'
+            struct.pack_into('>H', hdr, p + 4, ndirs)
+        p += 2 + 4 * hdr[p + 1]
+    p = 0x2ae
+    for _ in range(struct.unpack_from('>H', hdr, 0x2ac)[0]):
+        if hdr[p] == 4:
+            assert hdr[p + 1] == 1, 'section 4 has more than one box row'
+            y1, y0, x0, x1 = struct.unpack_from('>4h', hdr, p + 4)
+            struct.pack_into('>4h', hdr, p + 4, max(y1, box[0]), min(y0, box[1]), min(x0, box[2]), max(x1, box[3]))
+        p += 2 + 10 * hdr[p + 1]
+    return bytes(hdr)
+
+
+def load_signs(path, fmt=clarion_format.DEFAULT):
     """{(mesh y, mesh x): {(row, col): subs}} from rd_build's sidecar, entry texts as bytes."""
     side = json.load(open(path))
     out = {}
@@ -270,7 +304,7 @@ def load_signs(path):
                 g['entries'] = [e for e in g['entries'] if e['text'] is not None]   # a blank sign names nothing
                 for e in g['entries']:
                     e['pairs'] = [tuple(p) for p in e['pairs']]
-                    e['text'] = e['text'].encode('utf-8')
+                    e['text'] = fmt.text(e['text'])
         out.setdefault((P['y'], P['x']), {})[(P['row'], P['col'])] = subs
     return side, out
 
@@ -285,16 +319,19 @@ def main(argv):
         v = [int(x) for x in argv[i + 1].split(',')]
         only = {(v[j], v[j + 1]) for j in range(0, len(v), 2)}
         del argv[i:i + 2]
-    signs = {}; nsigns = 0
+    signs_path = None
     if '--signposts' in argv:
-        i = argv.index('--signposts'); side, signs = load_signs(argv[i + 1]); del argv[i:i + 2]
-        if side.get('country') not in (None, country):
-            raise SystemExit('sidecar country %s, tile country %d' % (side.get('country'), country))
-        nsigns = sum(len(s) for m in signs.values() for s in m.values())
+        i = argv.index('--signposts'); signs_path = argv[i + 1]; del argv[i:i + 2]
     src, dest = argv[0], argv[1]
 
     t = clarion_tile.read_tile(open(src, 'rb').read())
-    assert not any(s['id'] == 4 for s in t['sections']), 'tile already has a section 4'
+    fmt = clarion_format.of_header(t['header'])
+    signs = {}; nsigns = 0
+    if signs_path:
+        side, signs = load_signs(signs_path, fmt)
+        if side.get('country') not in (None, country):
+            raise SystemExit('sidecar country %s, tile country %d' % (side.get('country'), country))
+        nsigns = sum(len(s) for m in signs.values() for s in m.values())
     rows = road_parcels(t)
     if only is not None:
         rows = {m: v for m, v in rows.items() if m in only}
@@ -302,18 +339,31 @@ def main(argv):
     for m, per in signs.items():
         for (slot, col) in per:
             assert m in rows and col in rows[m].get(slot, ()), 'signposts for a parcel without roads: %s %s' % (m, (slot, col))
-    dirs = [make_dir(y, x, rows[(y, x)], country, signs.get((y, x))) for y, x in sorted(rows)]
-    nrec = sum(len(s['recs']) for D in dirs for s in D['slots'].values())
-    covered = {(y * 32 + slot, x * 32 + col)
+    covered = {(y * 32 + slot, ((x + fmt.x_base) & 0xffff) * 32 + col)
                for (y, x), r in rows.items() for slot, cols in r.items() for col in cols}
     box = bbox_minutes(covered)
-
-    sec = dict(id=4, count=0, taddr=0,
-               levels=[dict(level=1, typ=DIR_TYPE, dirs=dirs)], table_words=0)
+    have = [s for s in t['sections'] if s['id'] == 4]
+    if have:
+        sec = have[0]
+        dirs = sec['levels'][0]['dirs']
+        old = {(D['y'], D['x']): D for D in dirs}
+        nrec = 0
+        for y, x in sorted(rows):
+            if (y, x) in old:
+                nrec += add_records(old[(y, x)], rows[(y, x)], country, signs.get((y, x)), fmt)
+            else:
+                dirs.append(make_dir(y, x, rows[(y, x)], country, signs.get((y, x)), fmt))
+                nrec += sum(len(s['recs']) for s in dirs[-1]['slots'].values())
+        t['header'] = update_header(t['header'], len(dirs), box)
+    else:
+        dirs = [make_dir(y, x, rows[(y, x)], country, signs.get((y, x)), fmt) for y, x in sorted(rows)]
+        nrec = sum(len(s['recs']) for D in dirs for s in D['slots'].values())
+        sec = dict(id=4, count=0, taddr=0,
+                   levels=[dict(level=1, typ=DIR_TYPE, dirs=dirs)], table_words=0)
+        t['sections'].append(sec)
+        t['header'] = patch_header(t['header'], len(dirs), box, fmt)
     nw, _, _ = clarion_tile.table_words(sec)
     sec['count'] = -(-2 * nw // 256)
-    t['sections'].append(sec)
-    t['header'] = patch_header(t['header'], len(dirs), box)
     out = clarion_tile.write_tile(t, clarion_tile.default_order(t))
     open(dest, 'wb').write(out)
     print('%s -> %s  %d dirs, %d records, %d signpost sub-records, country %d, box %s, %d -> %d bytes'

@@ -23,6 +23,7 @@ import clarion_tile
 import rd_build
 import rd_encode
 import road_strip
+import sec4_write
 import tile_header
 import tile_recode
 import tile_scan
@@ -175,6 +176,34 @@ class TestRoadStrip(unittest.TestCase):
                 self.assertEqual(len(list(t._dirs(2))), 2)
             with self.assertRaises(SystemExit):
                 road_strip.strip(src, out, QY8)
+
+    def test_section4_records_follow_the_format(self):
+        plain, comp = sec4_write.record(3, 4, 246, fmt=QY7)
+        self.assertEqual(comp[:2], b'\x78\x9c')
+        self.assertEqual(len(comp) % 4, 0)
+        self.assertEqual(zlib.decompress(comp), plain)
+        self.assertEqual(sec4_write.record(3, 4, 246)[1][:2], b'\x58\x85')
+        # a QY7 directory stores x less 1024; the parcel code takes the mesh's own x
+        D = sec4_write.make_dir(0x68, 0xffb8, {2: [1]}, 246, fmt=QY7)
+        got = struct.unpack_from('>2H', QY7.inflate(D['slots'][2]['recs'][0]['raw']))
+        self.assertEqual(got, sec4_write.parcel_code(0x68 * 32 + 2, 952 * 32 + 1))
+
+    def test_section4_merge_keeps_what_is_there(self):
+        D = sec4_write.make_dir(0x68, 952, {2: [1]}, 578)
+        first = D['slots'][2]['recs'][0]['raw']
+        self.assertEqual(sec4_write.add_records(D, {2: [1, 6], 4: [0]}, 352), 2)
+        self.assertEqual([r['k'] for r in D['slots'][2]['recs']], [1, 6])
+        self.assertEqual(D['slots'][2]['recs'][0]['raw'], first)
+        self.assertEqual(struct.unpack_from('>H', zlib.decompress(D['slots'][4]['recs'][0]['raw']), 16)[0], 352)
+        self.assertNotIn(4, D['empty_bodies'])
+
+    def test_section4_header_update(self):
+        h = tile_header.author([(1, [(1, 0x92, 3)]), (2, [(1, 0x90, 1)]), (4, [(1, 0x93, 2)])],
+                               [(1, []), (2, []), (4, [(1, 0, (10, 5, 20, 30))])],
+                               clarion_profile.EUROPE_BOUNDS, '14/04/12/01', fmt=QY7)
+        f, _ = tile_header.fields(sec4_write.update_header(bytes(h), 5, (12, 6, 15, 25)))
+        self.assertEqual(f['level_groups'][2], (4, [(1, 0x93, 5)]))
+        self.assertEqual(f['box_rows'][2], (4, [(1, 0, (12, 5, 15, 30))]))
 
 
 class TestQY7Roads(unittest.TestCase):
