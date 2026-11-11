@@ -13,6 +13,10 @@ slot stays extended.
 A QY7 unit drew our road records inside a factory tile written this way, and drew nothing at
 close zoom from a tile road_strip.py rebuilt from scratch.
 
+LEV3456R.DAT gets the same treatment with an empty road set: in section 1 the road pair of
+levels 4 and 3 is emptied and a level-5 record loses its road block (road_strip.cut_road_block),
+section 2's coarse graph rows are emptied, and every block is rewritten where it was.
+
     road_swap.py --profile NAME SRC OUT [ROADS]
 """
 import collections
@@ -22,7 +26,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_profile
-from clarion_tile import enc_addr, pad256
+import lev_file
+import road_strip
+import tile_header
+from clarion_tile import enc_addr, pad256, walk
 from tile_scan import TileScan, addr_of
 
 ROAD_ABSENT = {1: (0x7fffffff, 0x7fffffff), 2: (0xffffffff, 0xffffffff)}
@@ -126,12 +133,81 @@ def swap(src, out, fmt, roads=None):
     return stats, len(d)
 
 
+def swap_lev(src, out, fmt):
+    """The coarse file with its roads removed in place; no road set goes in."""
+    d = bytearray(open(src, 'rb').read())
+    if clarion_format_of(d) is not fmt:
+        raise SystemExit('%s is not %s' % (src, fmt.name))
+    stats = collections.Counter()
+    levels, _ = walk(d, tile_header.LEVEL_OFF, 4)
+    _, sect = tile_header.fields(bytes(d[:0x1000]))
+    for (sid, lv), (ta, _) in zip(levels, sect):
+        ta = addr_of(ta)
+        w = struct.unpack_from('>%dH' % struct.unpack_from('>H', d, ta)[0], d, ta)
+        for li, e in enumerate(lv):
+            o = w[1 + li]
+            if o == 0xffff:
+                continue
+            for g in range(w[o + 1]):
+                hi, lo = w[o + 6 + 6 * g], w[o + 7 + 6 * g]
+                lev_dir(d, addr_of(hi << 16 | lo), sid, e[0], fmt, stats)
+    with open(out, 'wb') as f:
+        f.write(d)
+    return stats, len(d)
+
+
+def clarion_format_of(d):
+    import clarion_format
+    return clarion_format.of_header(d[:0x1000])
+
+
+def lev_dir(d, da, sid, level, fmt, stats):
+    size, nrows, cols, y, x, typ = struct.unpack_from('>6H', d, da)
+    pairs = 1 if nrows == cols == 1 else ((2 * size - 12) // nrows - 4) // 8
+    assert lev_file.head_size(nrows, cols, pairs) == size
+    q = da + 12
+    for _ in range(nrows):
+        tag = struct.unpack_from('>I', d, q)[0]
+        if tag != 0xffffffff:
+            pr = [struct.unpack_from('>II', d, q + 4 + 8 * k) for k in range(pairs)]
+            at = b = addr_of(tag)
+            old, new, newpr = 0, [], []
+            for k, (ln, X) in enumerate(pr):
+                if ln == 0xffffffff:
+                    newpr.append((ln, X)); continue
+                z = fmt.is_zlib(d[b:b + 2])
+                n = 2 * ln if z else 2 * (ln + X)
+                raw = bytes(d[b:b + n]); b += n; old += n
+                road = sid == 2 or (pairs == 2 * cols and k % 2 == 0)
+                if road:
+                    newpr.append((0xffffffff, 0xffffffff)); stats['records dropped'] += 1; continue
+                if level == 5 and z:
+                    plain = road_strip.cut_road_block(fmt.inflate(raw))
+                    if len(plain) != 2 * X:
+                        raw = fmt.deflate(plain); ln, X = len(raw) // 2, len(plain) // 2
+                        stats['level-5 road blocks cut'] += 1
+                new.append(raw); newpr.append((ln, X)); stats['records kept'] += 1
+            data = b''.join(new)
+            assert len(data) <= old
+            d[at:at + old] = data + bytes(old - len(data))
+            if not data:
+                struct.pack_into('>I', d, q, 0xffffffff)
+                newpr = [(0xffffffff, 0xffffffff)] * pairs
+            for k, pr_ in enumerate(newpr):
+                struct.pack_into('>II', d, q + 4 + 8 * k, *pr_)
+        q += 4 + 8 * pairs
+
+
 if __name__ == '__main__':
     argv = sys.argv[1:]
     P = clarion_profile.take_arg(argv)
     if len(argv) not in (2, 3):
         sys.exit(__doc__)
-    stats, size = swap(argv[0], argv[1], P.fmt, argv[2] if len(argv) > 2 else None)
+    if os.path.basename(argv[0]).upper().endswith('LEV3456R.DAT'):
+        assert len(argv) == 2, 'the coarse file takes no road set yet'
+        stats, size = swap_lev(argv[0], argv[1], P.fmt)
+    else:
+        stats, size = swap(argv[0], argv[1], P.fmt, argv[2] if len(argv) > 2 else None)
     print('%s -> %s, %d bytes' % (argv[0], argv[1], size))
     for k, v in sorted(stats.items()):
         print('  %-48s %d' % (k, v))
