@@ -8,10 +8,24 @@ description = "Finland on the 2014 QY7 European database"
 country = 246            # ISO 3166 numeric; every road record carries it
 format = "x08-02"        # QY7 units
 
+[build]
+# Keep the card's own background, strip the roads from every tile on the card, then rebuild
+# the roads of one area from OSM. Unlike Iceland, no tile is generated from scratch.
+mode = "area"
+keep_names = true          # rd_build keeps the OSM name spelling
+upper_names = true         # and writes it in capitals, as the factory tiles do
+turn_restrictions = true
+coarse_graph = true        # level-2 graph in the coarse file, so long routes can be planned
+sec4 = true                # section-4 country records on the rebuilt tile
+
 [source]
 osm = "build/finland-latest.osm.pbf"
-roads = "build/roads_finland.json"
-coastline = "build/coast_finland.json"
+
+[areas.jyvaskyla]
+# Roads of the admin_level 8 relation, one tile. A build area is one relation and one cell.
+relations = [569407]
+cells = ["B58R050R"]
+bbox = { lon_min = 25.26, lon_max = 26.06, lat_min = 61.84, lat_max = 62.43 }
 
 [grid]
 # The cells holding Finland, as the card names them.
@@ -24,7 +38,7 @@ simplify_metres = 2
 skip = []
 l2_classes = "wide"
 l2_simplify_metres = 5
-l2_graph = false
+l2_graph = true
 speed_unit = "km/h"
 
 [targets]

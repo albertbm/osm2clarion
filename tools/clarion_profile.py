@@ -94,6 +94,8 @@ class Profile:
         self.coarse_labels = lab.get('coarse', '')
 
         self.targets = data.get('targets', {})
+        self.build = data.get('build', {})
+        self.areas = data.get('areas', {})
 
     @property
     def mesh_origin(self):
@@ -159,5 +161,5 @@ if __name__ == '__main__':
     print(P)
     for k in ('description', 'country', 'format', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',
               'west_meshes', 'sea', 'simplify_metres', 'l2_simplify_metres', 'skip', 'l2_classes', 'l2_graph',
-              'coarse_classes', 'speed_unit', 'land', 'targets'):
+              'coarse_classes', 'speed_unit', 'land', 'targets', 'build', 'areas'):
         print('%-22s %s' % (k, getattr(P, k)))
