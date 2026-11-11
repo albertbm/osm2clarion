@@ -41,3 +41,6 @@ dist/
 *.tar.gz
 *.zip
 specimens/
+
+# Per-machine settings for build.py (see profiles/*.toml, [build] local).
+local/

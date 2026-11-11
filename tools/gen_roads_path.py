@@ -5,8 +5,7 @@
                       [--also NAME,NAME] [--to NAME,NAME [--by distance|time]]
 
 Start and goal street names, and the search box, come from the build config's
-`roads_poc` (start, goal, box) - see examples/config.json for the Alþingishúsið/
-Kirkjustræti stand-in. Needs $O2C_CONFIG or $ICELAND_CONFIG set.
+`roads_poc` (start, goal, box), the [roads_poc] table of the profile. Needs $O2C_CONFIG or $ICELAND_CONFIG set.
 
 Shortest drivable route (oneway respected) from any node of the start street to any
 node of the goal street, over the highway ways in the config's box. Output: every way

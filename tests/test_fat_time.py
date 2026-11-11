@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """fat_time() stamps every FAT write with the wall clock unless $SOURCE_DATE_EPOCH
-pins it, which is how build_card.sh makes two runs of the same recipe byte-identical."""
+pins it, which is how build.py makes two runs of the same recipe byte-identical."""
 import os, sys, time, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 import fatwrite

@@ -22,7 +22,7 @@ Each is one of:
                       [--house]]
 
 --config names the build's config file (unit table, areas, cells, data paths, card naming -
-see examples/config.json). Every build starts from a fresh cp -c of --base, which defaults to
+build.py writes it from the profile). Every build starts from a fresh cp -c of --base, which defaults to
 the unit's base card (config's card_naming.base_pattern). --unit picks the DATA VERSION every
 generated file carries (config units.*.version; the firmware checks it against the NAND) and
 the card build_icode_clean.py reads its two ICODE001.DAT files from (config units.*.icode). The

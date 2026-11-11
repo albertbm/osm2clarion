@@ -70,3 +70,176 @@ coarse = ""
 default = "v2017"
 v2017 = { label = "2017 European database", volume = "GEURX-30-105-100" }
 v2014 = { label = "2014 European database", volume = "GEURX-30-100-100", retarget = "2014" }
+
+# ---- Card build settings -------------------------------------------------------------
+# Read by build.py and written out as the JSON config build_gen_lev.py, poi_apply.py and
+# build_poicap.py take. Paths and values that name one person's machine go in the local file
+# `local` points at (or --local FILE), which is merged over this one table by table.
+
+[build]
+mode = "generate"          # a card from scratch on the unit base card
+local = "local/iceland.toml"   # read if present; --local FILE overrides
+landuse = "area"           # forest, parks and water from OSM, drawn under the roads
+house = true               # building-scale map (HOUSE001)
+write = "lev,tiles,addr"   # what is written onto the card; the rest is only checked
+coarse_graph = true
+# every drivable public road of each area's relations is built; the areas are the [areas] tables
+cards_log = "CARDS.md"
+sec4_cells = ["B60R080R"]
+road_tiles = ["B58R078R", "B58R080R", "B60R080R"]
+poi_python = "python3"   # the interpreter for the POI and address steps; needs shapely and osmium
+
+[card_naming]
+prefix = "IS"
+units = ["ZE0", "ZE1", "ME0"]
+base_pattern = "{prefix}-000-{unit}-base.img"
+build_pattern = "{prefix}-{number:03d}-{unit}-{slug}.img"
+
+# DATA VERSION each unit checks against its NAND. The local file adds each unit base card
+# and the card its ICODE files are read from (icode; the base card when left out).
+[units.ZE0]
+version = "14/11/17/01"
+
+
+[units.ZE1]
+version = "17/09/01/01"
+
+
+[units.ME0]
+version = "17/09/01/01"
+
+
+[areas.capital]
+# Reykjavikurborg, Seltjarnarnesbaer, Kopavogsbaer, Gardabaer, Hafnarfjardarkaupstadur, Mosfellsbaer
+relations = [2580605, 2580606, 2580603, 2556726, 2582273, 2580604]
+cells = ["B58R080R", "B60R080R"]
+bbox = [-22.1309, 63.8294, -21.3719, 64.3154]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.kjos]
+# Kjosarhreppur: Route 1 and the Hvalfjordur tunnel, without it Akranes has no road link
+relations = [8485922]
+cells = ["B60R080R"]
+bbox = [-21.9, 64.15, -21.0, 64.45]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.akranes]
+# Akraneskaupstadur, Hvalfjardarsveit
+relations = [8810762, 8823263]
+cells = ["B60R080R"]
+bbox = [-22.1098132, 64.2980605, -21.0629423, 64.5195688]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.sudurnes]
+# Reykjanesbaer, Sudurnesjabaer, Grindavikurbaer, Sveitarfelagid Vogar
+relations = [8467955, 8467956, 8485628, 8485229]
+cells = ["B58R080R", "B60R080R"]
+bbox = [-22.7537756, 63.7998947, -21.7136476, 64.0830828]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.arborg]
+# Sveitarfelagid Olfus (Route 1 over Hellisheidi and Thorlakshofn, without it Hveragerdi has no road link), Hveragerdisbaer, Sveitarfelagid Arborg (Selfoss, Eyrarbakki, Stokkseyri); same two tiles as capital
+relations = [3822960, 8485632, 8811609]
+cells = ["B58R080R", "B60R080R"]
+bbox = [-21.913085, 63.8197256, -20.9192135, 64.1450656]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.sudurland]
+# Floahreppur, Asahreppur, Rangarthing ytra (Hella), Rangarthing eystra (Hvolsvollur, Skogar, Landeyjahofn), Myrdalshreppur (Vik), Vestmannaeyjabaer (Heimaey, reached by the Herjolfur car ferry from Landeyjahofn/Thorlakshofn, card 083 on); first area east of lon -20, needs the R078 column cell alongside R080
+relations = [8810681, 8809518, 8808785, 8803280, 56206, 14433161]
+cells = ["B58R078R", "B58R080R"]
+bbox = [-20.9854781, 63.2960926, -18.654022, 64.0]   # lon_min, lat_min, lon_max, lat_max
+
+[data]
+# Relative paths are read from the repository root.
+pbf = "build/iceland-latest.osm.pbf"
+turns = "build/turns_iceland.json"     # made from the pbf when missing
+addresses = "build/address/addresses.csv"
+postcodes = "build/address/postcodes.csv"
+coast = "build/coast_iceland.json"     # made from the pbf when missing
+cameras = "build/cameras.json"
+
+[dealer]
+# A public landmark stands in for the dealer address every POI build anchors on.
+# Put the real one in the local file.
+lon = -21.9312
+lat = 64.1457
+house_cell = "B60107A1"
+road_tile = "B60R080R"
+category = 43
+name = "ALTHINGISHUSID"
+street = "KIRKJUSTRAETI"
+town = "REYKJAVIK"
+house = "1"
+icon = "0x806c"
+tile_l1 = [1, 96, 902, 6, 5, 348, 32]
+tile_l2 = [2, 96, 900, 1, 17, 599, 1032]
+
+[roads_poc]
+# The test route the road-path steps use; a street pair in the box.
+start = "KIRKJUSTRAETI"
+goal = "AUSTURSTRAETI"
+box = [-21.95, 64.13, -21.9, 64.15]
+
+[poicap]
+poi_tile = "B60R080R"
+fold = "Þ=TH,þ=th,Ð=D,ð=d"
+
+[poicap.municipalities]
+capital = ["Reykjavíkurborg", "Kópavogsbær", "Hafnarfjarðarkaupstaður", "Garðabær", "Mosfellsbær", "Seltjarnarnesbær", "Kjósarhreppur"]
+akranes = ["Akraneskaupstaður", "Hvalfjarðarsveit"]
+kjos = []
+sudurnes = ["Reykjanesbær", "Suðurnesjabær", "Grindavíkurbær", "Sveitarfélagið Vogar"]
+arborg = ["Sveitarfélagið Ölfus", "Hveragerðisbær", "Sveitarfélagið Árborg"]
+sudurland = []
+
+[poicap.settlements]
+"REYKJAVÍK" = { la = "0xb01e", lo = "0xc31c", x = 1511, y = 829 }
+"GARÐABÆR" = { la = "0xb01c", lo = "0xc30e", x = 1442, y = 418 }
+"GARÐABÆR (ÁLFTANES)" = { la = "0xb01d", lo = "0xc2ff", x = 791, y = 64 }
+"GRINDAVÍK" = { la = "0xafec", lo = "0xc2ce", x = 376, y = 1072 }
+"HAFNARFJÖRÐUR" = { la = "0xb00e", lo = "0xc30d", x = 454, y = 1488 }
+"KÓPAVOGUR" = { la = "0xb01c", lo = "0xc31c", x = 409, y = 1844 }
+"MOSFELLSBÆR" = { la = "0xb01f", lo = "0xc32e", x = 803, y = 1790 }
+SELTJARNARNES = { la = "0xb01f", lo = "0xc30c", x = 385, y = 742 }
+
+[addr]
+# The local file supplies poc_streets (street: postcode), poc_anchor (street: house number, 0 for
+# none) and, in [poicap], addr_only_default; they name the streets the address build pins first.
+format = "stadfangaskra"
+box = [63.8, 64.4, -22.8, -20.85]
+alphabet = "AÁBDÐEÉFGHIÍJKLMNOÓPRSTUÚVXYÝÞÆÖ"
+towns_expected = ["Akranes", "Eyrarbakki", "Garðabær", "Garðabær (Álftanes)", "Garður", "Grindavík", "Hafnarfjörður", "Hveragerði", "Keflavíkurflugvöllur", "Kjós", "Kópavogur", "Mosfellsbær", "Reykjanesbær", "Reykjavík", "Sandgerði", "Selfoss", "Seltjarnarnes", "Stokkseyri", "Vogar", "Þorlákshöfn", "Ölfus"]
+poc_town = "REYKJAVÍK"
+poc_box = [63.4, -24.53, 66.65, -13.41]
+
+
+
+[addr.area_municipalities.capital]
+0000 = "Reykjavík"
+1000 = "Kópavogur"
+1100 = "Seltjarnarnes"
+1300 = "Garðabær"
+1400 = "Hafnarfjörður"
+1604 = "Mosfellsbær"
+
+[addr.area_municipalities.akranes]
+3000 = "Akraneskaupstaður"
+3511 = "Hvalfjarðarsveit"
+
+[addr.area_municipalities.kjos]
+1606 = "Kjósarhreppur"
+
+[addr.area_municipalities.sudurnes]
+2000 = "Reykjanesbær"
+2510 = "Suðurnesjabær"
+2300 = "Grindavíkurbær"
+2506 = "Sveitarfélagið Vogar"
+
+[addr.area_municipalities.arborg]
+8717 = "Sveitarfélagið Ölfus"
+8716 = "Hveragerðisbær"
+8200 = "Sveitarfélagið Árborg"
+
+[addr.area_municipalities.sudurland]
+8722 = "Flóahreppur"
+8610 = "Ásahreppur"
+8614 = "Rangárþing ytra"
+8613 = "Rangárþing eystra"
+8508 = "Mýrdalshreppur"
+8000 = "Vestmannaeyjabær"

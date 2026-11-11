@@ -26,60 +26,77 @@ the Nissan e-NV200 (QY8202PB), European and US market. The format is undocumente
 Addresses come from a CSV import (Iceland's own national registry, or any source in the
 same shape) or from OSM; see [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
 
-Only Iceland has been built: a country added to a card that lacked it. Updating a country
-the card already has is untested.
+Iceland is a country added to a card that lacked it. Finland replaces the roads of one town on
+a card that already has the country. Updating a whole country is untested.
 
-## Needs
+## Build a card
 
-- Python 3 with `shapely`, and `osmium` for reading `.pbf`.
-- An OSM extract (`.osm.pbf`), e.g. from Geofabrik.
-- A base card or a copy of one. Read only: `MAPAL001/LEV3456R.DAT`, any one
-  `MAPAL001/*.DAT` as a header template, `MMAIN001.DAT`, and `DRSTR001.DAT`.
-
-## Run
+One command builds every card. The profile in `profiles/NAME.toml` holds everything that
+differs between regions: the areas, the cells, the units and their DATA VERSION, what gets
+written, and where the data files are.
 
 ```
-python3 build.py --profile iceland --base CARD --out DIR
-python3 build.py --list            # steps: extract coarse background roads master index
-python3 build.py ... --only STEP   # one step
-python3 build.py ... --from STEP   # resume
-python3 build.py ... --target v2014
+uv run --with osmium --with shapely python build.py --profile NAME \
+    --base BASE-CARD.img --out OUT.img
 ```
 
-Each step prints the command it runs. Copy the files in `DIR` onto the card. Rebuild
-`DRSTR001.DAT` whenever a file changes size; it stores sizes.
+`--base` is read, never written. `--work DIR` holds what is generated (default `build/` followed by
+the name of `--out`). `--list` names the steps, `--only STEP` runs one and `--from STEP`
+resumes at one. Each step prints the command it runs. Both builds need `shapely` and `osmium`
+for Python; the `uv run` above fetches them.
 
-## Profiles
+Paths and values that belong to one machine go in a local file, merged over the profile table
+by table. The profile's `[build] local` names it (`local/NAME.toml`, ignored by git), and
+`--local FILE` overrides that. Relative data paths in the profile are read from the repository
+root.
 
-One TOML per region in `profiles/`. Iceland builds a card from scratch; Finland rebuilds one area on a stock card (below).
-`python3 tools/clarion_profile.py iceland` prints what the tools will read.
+### Iceland, QY8
 
-## Finland on a QY7 card
+`[build] mode = "generate"`. The card is built from scratch on the unit's base card:
+background, land use, roads with turn restrictions, the coarse file with its graph, the
+building-scale map, addresses and POI icons, for every `[areas.NAME]` table (`--area a,b`
+picks some). `--out` is `CARDS/builds/IS-NNN-UNIT-SLUG.img`: the unit and the slug come from
+that name, `CARDS` is two directories up, and the card list there (`cards_log`) gets a row.
+`--what TEXT` is that row's description, `--prev IMG` a card to compare against at the end.
 
-For a stock European Clarion QY7221NL card (2014 database) and a Geofabrik
-`finland-latest.osm.pbf`. The card keeps its own map. The roads are stripped from every
-tile, and the roads of one town are rebuilt from OSM. `profiles/finland.toml` names the
-town (`jyvaskyla`) and everything else the build needs.
+The profile needs, per unit, a `[units.UNIT]` table with the `version` the unit checks. The
+local file adds `icode` (the card the ICODE files are read from; the base card when left out),
+an optional `consent_cmd` run on the finished image (`{img}` stands for it), the `[data]`
+paths, a `[dealer]` address and `poi_python`, the interpreter for the POI steps.
+
+`[data]` holds `pbf`, `turns`, `coast`, `addresses`, `postcodes` and `cameras`. The turn
+restriction and coastline files are made from the extract when they are missing. The address
+and postcode files are Iceland's national registry in CSV; see [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
+
+### Finland, QY7
+
+`[build] mode = "area"`. For a stock European Clarion QY7221NL card (2014 database) and a
+Geofabrik `finland-latest.osm.pbf`. The card keeps its own map. The roads are stripped from
+every tile, and the roads of one town are rebuilt from OSM and written into a copy of the
+image. `profiles/finland.toml` names the town (`jyvaskyla`).
 
 ```
 uv run --with osmium --with shapely python build.py --profile finland \
-    --base STOCK-CARD.img --osm finland-latest.osm.pbf --out WORKDIR --card NEW-CARD.img
+    --base STOCK-CARD.img --osm finland-latest.osm.pbf --out NEW-CARD.img
 ```
 
-`--base` is the card image, only read. `--card` is a copy of it with the new files written
-in and `DRSTR001.DAT` refreshed; leave it out to get just the files in `WORKDIR`
-(`MAPAL001/*.DAT`, `MMAIN001.DAT`). `--area NAME` picks the town if the profile lists more
-than one. Steps: `--list`, `--only STEP`, `--from STEP`. `WORKDIR` takes about 4.6 GiB and
-the card image is 7.4 GiB. A second area is one more `[areas.NAME]` table: an OSM relation and
-the one tile cell it sits in.
+`--area NAME` picks the town if the profile lists more than one. `--work` takes about 4.6 GiB
+and the card image is 7.4 GiB. A second area is one more `[areas.NAME]` table: an OSM
+relation, the one tile cell it sits in, and a bbox. The `[grid]` cells are left out of the
+profile: build.py takes every tile on the base card that the `[grid]` boxes touch.
 
-Limits:
+Limits of the Finland card:
 
 - Roads exist only inside the built area. Elsewhere in Europe the card draws the map but no
   roads, and cannot route.
 - Address search still reads the factory data, which points at roads that are now gone. It is
   likely to crash.
 - Guidance has not been tried on a unit.
+
+## Profiles
+
+One TOML per region in `profiles/`. `python3 tools/clarion_profile.py iceland` prints what
+the tools will read.
 
 ## Limits
 
