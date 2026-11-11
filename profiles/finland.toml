@@ -19,7 +19,12 @@ cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R",
 bbox = { lon_min = 19.0, lon_max = 31.6, lat_min = 59.7, lat_max = 70.1 }
 
 [roads]
+# as the Iceland profile
 simplify_metres = 2
+skip = []
+l2_classes = "wide"
+l2_simplify_metres = 5
+l2_graph = false
 speed_unit = "km/h"
 
 [targets]

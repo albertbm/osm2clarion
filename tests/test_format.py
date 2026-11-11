@@ -20,6 +20,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 import clarion_format
 import clarion_profile
 import clarion_tile
+import rd_build
 import rd_encode
 import road_strip
 import tile_header
@@ -174,6 +175,43 @@ class TestRoadStrip(unittest.TestCase):
                 self.assertEqual(len(list(t._dirs(2))), 2)
             with self.assertRaises(SystemExit):
                 road_strip.strip(src, out, QY8)
+
+
+class TestQY7Roads(unittest.TestCase):
+
+    def test_latin1_labels(self):
+        self.assertEqual(QY7.text('JYVÄSKYLÄ'), b'JYV\xc4SKYL\xc4')
+        self.assertEqual(QY7.text('ČEŠ'), b'CES')
+        self.assertEqual(QY8.text('Ä'), 'Ä'.encode('utf-8'))
+
+    def test_link_end_classes(self):
+        # one node of class 8 with ends on a class-8 and a class-9 link
+        q8 = rd_encode.unit_head([8], [2])
+        q7 = rd_encode.unit_head([8], [2], [[8, 9]])
+        s8, s9 = rd_encode.pair_slot(8), rd_encode.pair_slot(9)
+        self.assertEqual(q8[4 + 2 * s8:6 + 2 * s8], [1, 2])
+        self.assertEqual(q7[4 + 2 * s8:6 + 2 * s8], [1, 1])
+        self.assertEqual(q7[5 + 2 * s9], 1)
+
+    def test_level2_parts_are_separate_records(self):
+        a, b = b'A' * 60, b'B' * 30
+        d = rd_encode.make_dir(2, 0x68, 952, {3: {5: (a, b)}}, QY7)
+        s = d['slots'][3]
+        self.assertEqual([r['k'] for r in s['recs']], [10, 11])
+        self.assertEqual([QY7.inflate(r['raw']) for r in s['recs']], [a, b])
+        self.assertEqual(struct.unpack_from('>II', s['body'], 8 * 11)[1], len(b) // 2)
+
+    def test_replace_names_keeps_other_sections(self):
+        w = [1, 2, 0xfa, 0x347a, 0x2aef, 0, 0] + [0xffff, 0] * 6 + [0, 0, 0]
+        w[9], w[10] = 11, 2
+        w[11], w[12] = 13, 1
+        w[15], w[16] = 14, 1
+        w[19], w[20], w[21] = 0, 0xf6, 0
+        rec = struct.pack('>22H', *w) + b'G' * 8 + b'N' * 4 + b'P' * 4
+        out = rd_build.replace_names(rec, b'M' * 8)
+        v = struct.unpack_from('>22H', out)
+        self.assertEqual((v[9], v[10], v[11], v[12], v[15], v[16]), (11, 2, 13, 2, 15, 1))
+        self.assertEqual(out[44:], b'G' * 8 + b'M' * 8 + b'P' * 4)
 
 
 @unittest.skipUnless(os.environ.get('OSM2CLARION_QY7_TILE'), 'set OSM2CLARION_QY7_TILE to a factory QY7 tile')

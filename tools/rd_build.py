@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Section-2 level-1 records for every parcel of a tile cell, from OSM ways. Ways are cut at parcel edges into edge nodes linked through a pseudo-entry across parcels."""
-import collections, json, math, os, struct, sys, zlib
+import collections, json, math, os, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_tile, clarion_bg, clarion_profile, rd_encode, fa_encode, shape_index, osm_roads, sec4_write
+import clarion_tile, clarion_bg, clarion_format, clarion_profile, rd_encode, fa_encode, shape_index, osm_roads, sec4_write
 from clarion_bg import tile_cell, mesh_to_lon, mesh_to_lat, parcel_geo
 
 PSIZE = {1: (1.875 / 60, 1.25 / 60), 2: (7.5 / 60, 5 / 60)}   # degrees per parcel
@@ -14,13 +14,17 @@ SIDES = {'top': 0x8000, 'right': 0xa000, 'bottom': 0xc000, 'left': 0xe000}
 ORIGIN = (32, 904)
 COUNTRY = None     # ISO 3166 numeric code for every section-2 record, from the profile
 SPEED_UNIT = 'km/h'   # the unit the country's signs are posted in, from the profile
+FMT = clarion_format.DEFAULT
+# --keep-names: (level, y, x, row, col) -> (label bytes, count) already in that parcel's background record
+KEEP_BASE = None
 
 
 def use_profile(P):
-    global ORIGIN, COUNTRY, SPEED_UNIT
+    global ORIGIN, COUNTRY, SPEED_UNIT, FMT
     ORIGIN = P.mesh_origin
     COUNTRY = P.country
     SPEED_UNIT = P.speed_unit
+    FMT = rd_encode.FMT = fa_encode.FMT = P.fmt
 
 
 def parcel_of(lon, lat, level=1):
@@ -609,7 +613,8 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         labels = []
         for n in label_of:
             if n and n not in labels: labels.append(n)
-        _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains))
+        base = KEEP_BASE.get((level,) + pc, (b'', 0)) if KEEP_BASE is not None else (b'', 0)
+        _, offs = fa_encode.names_section(labels, [[0] * 9] * len(chains), base)
         name_offs = [0xffff] * len(chains) if no_names else [offs.get(n, 0xffff) for n in label_of]
         # a ferry link is two-way, but style_word's oneway test would still clear its bit 12
         styles = [[fa_encode.FERRY_STYLE if L[k][5] == 'ferry' else
@@ -635,7 +640,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                     styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
-        section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items)
+        section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items, base)
         out[pc] = out[pc] + fa + (None if no_names else section,)
     return out
 
@@ -740,6 +745,9 @@ def main():
     turns = []
     if '--turn-restrictions' in argv:
         i = argv.index('--turn-restrictions'); turns = json.load(open(argv[i + 1])); del argv[i:i + 2]
+    keep_names = '--keep-names' in argv
+    if keep_names: argv.remove('--keep-names')
+    report = []
     signs_path = None
     if '--signposts' in argv:
         i = argv.index('--signposts'); signs_path = argv[i + 1]; del argv[i:i + 2]
@@ -767,10 +775,15 @@ def main():
         for w in ways2: w['nodes'] = simplify(w['nodes'], tol2, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
+    if keep_names:
+        global KEEP_BASE
+        KEEP_BASE, odd = factory_labels(sec1)
+        report.append(f'--keep-names: labels kept in {len(KEEP_BASE)} parcels, {odd} names sections '
+                      f'in an unknown form left to be replaced')
     # level 2 is needed before level 1 is encoded, so a level-1 node at the same point can carry 0x2000
     l2_parcels = build_graphs(ways2, cell, 2, not no_chain)
     l2_geo = {tuple(nd['geo']) for P in l2_parcels.values() for nd in P['nodes'].values()}
-    boxes = {}; report = []; l1_index = None; l1_adj = None
+    boxes = {}; l1_index = None; l1_adj = None
     for level, subset in ((1, ways), (2, ways2)):
         chain = not no_chain
         parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
@@ -811,10 +824,10 @@ def main():
         for (y, x, row, col), (plain, comp, fplain, fcomp, _) in recs.items():
             per_dir.setdefault((y, x), {}).setdefault(row, {})[col] = (plain, comp)
         for (y, x), rows in sorted(per_dir.items()):
-            if not (level == 2 and no_l2_graph): lv['dirs'].append(rd_encode.make_dir(level, y, x, rows))
+            if not (level == 2 and no_l2_graph): lv['dirs'].append(rd_encode.make_dir(level, y, x, rows, FMT))
         if not lv['dirs'] and not (level == 2 and no_l2_graph):
-            lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}))   # a tile declaring none hangs the first draw
-        bydir = {(D['y'], D['x']): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
+            lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}, FMT))   # a tile declaring none hangs the first draw
+        bydir = {(D['y'], (D['x'] + FMT.x_base) & 0xffff): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
         was_stale = merge_names.stale_replaced
         placed = place_shapes(recs, bydir)
         if merge_names.stale_replaced > was_stale:
@@ -861,10 +874,11 @@ def main():
             if sid == 2 and hdr[p] in (1, 2):
                 struct.pack_into('>H', hdr, p + 2, len([L for L in sec2['levels'] if L['level'] == hdr[p]][0]['dirs']))
             p += 4
-    bt = hdr[0x2ac:0x2ac + 0x30]; i = bt.find(b'\x02\x00\xff\xff'); assert i > 0
+    fill = bytes([FMT.table_fill]) * 2
+    bt = hdr[0x2ac:0x2ac + 0x30]; i = bt.find(b'\x02\x00' + fill); assert i > 0
     new = bt[:i] + bytes([2, len(boxes)])
     for level in sorted(boxes, reverse=True): new += struct.pack('>BB4h', level, 0, *boxes[level])
-    new += b'\xff' * (0x30 - len(new)); hdr[0x2ac:0x2ac + 0x30] = new
+    new += fill[:1] * (0x30 - len(new)); hdr[0x2ac:0x2ac + 0x30] = new
     t['header'] = bytes(hdr)
     out = clarion_tile.write_tile(t, clarion_tile.default_order(t)); open(dest, 'wb').write(out)
     print(f'wrote {dest} {len(out)} bytes; ways used {len(ways)}')
@@ -901,6 +915,49 @@ def merge_names(plain, section):
 merge_names.stale_replaced = 0
 
 
+def factory_labels(sec1):
+    """{(level, y, x, row, col): (label bytes, count)} from every background record's names section, for
+    --keep-names; and how many sections had a form this does not read."""
+    out, odd = {}, 0
+    for L in sec1['levels']:
+        for D in L['dirs']:
+            x = (D['x'] + FMT.x_base) & 0xffff
+            for row, s in D['slots'].items():
+                for r in s['recs']:
+                    if r['k'] % 2 == 0: continue
+                    p = FMT.inflate(r['raw']); w = struct.unpack_from('>22H', p)
+                    if w[11] == 0xffff: continue
+                    sec = p[4 * w[11]:4 * (w[11] + w[12])]; h = struct.unpack_from('>12H', sec)
+                    lab = labels_unpadded(sec[24:4 * h[4]] if h[4] != 0xffff else sec[24:])
+                    n = count_labels(lab)
+                    if h[0] == 0xffff and not lab: n = 0
+                    elif h[0] != 6 or n != h[1]: odd += 1; continue
+                    out[(L['level'], D['y'], x, row, (r['k'] - 1) // 2)] = (lab, n)
+    return out, odd
+
+
+def replace_names(plain, section):
+    """A background record with its names section swapped for section and every other section
+    kept byte for byte, in its place. The new section already starts with the record's own
+    labels (--keep-names), so the geometry's references into it still hold."""
+    w = list(struct.unpack_from('>22H', plain))
+    secs = sorted((w[i], w[i + 1], i) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff)
+    p = 11
+    for off, ln, i in secs:
+        assert off == p, 'sections are not back to back: %s' % w[7:19]
+        p += ln
+    assert 4 * p == len(plain), 'record does not end with its last section'
+    if w[11] == 0xffff:
+        secs.append((p, 0, 11))
+    out = b''; p = 11
+    for off, ln, i in secs:
+        blk = section if i == 11 else plain[4 * off:4 * (off + ln)]
+        assert len(blk) % 4 == 0
+        w[i], w[i + 1] = p, len(blk) // 4
+        out += blk; p += len(blk) // 4
+    return struct.pack('>22H', *w) + out
+
+
 def place_shapes(recs, bydir):
     """Road-shape records into the even pairs of the background directories, names merged in."""
     placed = 0
@@ -916,8 +973,9 @@ def place_shapes(recs, bydir):
             body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2); s['body'] = bytes(body2); placed += 1
             continue
         bgrec = s['recs'][bi]
-        newpl = merge_names(zlib.decompress(bgrec['raw']), section); c = zlib.compressobj(6, zlib.DEFLATED, 13, 8); newc = c.compress(newpl) + c.flush()
-        if len(newc) % 2: newc += b'\0'
+        old = FMT.inflate(bgrec['raw'])
+        newpl = replace_names(old, section) if KEEP_BASE is not None else merge_names(old, section)
+        newc = FMT.deflate(newpl)
         bgrec['raw'] = newc; bgrec['words'] = len(newpl) // 2
         s['recs'].insert(bi, dict(k=2 * col, raw=fcomp, words=len(fplain) // 2))
         body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2)
