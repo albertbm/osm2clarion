@@ -166,8 +166,8 @@ class TestRoadStrip(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             src, out = os.path.join(tmp, 'B68R048R.DAT'), os.path.join(tmp, 'out.DAT')
             Path(src).write_bytes(d)
-            cell, n_in, nkept, _ = road_strip.strip(src, out, QY7)
-            self.assertEqual((cell, n_in, nkept), ('B68R048R', 2, 0))
+            cell, n_in, nkept, ncountry, _ = road_strip.strip(src, out, QY7)
+            self.assertEqual((cell, n_in, nkept, ncountry), ('B68R048R', 2, 0, 0))
             b = Path(out).read_bytes()
             self.assertEqual(tile_header.check(b[:0x1000]), [])
             with tile_scan.TileScan(b) as t:
@@ -176,6 +176,41 @@ class TestRoadStrip(unittest.TestCase):
                 self.assertEqual(len(list(t._dirs(2))), 2)
             with self.assertRaises(SystemExit):
                 road_strip.strip(src, out, QY8)
+
+    def test_strip_keeps_section4_as_country_records(self):
+        d, _ = sec2_level2_tile(QY7)
+        t = clarion_tile.read_tile(d)
+        y, x = 0x68, 0xffb8
+        D = sec4_write.make_dir(y, x, {}, 0, fmt=QY7)
+        sign = [dict(key=7, groups=[dict(hdr=sec4_write.GROUP_HDR, entries=[
+            dict(dir=0x2800, pairs=[(sec4_write.FLAG, 3)], text=b'0=OULU')])])]
+        code = sec4_write.parcel_code(y * 32 + 5, 952 * 32 + 9)
+        long = sec4_write.encode(dict(code=code, country=246, subs=sign))
+        comp = QY7.deflate(long)
+        body = bytearray(sec4_write.ABSENT * 32)
+        struct.pack_into('>II', body, 8 * 9, len(comp) // 2, len(long) // 2)
+        D['slots'][5] = dict(tag=0, body=bytes(body), recs=[dict(k=9, raw=comp, words=len(long) // 2)])
+        del D['empty_bodies'][5]
+        sec = dict(id=4, levels=[dict(level=1, typ=0x93, dirs=[D])])
+        sec['count'] = -(-2 * clarion_tile.table_words(sec)[0] // 256)
+        t['sections'].append(sec)
+        t['header'] = tile_header.author(tile_header.level_groups(t, QY7),
+                                         [(1, []), (2, [(2, 0, (1, 2, 3, 4))]), (4, [(1, 0, (5, 6, 7, 8))])],
+                                         clarion_profile.EUROPE_BOUNDS, '14/04/12/01', fmt=QY7)
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = os.path.join(tmp, 'B68R048R.DAT'), os.path.join(tmp, 'out.DAT')
+            Path(src).write_bytes(clarion_tile.write_tile(t, clarion_tile.default_order(t)))
+            self.assertEqual(road_strip.strip(src, out, QY7)[3], 1)
+            b = Path(out).read_bytes()
+        self.assertEqual(tile_header.check(b[:0x1000]), [])
+        f, _ = tile_header.fields(b[:0x1000])
+        self.assertEqual(f['box_rows'], [(1, []), (2, []), (4, [(1, 0, (5, 6, 7, 8))])])
+        with tile_scan.TileScan(b) as ts:
+            recs = list(ts.records(section=4))
+            self.assertEqual([(r.slot, r.k) for r in recs], [(5, 9)])
+            want = sec4_write.encode(dict(code=code, country=246))
+            self.assertEqual(recs[0].plain(), want)
+            self.assertEqual(len(want), 56)
 
     def test_section4_records_follow_the_format(self):
         plain, comp = sec4_write.record(3, 4, 246, fmt=QY7)

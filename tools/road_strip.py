@@ -5,10 +5,18 @@
 Kept byte for byte: every background record of section 1 (the odd pair of a parcel column,
 land, water, areas and their names), its directories and their parcel boxes, and the header's
 database fields. Dropped: the road-shape records of section 1 (the even pairs, with the extra
-records of an extended slot), every section 2 record (the road graph) and section 4
-(signposts and the country record). Section 2 is left with one empty directory at levels 1
-and 2, as rd_build.py writes when it has no roads, since a tile that declares none hangs the
-first draw. rd_build.py then puts a real road set into the result.
+records of an extended slot), every section 2 record (the road graph) and the signposts of
+section 4. Section 2 is left with one empty directory at levels 1 and 2, as rd_build.py
+writes when it has no roads, since a tile that declares none hangs the first draw.
+rd_build.py then puts a real road set into the result.
+
+Section 4 keeps every directory, and each parcel that had a record keeps one in the 56-byte
+form that carries only its country. A QY7 unit reads a country at its stored start position
+and, failing that, at a fallback point in central London; with section 4 gone from both
+tiles it drew nothing at level 1 anywhere on the card, and with country-only records it
+drew. An extended slot becomes an ordinary one, since rd_build.py reads the result through
+clarion_tile: a divided parcel's sub-records all name one country, and the parcel gets one
+record. The node key is 0, as sec4_write.py writes it for a parcel without signposts.
 
 LEV3456R.DAT, the coarse file, goes through lev_file. At levels 4 and 3 the first pair of a
 column is the road record and is dropped, the second is the background and is kept. A level-5
@@ -31,6 +39,7 @@ import clarion_profile
 import clarion_tile
 import lev_file
 import rd_encode
+import sec4_write
 import tile_header
 from clarion_bg import tile_cell
 from tile_scan import TileScan, addr_of
@@ -99,6 +108,39 @@ def background_dirs(t):
     return dirs, nkept
 
 
+def country_dirs(t, fmt):
+    """Section 4 as [directory] in clarion_tile's form, one country-only record per parcel
+    that had any, and the number of records written."""
+    box = boxes(t)
+    had = {}
+    for r in t.records(section=4):
+        if r.n:   # a divided parcel's own pair is flagged with length 0
+            had.setdefault((r.dir_off, r.slot), {}).setdefault(r.col, r)
+    dirs, cur, n = [], None, 0
+    for sid, lev, doff, slot, p, tag, ext, b in t.slots(section=4):
+        if cur is None or cur['off'] != doff:
+            _, a, bb, y, x, typ = struct.unpack_from('>6H', t.m, doff)
+            cur = sec4_write.make_dir(y, x, {}, 0, fmt=fmt)
+            cur.update(off=doff, ab=(a, bb), typ=typ, box=box[doff])
+            dirs.append(cur)
+        cols = had.get((doff, slot))
+        if not cols:
+            if tag == 0xffffffff and not ext:
+                cur['empty_bodies'][slot] = bytes(t.m[p + 4:p + 4 + b])
+            continue
+        body, recs = bytearray(sec4_write.ABSENT * sec4_write.PAIRS), []
+        xabs = (cur['x'] + fmt.x_base) & 0xffff
+        for col in sorted(cols):
+            country = struct.unpack_from('>H', cols[col].plain(), 16)[0]
+            plain, comp = sec4_write.record(cur['y'] * 32 + slot, xabs * 32 + col, country, fmt=fmt)
+            struct.pack_into('>II', body, 8 * col, len(comp) // 2, len(plain) // 2)
+            recs.append(dict(k=col, raw=comp, words=len(plain) // 2))
+        cur['slots'][slot] = dict(tag=0, body=bytes(body), recs=recs)
+        del cur['empty_bodies'][slot]
+        n += len(recs)
+    return dirs, n
+
+
 def cut_road_block(plain):
     """A level-5 record without its road block, or the record itself if it has none."""
     w = list(struct.unpack_from('>22H', plain))
@@ -154,7 +196,7 @@ def strip_lev(src, out, fmt):
     b = lev_file.write(lev)
     with open(out, 'wb') as f:
         f.write(b)
-    return 'LEV3456R', n_in, nkept, len(b)
+    return 'LEV3456R', n_in, nkept, 0, len(b)
 
 
 def strip(src, out, fmt):
@@ -169,21 +211,25 @@ def strip(src, out, fmt):
         fields, _ = tile_header.fields(bytes(t.m[:0x1000]))
         n_in = sum(1 for _ in t.records())
         dirs, nkept = background_dirs(t)
+        sec4_dirs, ncountry = country_dirs(t, fmt) if 4 in dict(t.sections()) else (None, 0)
     sec1 = dict(id=1, levels=[dict(level=lv, typ=ty, dirs=dirs.get(lv, [])) for lv, ty in fmt.levels[1]])
     y0, x0 = tile_cell(cell)
     sec2 = dict(id=2, levels=[dict(level=lv, typ=ty, dirs=[rd_encode.make_dir(lv, y0, x0, {}, fmt)] if lv in (1, 2) else [])
                               for lv, ty in fmt.levels[2]])
     t = dict(sections=[sec1, sec2])
+    if sec4_dirs is not None:
+        t['sections'].append(dict(id=4, levels=[dict(level=lv, typ=ty, dirs=sec4_dirs) for lv, ty in fmt.levels[4]]))
     for sec in t['sections']:
         nw, _, _ = clarion_tile.table_words(sec)
         sec['count'] = -(-2 * nw // 256)
-    rows = [(sid, r) for sid, r in fields['box_rows'] if sid == 1] + [(2, [])]
+    rows = ([(sid, r) for sid, r in fields['box_rows'] if sid == 1] + [(2, [])]
+            + [(sid, r) for sid, r in fields['box_rows'] if sid == 4 and sec4_dirs is not None])
     t['header'] = bytes(tile_header.author(tile_header.level_groups(t, fmt), rows, fields['db_bounds'],
                                            fields['data_version'], fields['source'], fmt=fmt))
     b = clarion_tile.write_tile(t, clarion_tile.default_order(t))
     with open(out, 'wb') as f:
         f.write(b)
-    return cell, n_in, nkept, len(b)
+    return cell, n_in, nkept, ncountry, len(b)
 
 
 if __name__ == '__main__':
@@ -192,5 +238,6 @@ if __name__ == '__main__':
     if not argv or len(argv) % 2:
         sys.exit(__doc__)
     for src, out in zip(argv[::2], argv[1::2]):
-        cell, n_in, nkept, size = strip(src, out, P.fmt)
-        print('%s %s: %d records in, %d background kept, %d bytes -> %s' % (cell, P.fmt.name, n_in, nkept, size, out))
+        cell, n_in, nkept, ncountry, size = strip(src, out, P.fmt)
+        print('%s %s: %d records in, %d background and %d country records kept, %d bytes -> %s'
+              % (cell, P.fmt.name, n_in, nkept, ncountry, size, out))

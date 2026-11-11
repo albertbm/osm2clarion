@@ -10,8 +10,8 @@ match the new road shapes. A row block that shrinks is rewritten where it was an
 grows goes to the end of the file, so only slot addresses and length words move. An extended
 slot stays extended.
 
-A QY7 unit drew our road records inside a factory tile written this way, and drew nothing at
-close zoom from a tile road_strip.py rebuilt from scratch.
+A QY7 unit drew our road records inside a factory tile written this way. Section 4 keeps its
+signposts here, which now point at roads that are gone; road_strip.py cuts them to the country.
 
 LEV3456R.DAT gets the same treatment with an empty road set: in section 1 the road pair of
 levels 4 and 3 is emptied and a level-5 record loses its road block (road_strip.cut_road_block),
