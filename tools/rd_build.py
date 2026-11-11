@@ -874,11 +874,20 @@ def main():
             if sid == 2 and hdr[p] in (1, 2):
                 struct.pack_into('>H', hdr, p + 2, len([L for L in sec2['levels'] if L['level'] == hdr[p]][0]['dirs']))
             p += 4
-    fill = bytes([FMT.table_fill]) * 2
-    bt = hdr[0x2ac:0x2ac + 0x30]; i = bt.find(b'\x02\x00' + fill); assert i > 0
-    new = bt[:i] + bytes([2, len(boxes)])
-    for level in sorted(boxes, reverse=True): new += struct.pack('>BB4h', level, 0, *boxes[level])
-    new += fill[:1] * (0x30 - len(new)); hdr[0x2ac:0x2ac + 0x30] = new
+    # section 2's box rows are replaced; a group after it, such as section 4's, keeps its rows
+    new = bytes(hdr[0x2ac:0x2ae]); p = 0x2ae; seen = False
+    for _ in range(struct.unpack_from('>H', hdr, 0x2ac)[0]):
+        sid, n = hdr[p], hdr[p + 1]
+        if sid == 2:
+            new += bytes([2, len(boxes)]); seen = True
+            for level in sorted(boxes, reverse=True): new += struct.pack('>BB4h', level, 0, *boxes[level])
+        else:
+            new += bytes(hdr[p:p + 2 + 10 * n])
+        p += 2 + 10 * n
+    assert seen, 'the header has no box group for section 2'
+    assert 0x2ac + len(new) <= 0x3ac, 'box table runs into the constant at 0x3ac'
+    end = max(p, 0x2ac + 0x30, 0x2ac + len(new))
+    hdr[0x2ac:end] = new + bytes([FMT.table_fill]) * (end - 0x2ac - len(new))
     t['header'] = bytes(hdr)
     out = clarion_tile.write_tile(t, clarion_tile.default_order(t)); open(dest, 'wb').write(out)
     print(f'wrote {dest} {len(out)} bytes; ways used {len(ways)}')
