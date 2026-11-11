@@ -51,8 +51,35 @@ Each step prints the command it runs. Copy the files in `DIR` onto the card. Reb
 
 ## Profiles
 
-One TOML per region in `profiles/`. `profiles/iceland.toml` is the only one built so far.
+One TOML per region in `profiles/`. Iceland builds a card from scratch; Finland rebuilds one area on a stock card (below).
 `python3 tools/clarion_profile.py iceland` prints what the tools will read.
+
+## Finland on a QY7 card
+
+For a stock European Clarion QY7221NL card (2014 database) and a Geofabrik
+`finland-latest.osm.pbf`. The card keeps its own map. The roads are stripped from every
+tile, and the roads of one town are rebuilt from OSM. `profiles/finland.toml` names the
+town (`jyvaskyla`) and everything else the build needs.
+
+```
+uv run --with osmium --with shapely python build.py --profile finland \
+    --base STOCK-CARD.img --osm finland-latest.osm.pbf --out WORKDIR --card NEW-CARD.img
+```
+
+`--base` is the card image, only read. `--card` is a copy of it with the new files written
+in and `DRSTR001.DAT` refreshed; leave it out to get just the files in `WORKDIR`
+(`MAPAL001/*.DAT`, `MMAIN001.DAT`). `--area NAME` picks the town if the profile lists more
+than one. Steps: `--list`, `--only STEP`, `--from STEP`. `WORKDIR` takes about 4.6 GiB and
+the card image is 7.4 GiB. A second area is one more `[areas.NAME]` table: an OSM relation and
+the one tile cell it sits in.
+
+Limits:
+
+- Roads exist only inside the built area. Elsewhere in Europe the card draws the map but no
+  roads, and cannot route.
+- Address search still reads the factory data, which points at roads that are now gone. It is
+  likely to crash.
+- Guidance has not been tried on a unit.
 
 ## Limits
 
