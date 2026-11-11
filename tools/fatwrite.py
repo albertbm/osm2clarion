@@ -225,6 +225,15 @@ def fat_time(ts=None):
             struct.pack('<H', ((t.tm_year - 1980) << 9) | (t.tm_mon << 5) | t.tm_mday))
 
 
+def is_qy7(fs):
+    """A QY7 card names itself in VER_INFO/HDD_INFO.TXT, where a QY8 card has DB_INFO.TXT."""
+    try:
+        fs.find('VER_INFO', 'HDD_INFO.TXT')
+    except KeyError:
+        return False
+    return True
+
+
 def main():
     img = sys.argv[1]
     mode = sys.argv[2]
@@ -240,6 +249,8 @@ def main():
         create = n.startswith('+')
         jobs.append((d, n.lstrip('+'), src, create))
     fs = Fat32RW(img, write=(mode == '--write'))
+    if any(d.upper() == 'VER_INFO' for d, *_ in jobs + dels) and is_qy7(fs):
+        sys.exit('%s carries VER_INFO/HDD_INFO.TXT (a QY7 card); its VER_INFO is never written' % img)
     before = fs.nfree()
     print('%s  cluster %d B  %d clusters  %d free (%d B)' % (img, fs.csz, fs.nclus, before, before * fs.csz))
     dp = [plan_delete(fs, d, n) for d, n in dels]

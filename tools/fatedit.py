@@ -113,7 +113,13 @@ class Editor:
             fs.set(c, 0)
         self.zeroed += len(chain)
 
+    def guard(self, dirname):
+        """A QY7 card's VER_INFO (HDD_INFO.TXT) is its version record and stays as shipped."""
+        if dirname.upper() == 'VER_INFO' and self.find(dirname, 'HDD_INFO.TXT') is not None:
+            raise SystemExit('VER_INFO/HDD_INFO.TXT is there (a QY7 card); its VER_INFO is never written')
+
     def delete(self, dirname, name):
+        self.guard(dirname)
         g = self.find(dirname, name)
         assert g is not None, '%s/%s not found' % (dirname, name)
         assert not g.short[11] & 0x10, '%s/%s is a directory' % (dirname, name)
@@ -157,6 +163,7 @@ class Editor:
         raise RuntimeError('no free alias for ' + name)
 
     def write(self, dirname, name, data):
+        self.guard(dirname)
         fs = self.fs
         ht, hd = fat_time(time.time())
         g = self.find(dirname, name)
