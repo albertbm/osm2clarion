@@ -6,7 +6,9 @@ import os
 import struct
 
 import clarion_bg
+import clarion_format
 import clarion_rd
+import clarion_tile
 import lev_file
 import rd_build
 import rd_encode
@@ -22,12 +24,20 @@ def part_a(raw):
 
 
 
+def two_records(fmt, level=2):
+    """Whether a graph record's two parts are zlib records of their own, in the pairs 2c and
+    2c + 1 of a column. X08-02 has them so at levels 2, 4 and 5; X08-03 ships one raw record."""
+    return clarion_format.slot_body(2, dict(fmt.levels[2])[level]) == 512
+
+
 def emitted_l2_layer(paths):
     """Read the exact L2 nodes, indexes and link metadata emitted in the road tiles."""
     records = {}
     for path in paths:
         with TileScan(path) as tile:
+            two = two_records(tile.fmt)
             for rr in tile.records(section=2, level=2):
+                if two and rr.k % 2: continue   # part B
                 rec = clarion_rd.parse_record(part_a(rr.plain()))
                 pc = clarion_bg.parcel_rowcol(2, *rec['code'])
                 assert pc not in records, 'duplicate L2 parcel %r in %s' % (pc, path)
@@ -107,8 +117,8 @@ def geo_of(child, gid):
 
 def marker(level, row, col):
     """The five rotating child-grid selectors used by factory level-4 and level-5 part B."""
-    k = (row - col) % 5 if level == 4 else (col - row) % 5
-    return 0x2100 + 0x2000 * k
+    k = (row - col) if level == 4 else (col - row)
+    return 0x2100 + 0x2000 * ((k + rd_build.FMT.marker_shift) % 5)
 
 
 def collapse(per):
@@ -259,17 +269,20 @@ def build_level(child, level, origin, country, allowed=None):
     return records, dict(nodes=nodes, links=links, level=level, geo=geo), occurrences
 
 
-def directory(level, records, origin, box):
+def directory(level, records, origin, box, fmt=clarion_format.DEFAULT):
     n = {4: 44, 5: 11}[level]
+    two = two_records(fmt, level)
     rows = []
     for row in range(n):
-        recs = [None] * n
+        recs = [None] * (2 * n if two else n)
         for col in range(n):
             if (row, col) in records:
-                R = records[(row, col)]; recs[col] = lev_file.rawrec(R['a'], R['b'])
+                R = records[(row, col)]
+                if two: recs[2 * col], recs[2 * col + 1] = lev_file.zrec(R['a']), lev_file.zrec(R['b'])
+                else: recs[col] = lev_file.rawrec(R['a'], R['b'])
         rows.append(recs if any(recs) else None)
     return dict(box=box, cols=n, y=origin[0], x=(origin[1] - 1024) & 0xffff,
-                typ=0x81, pairs=n, rows=rows)
+                typ=dict(fmt.levels[2])[level], pairs=len(recs), rows=rows)
 
 
 def patch_l2_flags(paths, flags):
@@ -277,8 +290,10 @@ def patch_l2_flags(paths, flags):
     found = set()
     for path in paths:
         data = bytearray(open(path, 'rb').read())
+        if two_records(clarion_format.of_header(data[:0x1000])):
+            data = patch_l2_flags_zlib(bytes(data), flags, found)
         with TileScan(bytes(data)) as tile:
-            for rr in tile.records(section=2, level=2):
+            for rr in tile.records(section=2, level=2) if tile.fmt.zmagic == clarion_format.X08_03.zmagic else ():
                 rec = clarion_rd.parse_record(part_a(rr.plain()))
                 pc = clarion_bg.parcel_rowcol(2, *rec['code'])
                 u0 = rec['pairs'][0][0]
@@ -291,6 +306,35 @@ def patch_l2_flags(paths, flags):
         with open(tmp, 'wb') as f: f.write(data)
         os.replace(tmp, path)
     assert found == set(flags), 'L2 hierarchy nodes absent from tiles: %r' % sorted(set(flags) - found)[:10]
+
+
+def patch_l2_flags_zlib(data, flags, found):
+    """The same for a tile whose level-2 graph records are compressed: part A is inflated,
+    flagged and deflated again, and the tile is written back through clarion_tile, since a
+    record's size may change. Only for a tile of our own; read_tile is banned on a factory one."""
+    fmt = clarion_format.of_header(data[:0x1000])
+    t = clarion_tile.read_tile(data)
+    for sec in t['sections']:
+        if sec['id'] != 2: continue
+        for L in sec['levels']:
+            if L['level'] != 2: continue
+            for D in L['dirs']:
+                for s in D['slots'].values():
+                    body = bytearray(s['body'])
+                    for r in s['recs']:
+                        if r['k'] % 2: continue
+                        plain = bytearray(fmt.inflate(r['raw']))
+                        rec = clarion_rd.parse_record(bytes(plain))
+                        pc = clarion_bg.parcel_rowcol(2, *rec['code'])
+                        u0 = rec['pairs'][0][0]
+                        for i, nd in enumerate(rec['nodes']):
+                            flag = flags.get((pc, i), 0)
+                            struct.pack_into('>H', plain, 2 * (u0 + nd['at'] + 2), nd['nflags'] & ~0x6000 | flag)
+                            if flag: found.add((pc, i))
+                        r['raw'] = fmt.deflate(bytes(plain))
+                        struct.pack_into('>II', body, 8 * r['k'], len(r['raw']) // 2, len(plain) // 2)
+                    s['body'] = bytes(body)
+    return bytearray(clarion_tile.write_tile(t, clarion_tile.default_order(t)))
 
 
 def build(ways, profile, l2_tiles, bbox=None):
@@ -323,8 +367,9 @@ def build(ways, profile, l2_tiles, bbox=None):
             flags[pc, i] = 0x4000 if gid in upper5 else 0x2000
     if bbox is None:
         patch_l2_flags(l2_tiles, flags)
-    box = (origin[0] + 88, origin[0], origin[1], origin[1] + 88)
-    dirs = {4: directory(4, r4, origin, box), 5: directory(5, r5, origin, box)}
+    fmt = profile.fmt
+    box = (origin[0] + 88, origin[0], (origin[1] - fmt.x_base) & 0xffff, (origin[1] + 88 - fmt.x_base) & 0xffff)
+    dirs = {4: directory(4, r4, origin, box, fmt), 5: directory(5, r5, origin, box, fmt)}
     stats = {4: (len(r4), sum(len(r['nodes']) for r in r4.values()), sum(len(r['links']) for r in r4.values())),
              5: (len(r5), sum(len(r['nodes']) for r in r5.values()), sum(len(r['links']) for r in r5.values()))}
     stats['l2_patched'] = bbox is None

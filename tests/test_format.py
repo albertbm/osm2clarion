@@ -377,6 +377,27 @@ class TestQY7Roads(unittest.TestCase):
         finally:
             rd_build.ORIGIN, rd_build.FMT, fa_encode.FMT, rd_encode.FMT, rd_build.COUNTRY, rd_build.SPEED_UNIT = old
 
+    def test_coarse_graph_directory_and_selector(self):
+        import lev_graph
+        old = rd_build.FMT
+        try:
+            rec = {(3, 5): dict(a=b'AAAA', b=b'BB')}
+            rd_build.FMT = QY7
+            self.assertEqual(lev_graph.marker(4, 5, 1), 0x2100)   # (5 - 1 + 1) % 5 == 0
+            self.assertEqual(lev_graph.marker(5, 2, 2), 0x4100)
+            D = lev_graph.directory(4, rec, (32, 904), (120, 32, 65416, 65504), QY7)
+            self.assertEqual((D['typ'], D['pairs'], D['cols']), (0x91, 88, 44))
+            self.assertEqual(D['rows'][3][10:12], [dict(plain=b'AAAA'), dict(plain=b'BB')])
+            rd_build.FMT = QY8
+            self.assertEqual(lev_graph.marker(4, 5, 1), 0x2100 + 0x2000 * 4)
+            D = lev_graph.directory(4, rec, (32, 904), (120, 32, 904, 992), QY8)
+            self.assertEqual((D['typ'], D['pairs']), (0x81, 44))
+            self.assertEqual(D['rows'][3][5], dict(raw=(b'AAAA', b'BB')))
+        finally:
+            rd_build.FMT = old
+        self.assertTrue(lev_graph.two_records(QY7))
+        self.assertFalse(lev_graph.two_records(QY8))
+
     def test_area_of_takes_the_nearest_parcel(self):
         old = rd_build.AREA_BASE
         try:

@@ -28,6 +28,11 @@ level-5 names section has no sub-table. An unnamed coarse shape is written plain
 word 3 there is the ring code again (0, 1, 3 or 7 on the card) and the y bits follow the
 one-way sense, neither of which the coarse builder knows, and 0 is a value the card has.
 
+The coarse graph at levels 4 and 5 has the level-2 form: part A and part B are two zlib
+records in the pairs 2c and 2c + 1, in a directory of type 0x91 (385 and 34 columns on the
+card, every part of which parses and re-encodes with the QY8 codec). The selector in part
+B's second word rotates as on QY8 but one step further on (385 of 385 and 34 of 34).
+
 Two rules found on the QY7 card hold on QY8 too and are written for both. The first word of
 a level-1 unit counts the parcel's nodes with three or more links (3,000 of 3,000 records on
 B58R050R and on B60R048R, 983 of 983 on the QY8 tile B68R058R). A level-2 string carries in
@@ -45,7 +50,7 @@ FORMAT_OFF = 0xa0
 class Format:
     def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base,
                  codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
-                 ferry_style=0x001e, tail_runs=True, area_items=False, label_flags=0x2000, coarse_unnamed=(0x3000, 0x4000), l3_points=0):
+                 ferry_style=0x001e, tail_runs=True, area_items=False, label_flags=0x2000, coarse_unnamed=(0x3000, 0x4000), l3_points=0, marker_shift=0):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -69,6 +74,7 @@ class Format:
         self.label_flags = label_flags  # flags word of a road label entry
         self.coarse_unnamed = coarse_unnamed  # word 3 and the y bits lev_roads gives an unnamed coarse shape
         self.l3_points = l3_points      # bit set beside the point count of a level-3 coarse shape
+        self.marker_shift = marker_shift  # added to the rotating selector of a coarse graph's part B
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -120,7 +126,7 @@ X08_02 = Format(
     table_fill=0x00, sect_slots=341,
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
-    shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000)
+    shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000, marker_shift=1)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03
