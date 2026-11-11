@@ -106,7 +106,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     # 3-bit code section 2 carries in w4. Word 4: word offset of the name entry, 0xffff = none
     code = 0x7000 if ring else 0
     if level == 1: out = [cls << 12, code | FMT.shape_w3, name_off, FMT.shape_w5, 0x0000]
-    else: out = [cls << 12, code if FMT.l2_code else 0, name_off, 0x0000, 0x0000]
+    else: out = [cls << 12, code, name_off, 0x0000, 0x0000]
     sx, sy = nodes[chain[0][1]]
     out += [0x0800 | sx, 0x2800 | sy | dirbits(0) | (0x1000 if 0 in gs else 0)]
     npts = 1
@@ -254,7 +254,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i),
                           ring=bool(rings and rings[i]))
               for i, c in enumerate(chains)]
-    if level == 1: unit = [junctions(chains) if FMT.junction_count else 0] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
+    if level == 1: unit = [junctions(chains)] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
     order = []; at = {}
     for lay in sorted({l for l, _ in lc}):

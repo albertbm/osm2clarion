@@ -274,8 +274,7 @@ class TestQY7Roads(unittest.TestCase):
         w7, _ = self.shape_record(QY7, rings=[False, True])
         w8, _ = self.shape_record(QY8, rings=[False, True])
         g = 22
-        self.assertEqual(w7[g], 1, 'one node with three links')
-        self.assertEqual(w8[g], 0)
+        self.assertEqual((w7[g], w8[g]), (1, 1), 'one node with three links, on both')
         at = g + 2 * w7[g + 1 + 2 * 5]   # both chains default to layer 5
         self.assertEqual(w7[at + 3:at + 6:2], (0, 0))
         self.assertEqual(w8[at + 3:at + 6:2], (0x0004, 0x8004))
@@ -290,7 +289,7 @@ class TestQY7Roads(unittest.TestCase):
         w7, _ = self.shape_record(QY7, level=2, rings=[True, False])
         w8, _ = self.shape_record(QY8, level=2, rings=[True, False])
         at = 22 + 2 * w7[22 + 2 * 6]
-        self.assertEqual((w7[at + 3], w8[at + 3]), (0x7000, 0))
+        self.assertEqual((w7[at + 3], w8[at + 3]), (0x7000, 0x7000))
         self.assertEqual(w7[at + 9], 0x201e)
 
     def test_names_item_area_codes(self):

@@ -88,7 +88,8 @@ class TestLevel2Chains(unittest.TestCase):
         ring = fa_encode.shape_words(chain, self.NODES, 12, level=1, cls=8, ring=True)
         self.assertEqual((plain[3], ring[3]), (0x0004, 0x7004))
         self.assertEqual(plain[:3] + plain[4:], ring[:3] + ring[4:], 'only word 3 changes')
-        self.assertEqual(fa_encode.shape_words(chain, self.NODES, 12, level=2, cls=7, ring=True)[3], 0, 'level 2 untouched')
+        self.assertEqual(fa_encode.shape_words(chain, self.NODES, 12, level=2, cls=7, ring=True)[3], 0x7000,
+                         'level 2 carries the code too, without the level-1 constant')
 
 
     def test_two_links_with_bends(self):
