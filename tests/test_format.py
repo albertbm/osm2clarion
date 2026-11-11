@@ -300,6 +300,26 @@ class TestQY7Roads(unittest.TestCase):
         _, items = self.shape_record(QY8)
         self.assertEqual(items[0][6:], [0xe, 8, 0xd])
 
+    def test_road_label_flags_and_kept_names(self):
+        old = fa_encode.FMT
+        try:
+            fa_encode.FMT = QY7
+            place = struct.pack('>HH', 0xc068, 0x4800) + bytes(6) + struct.pack('>H', 6) + b'S\xc4YN\xc4\0'
+            water = struct.pack('>HHHHH', 0xc188, 0x2800, 0, 0, 4) + b'JOKI'
+            stale = struct.pack('>HHHHH', 0x00ff, 0x2800, 0, 0, 6) + b'1=VANH'
+            kept = rd_build.other_labels(place + stale + water)
+            self.assertEqual(kept, (place + water, 2))
+            sec, offs = fa_encode.names_section(['1=YLIOPISTONKATU'], [], kept)
+            self.assertEqual(struct.unpack_from('>HH', sec), (6, 3))
+            at = 2 * offs['1=YLIOPISTONKATU']
+            self.assertEqual(at, 24 + len(place + water))
+            self.assertEqual(struct.unpack_from('>HH', sec, at), (0x00ff, 0x2800))
+            fa_encode.FMT = QY8
+            sec, offs = fa_encode.names_section(['1=A'], [])
+            self.assertEqual(struct.unpack_from('>HH', sec, 24), (0x00ff, 0x2000))
+        finally:
+            fa_encode.FMT = old
+
     def test_area_of_takes_the_nearest_parcel(self):
         old = rd_build.AREA_BASE
         try:

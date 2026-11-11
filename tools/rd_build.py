@@ -15,7 +15,8 @@ ORIGIN = (32, 904)
 COUNTRY = None     # ISO 3166 numeric code for every section-2 record, from the profile
 SPEED_UNIT = 'km/h'   # the unit the country's signs are posted in, from the profile
 FMT = clarion_format.DEFAULT
-# --keep-names: (level, y, x, row, col) -> (label bytes, count) already in that parcel's background record
+# --keep-names: (level, y, x, row, col) -> (label bytes, count) of the place, water and POI names
+# already in that parcel's background record
 KEEP_BASE = None
 # QY7: (level, y, x, row, col) -> the three area codes the source tile's own names items carry there
 AREA_BASE = None
@@ -692,6 +693,17 @@ def labels_unpadded(labels):
         q = p + 8 + (2 if flags & 0x4000 else 0); ln = struct.unpack_from('>H', labels, q)[0]; p = q + 2 + ln
     return labels[:p]
 
+def other_labels(b):
+    """(bytes, count) of the entries that are not road labels. A road label is tied to a road
+    string by its offset; the other kinds carry their own position and nothing points at them."""
+    p = 0; out = b''; n = 0
+    while p + 10 <= len(b):
+        typ, flags = struct.unpack_from('>HH', b, p); q = p + 8 + (2 if flags & 0x4000 else 0)
+        end = q + 2 + struct.unpack_from('>H', b, q)[0]
+        if typ != fa_encode.ROAD_LABEL: out += b[p:end]; n += 1
+        p = end
+    return out, n
+
 def count_labels(b):
     p = 0; n = 0
     while p + 10 <= len(b):
@@ -933,7 +945,8 @@ merge_names.stale_replaced = 0
 
 def factory_labels(sec1):
     """{(level, y, x, row, col): (label bytes, count)} from every background record's names section, for
-    --keep-names; and how many sections had a form this does not read."""
+    --keep-names; and how many sections had a form this does not read. The factory's road labels
+    are left out: their roads are gone, and a rebuilt parcel gets its own."""
     out, odd = {}, 0
     for L in sec1['levels']:
         for D in L['dirs']:
@@ -948,7 +961,7 @@ def factory_labels(sec1):
                     n = count_labels(lab)
                     if h[0] == 0xffff and not lab: n = 0
                     elif h[0] != 6 or n != h[1]: odd += 1; continue
-                    out[(L['level'], D['y'], x, row, (r['k'] - 1) // 2)] = (lab, n)
+                    out[(L['level'], D['y'], x, row, (r['k'] - 1) // 2)] = other_labels(lab)
     return out, odd
 
 
@@ -998,7 +1011,7 @@ area_of.grid = None
 def replace_names(plain, section):
     """A background record with its names section swapped for section and every other section
     kept byte for byte, in its place. The new section already starts with the record's own
-    labels (--keep-names), so the geometry's references into it still hold."""
+    place, water and POI names (--keep-names)."""
     w = list(struct.unpack_from('>22H', plain))
     secs = sorted((w[i], w[i + 1], i) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff)
     p = 11

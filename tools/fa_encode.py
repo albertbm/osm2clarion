@@ -9,6 +9,7 @@ import clarion_format
 
 FMT = clarion_format.DEFAULT   # set by rd_build from the profile
 
+ROAD_LABEL = 0x00ff   # type word of a road label entry; a place, water or POI name has another
 STYLE = 0x101e        # the style word 79,182 of 128,000 shipped level-1 shapes carry: no limit
 FERRY_STYLE = 0x001e  # measured on every class-10 shape at both levels; style_word's oneway
                       # bit would also clear bit 12, but a ferry link is two-way
@@ -384,7 +385,7 @@ def names_section(labels, items, base=(b'', 0)):
         text = FMT.text(name)
         if len(text) % 2: text += b'\0'
         offs[name] = (24 + len(body)) // 2
-        body += _s.pack('>HHHHH', 0x00ff, 0x2000, 0, 0, len(text)) + text
+        body += _s.pack('>HHHHH', ROAD_LABEL, FMT.label_flags, 0, 0, len(text)) + text
     while len(body) % 4: body += b'\0'
     sub = _s.pack('>HH', 8, len(items)) + b'\xff\xff\x00\x00' * 3 + b''.join(_s.pack('>9H', *it) for it in items)
     while len(sub) % 4: sub += b'\0'

@@ -20,7 +20,8 @@ where QY8 sets bit 12 (18,593 two-way against 1,399 one-way starts), a ferry inc
 record with no restricted link has no tail table, where QY8 writes one of plain runs (1,518
 records without, none with runs alone); a level-2 string carries the 3-bit code of its
 links' graph word 4 in word 3 (706 ring strings); and the names item ends in three area
-codes at both levels, where the QY8 build writes its own constants.
+codes at both levels, where the QY8 build writes its own constants. A road label's entry
+has flags 0x2800 (28,505 of 28,505 on B58R050R) against 0x2000 on QY8.
 
 The first word of a level-1 unit counts the parcel's nodes with three or more links. That
 holds on both formats (3,000 of 3,000 records on B58R050R and on B60R048R, 983 of 983 on the
@@ -37,7 +38,7 @@ FORMAT_OFF = 0xa0
 class Format:
     def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base,
                  codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
-                 ferry_style=0x001e, tail_runs=True, junction_count=False, l2_code=False, area_items=False):
+                 ferry_style=0x001e, tail_runs=True, junction_count=False, l2_code=False, area_items=False, label_flags=0x2000):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -60,6 +61,7 @@ class Format:
         self.junction_count = junction_count  # the level-1 unit's first word is written, not left 0
         self.l2_code = l2_code          # a level-2 string's word 3 takes the ring code
         self.area_items = area_items    # a names item ends in the parcel's three area codes
+        self.label_flags = label_flags  # flags word of a road label entry
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -112,7 +114,7 @@ X08_02 = Format(
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
     shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, junction_count=True,
-    l2_code=True, area_items=True)
+    l2_code=True, area_items=True, label_flags=0x2800)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03
