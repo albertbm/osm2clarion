@@ -320,6 +320,49 @@ class TestQY7Roads(unittest.TestCase):
         finally:
             fa_encode.FMT = old
 
+    def test_names_section_without_a_sub_table(self):
+        sec, offs = fa_encode.names_section(['2=9'], None)
+        self.assertEqual(struct.unpack_from('>6H', sec), (6, 1, 0xffff, 0, 0xffff, 0))
+        self.assertEqual(offs['2=9'], 12)
+        self.assertEqual(len(sec), 24 + 10 + 4 + 2)
+
+    def test_coarse_shape_follows_the_format(self):
+        try:
+            import lev_roads
+        except ImportError:
+            self.skipTest('lev_roads needs shapely')
+        old = fa_encode.FMT
+        try:
+            fa_encode.FMT = QY7
+            s3 = lev_roads.shape(3, 6, [[(1, 2), (3, 4)]])
+            self.assertEqual(s3[1:4], [0x8002, 0x6000, 0])
+            self.assertEqual(s3[-1] & 0xc000, 0)
+            fa_encode.FMT = QY8
+            s3 = lev_roads.shape(3, 6, [[(1, 2), (3, 4)]])
+            self.assertEqual(s3[1:4], [0x0002, 0x6000, 0x3000])
+            self.assertEqual(s3[-1] & 0xc000, 0x4000)
+        finally:
+            fa_encode.FMT = old
+
+    def test_coarse_background_keeps_its_names_and_area(self):
+        try:
+            import lev_roads
+        except ImportError:
+            self.skipTest('lev_roads needs shapely')
+        old = fa_encode.FMT
+        try:
+            fa_encode.FMT = QY7
+            water = struct.pack('>HHHHH', 0x8088, 0x2800, 0, 0, 4) + b'JOKI'
+            base = (water, 1)
+            items = [[0x8000, 9, 0x8000, 6, 0x0bc0, 246, 6, 2, 4]] * 2 + [[0x8000, 9, 0x8000, 6, 0x0bc0, 233, 1, 1, 1]]
+            sec, _ = fa_encode.names_section(['2=OLD'], items, base)
+            plain = struct.pack('>22H', 1, 2, 0xfa, 0, 0, 0, 0, 0xffff, 0, 0xffff, 0, 11, len(sec) // 4,
+                                0xffff, 0, 0xffff, 0, 0xffff, 0, 0, 246, 0) + sec
+            self.assertEqual(lev_roads.kept_names(plain, 246), ((water, 1), (6, 2, 4)))
+            self.assertEqual(lev_roads.kept_names(plain, 752), ((water, 1), (0, 0, 0)))
+        finally:
+            fa_encode.FMT = old
+
     def test_area_of_takes_the_nearest_parcel(self):
         old = rd_build.AREA_BASE
         try:

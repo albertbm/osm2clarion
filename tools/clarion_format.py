@@ -23,6 +23,12 @@ links' graph word 4 in word 3 (706 ring strings); and the names item ends in thr
 codes at both levels, where the QY8 build writes its own constants. A road label's entry
 has flags 0x2800 (28,505 of 28,505 on B58R050R) against 0x2000 on QY8.
 
+In the coarse file a level-3 road shape has bit 15 beside its point count, as levels 4 and
+5 have on both cards (200,001 of 200,001 shapes sampled; never on the QY8 file), and a
+level-5 names section has no sub-table. An unnamed coarse shape is written plain on QY7:
+word 3 there is the ring code again (0, 1, 3 or 7 on the card) and the y bits follow the
+one-way sense, neither of which the coarse builder knows, and 0 is a value the card has.
+
 The first word of a level-1 unit counts the parcel's nodes with three or more links. That
 holds on both formats (3,000 of 3,000 records on B58R050R and on B60R048R, 983 of 983 on the
 QY8 tile B68R058R), but the QY8 build has always written 0 there and still does.
@@ -38,7 +44,7 @@ FORMAT_OFF = 0xa0
 class Format:
     def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base,
                  codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
-                 ferry_style=0x001e, tail_runs=True, junction_count=False, l2_code=False, area_items=False, label_flags=0x2000):
+                 ferry_style=0x001e, tail_runs=True, junction_count=False, l2_code=False, area_items=False, label_flags=0x2000, coarse_unnamed=(0x3000, 0x4000), l3_points=0):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -62,6 +68,8 @@ class Format:
         self.l2_code = l2_code          # a level-2 string's word 3 takes the ring code
         self.area_items = area_items    # a names item ends in the parcel's three area codes
         self.label_flags = label_flags  # flags word of a road label entry
+        self.coarse_unnamed = coarse_unnamed  # word 3 and the y bits lev_roads gives an unnamed coarse shape
+        self.l3_points = l3_points      # bit set beside the point count of a level-3 coarse shape
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -114,7 +122,7 @@ X08_02 = Format(
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
     shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, junction_count=True,
-    l2_code=True, area_items=True, label_flags=0x2800)
+    l2_code=True, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03

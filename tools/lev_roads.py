@@ -321,13 +321,19 @@ def shape(level, cls, links, name_off=0xffff):
     not repeated). Named shapes carry word 3 0 and plain y words; unnamed ones word 3 0x3000
     and 0x4000 on every y, the two commonest factory forms at levels 3 and 4."""
     named = name_off != 0xffff
-    yb = 0 if named else 0x4000
+    code, ybits = fa_encode_fmt().coarse_unnamed
+    yb = 0 if named else ybits
     start = links[0][0]
     body = [[(x, y, yb) for x, y in links[0][1:]]] + [[(x, y, yb) for x, y in l] for l in links[1:]]
     npts = 1 + sum(len(b) for b in body)
-    head = [(0x8000 if level != 3 else 0) | npts, cls << 12, 0 if named else 0x3000, name_off, 0, 0]
+    head = [(0x8000 if level != 3 else fa_encode_fmt().l3_points) | npts, cls << 12, 0 if named else code, name_off, 0, 0]
     ids = list(range(1, len(body) + 1)) if level != 3 else [None] * len(body)
     return encode(dict(head=head, start=(start[0], start[1], yb), links=list(zip(ids, body))), level)
+
+
+def fa_encode_fmt():
+    import fa_encode
+    return fa_encode.FMT
 
 
 def shapes_of(w, g):
@@ -469,15 +475,42 @@ def road_block(plain, shapes, country):
     for i in (9, 11, 13, 15, 17):
         if w[i] not in (0, 0xffff): w[i] += shift
     w[7], w[8] = 11, shift
-    w[20] = country
+    if country is not None: w[20] = country
     return struct.pack('>22H', *w) + road + plain[44:]
 
 
-def build(levels, ways, origin, country):
+def kept_names(plain, country):
+    """What a factory background record's names section holds that a rebuild keeps: the
+    place, water and POI names as (bytes, count), and the area codes most of its items carry
+    for the country, or zeros."""
+    import rd_build
+    w = struct.unpack_from('>22H', plain)
+    if w[11] == 0xffff: return (b'', 0), (0, 0, 0)
+    sec = plain[4 * w[11]:4 * (w[11] + w[12])]; h = struct.unpack_from('>12H', sec)
+    if h[0] != 6: return (b'', 0), (0, 0, 0)
+    base = rd_build.other_labels(rd_build.labels_unpadded(sec[24:4 * h[4]] if h[4] != 0xffff else sec[24:]))
+    seen = collections.Counter()
+    if h[4] != 0xffff:
+        sub = sec[4 * h[4]:]; o = 16
+        for _ in range(struct.unpack_from('>H', sub, 2)[0]):
+            if o + 18 > len(sub): break
+            it = struct.unpack_from('>9H', sub, o)
+            if it[1] < 9: break
+            if it[3:6] == (6, 0x0bc0, country): seen[it[6:9]] += 1
+            o += 2 * it[1]
+    return base, (seen.most_common(1)[0][0] if seen else (0, 0, 0))
+
+
+def build(levels, ways, origin, country, keep=False):
     """Put road shapes into a coarse file's section-1 directories, as lev_build lays them
     out: levels {level: [directory]}, rows of records {'plain': bytes}, background in the
-    last pair of each column. Returns {level: (records, shapes, points, labels)}."""
+    last pair of each column. Returns {level: (records, shapes, points, labels)}.
+
+    keep is for a factory file whose roads road_strip.py took out: a background record keeps
+    its own names and its level-5 country, an item takes the record's area codes, and level
+    5 gets no sub-table, as on the QY7 card."""
     import fa_encode, rd_build
+    x_base = fa_encode.FMT.x_base
     stats = {}
     for level in (3, 4, 5):
         sel = [dict(w) for w in ways if w['hw'] in LEVEL_CLASSES[level]]
@@ -489,7 +522,7 @@ def build(levels, ways, origin, country):
                 for i in range(0, len(run) - 1, MAXPTS - 1):
                     piece = run[i:i + MAXPTS]
                     if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece))
-        dirs = {(D['y'] if level == 3 else origin[0], (D['x'] if level == 3 else origin[1])): D for D in levels[level]}
+        dirs = {(D['y'], (D['x'] + x_base) & 0xffff) if level == 3 else tuple(origin): D for D in levels[level]}
         nrec = nsh = npt = nlab = 0
         for (y0, x0, row, col), items in sorted(per.items()):
             D = dirs.get((y0, x0))
@@ -498,13 +531,14 @@ def build(levels, ways, origin, country):
             bg = D['rows'][row][col * ppc + ppc - 1]
             if bg is None: continue
             labels = list(dict.fromkeys('2=' + ref for _, ref, _ in items if ref))
-            _, offs = fa_encode.names_section(labels, [])
+            base, area = kept_names(bg['plain'], country) if keep else ((b'', 0), None)
+            _, offs = fa_encode.names_section(labels, [], base)
             shapes = [shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff) for cls, ref, piece in items]
-            subs = [fa_encode.item_words(sh, 2, sh[4], country) for sh in shapes]
-            section, _ = fa_encode.names_section(labels, subs)
-            plain = rd_build.merge_names(bg['plain'], section)
+            subs = [fa_encode.item_words(sh, 2, sh[4], country, area) for sh in shapes]
+            section, _ = fa_encode.names_section(labels, None if keep and level == 5 else subs, base)
+            plain = rd_build.replace_names(bg['plain'], section) if keep else rd_build.merge_names(bg['plain'], section)
             if level == 5:
-                D['rows'][row][col] = dict(plain=road_block(plain, shapes, country))
+                D['rows'][row][col] = dict(plain=road_block(plain, shapes, None if keep else country))
             else:
                 code = struct.unpack_from('>2H', plain, 0)
                 D['rows'][row][col * ppc + ppc - 1] = dict(plain=plain)

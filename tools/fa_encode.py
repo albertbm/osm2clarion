@@ -378,7 +378,8 @@ def parse_record(plain, level=1):
 
 def names_section(labels, items, base=(b'', 0)):
     """Names section: road-label entries plus one sub-table item per shape. Returns (bytes, {label: word offset}).
-    base: (label bytes, count) already in the record, kept in front so their offsets still hold."""
+    base: (label bytes, count) already in the record, kept in front so their offsets still hold.
+    items None leaves the sub-table out, as a QY7 level-5 record does."""
     import struct as _s
     body = base[0]; offs = {}
     for name in labels:
@@ -387,6 +388,8 @@ def names_section(labels, items, base=(b'', 0)):
         offs[name] = (24 + len(body)) // 2
         body += _s.pack('>HHHHH', ROAD_LABEL, FMT.label_flags, 0, 0, len(text)) + text
     while len(body) % 4: body += b'\0'
+    if items is None:
+        return _s.pack('>HH', 6, base[1] + len(labels)) + b'\xff\xff\x00\x00' * 5 + body, offs
     sub = _s.pack('>HH', 8, len(items)) + b'\xff\xff\x00\x00' * 3 + b''.join(_s.pack('>9H', *it) for it in items)
     while len(sub) % 4: sub += b'\0'
     hdr = _s.pack('>HH', 6, base[1] + len(labels)) + b'\xff\xff\x00\x00' + _s.pack('>HH', (24 + len(body)) // 4, len(items)) + b'\xff\xff\x00\x00' * 3
