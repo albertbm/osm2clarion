@@ -2,6 +2,9 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """HOUSE001 building files: the level-0 map the unit draws at building scale, one file per
 level-2 parcel (7.5' x 5'), named B<mesh y><row><1024-mesh x><col>, section 5 level 0.
+
+--jobs N spreads the polygon unions and the files over N forked processes (default 6). The
+files come out the same for any N.
 """
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -129,9 +132,13 @@ def no_holes(p):
 class Layer:
     """One polygon class of one layer, indexed for clipping."""
     def __init__(self, layer, cls, kind, geoms, floors=0):
+        import shapely
         from shapely.strtree import STRtree
         self.layer, self.cls, self.kind, self.floors = layer, cls, kind, floors
         self.geoms = [g for g in geoms if not g.is_empty]
+        # the sea and the big area unions have 100k+ vertices; unprepared, each parcel's
+        # intersects() walked all of them
+        shapely.prepare(self.geoms)
         self.tree = STRtree(self.geoms)
 
     def shapes(self, rect, lon0, lat0, w, h):
@@ -287,7 +294,7 @@ def areas(polys, to_m, to_deg, tol=3.0, min_area=100, within=None):
     return [to_deg(p) for p in polygons(u.simplify(tol, preserve_topology=True)) if p.area >= min_area]
 
 
-def road_layers(path, to_m, to_deg):
+def road_polys(path, to_m, to_deg):
     """OSM roads buffered by a width per class and merged into one street-area layer."""
     import json
     from shapely.geometry import LineString
@@ -295,7 +302,7 @@ def road_layers(path, to_m, to_deg):
     polys = [to_m(LineString(w['nodes'])).buffer(WIDTH[w['hw']] / 2, cap_style='flat')
              for w in json.load(open(path)) if w.get('hw') in WIDTH and len(w['nodes']) >= 2]
     u = unary_union(polys).simplify(0.5)
-    return [Layer(ROAD_LAYER, ROAD_CLASS, AREA, [to_deg(p) for p in polygons(u)])]
+    return [to_deg(p) for p in polygons(u)]
 
 
 def coast_land(path, bbox):
@@ -304,6 +311,40 @@ def coast_land(path, bbox):
     import bg_tiles
     land = bg_tiles.load_land(path)[0].intersection(box(*bbox).buffer(0.01))
     return land, box(*bbox).difference(land)
+
+
+_SHARED = None   # what forked workers read instead of having it pickled to them
+
+
+def forked(shared, fn, items, workers):
+    """fn(shared, item) for each item, in order, over forked processes that inherit `shared`."""
+    global _SHARED
+    if workers <= 1 or len(items) <= 1:
+        return [fn(shared, i) for i in items]
+    import multiprocessing
+    _SHARED = shared
+    try:
+        with multiprocessing.get_context('fork').Pool(min(workers, len(items))) as pool:
+            return pool.map(_call, [(fn, i) for i in items], chunksize=1)
+    finally:
+        _SHARED = None
+
+
+def _call(job):
+    fn, item = job
+    return fn(_SHARED, item)
+
+
+def run_job(jobs, i):
+    _, fn, args, kw = jobs[i]
+    return fn(*args, **kw)
+
+
+def file_job(args, cell):
+    layers, hdr, keep_empty, hard, dense = args
+    cc, cv, pk = {}, {}, []
+    data = build_file(cell, layers, hdr, keep_empty=keep_empty, counts=cc, verts=cv, peak=pk, hard=hard, dense=dense)
+    return data, cc, cv, pk
 
 
 def main(argv):
@@ -321,6 +362,7 @@ def main(argv):
     dense = int(opt('--dense', '0'))
     stats = opt('--stats', None)
     cellpath = opt('--cells', None)
+    workers = int(opt('--jobs', str(min(6, os.cpu_count() or 1))))
     src, outdir = argv
     hdr = dict(db_bounds=(4800, 1280, -1200, 4080), data_version='17/09/01/01', source=None)
     if template:
@@ -334,24 +376,31 @@ def main(argv):
     if coast:
         assert bbox, '--coast needs --bbox'
         land, sea = coast_land(coast, tuple(map(float, bbox.split(','))))
-    layers = []
+    jobs = []
     for cls in sorted({KIND_CLASSES[k] for k in kinds if k != 'building'}):
         polys = [p for k in kinds if KIND_CLASSES[k] == cls for p in by.get(k, [])]
         water = cls == KIND_CLASSES['water']
         if water and sea is not None:
             polys += polygons(sea)
         if polys:
-            layers.append(Layer(*cls, AREA, areas(polys, to_m, to_deg, within=None if water else land)))
+            jobs.append((cls, areas, (polys, to_m, to_deg), dict(within=None if water else land)))
     if roads:
-        layers += road_layers(roads, to_m, to_deg)
-    hard = None
+        jobs.append(('roads', road_polys, (roads, to_m, to_deg), {}))
     BLD = KIND_CLASSES['building']
     if 'building' in kinds and by.get('building'):
-        merged = merge_blocks(by['building'], to_m, to_deg)
-        print('buildings: %d footprints in, %d blocks' % (len(by['building']), len(merged)))
-        layers.append(Layer(*BLD, AREA, merged, floors))
+        jobs.append(('blocks', merge_blocks, (by['building'], to_m, to_deg), {}))
         if dense:
-            hard = Layer(*BLD, AREA, merge_blocks(by['building'], to_m, to_deg, gap=1.0, tol=4.0, min_area=60), floors)
+            jobs.append(('hard', merge_blocks, (by['building'], to_m, to_deg), dict(gap=1.0, tol=4.0, min_area=60)))
+    done = dict(zip([j[0] for j in jobs], forked(jobs, run_job, range(len(jobs)), workers)))
+    layers = [Layer(*cls, AREA, done[cls]) for cls, *_ in jobs if isinstance(cls, tuple)]
+    if roads:
+        layers.append(Layer(ROAD_LAYER, ROAD_CLASS, AREA, done['roads']))
+    hard = None
+    if 'blocks' in done:
+        print('buildings: %d footprints in, %d blocks' % (len(by['building']), len(done['blocks'])))
+        layers.append(Layer(*BLD, AREA, done['blocks'], floors))
+        if dense:
+            hard = Layer(*BLD, AREA, done['hard'], floors)
     cells = set(box_cells(*map(float, bbox.split(',')))) if bbox else set()
     if cellpath:
         import json
@@ -367,10 +416,9 @@ def main(argv):
     fp = [p.representative_point() for p in by.get('building', [])] if 'building' in kinds else []
     fptree = STRtree(fp) if fp else None
     counts, table = {}, []
-    for cell in sorted(cells):
-        cc, cv, pk = {}, {}, []
-        data = build_file(cell, layers, hdr, keep_empty=bool(bbox), counts=cc, verts=cv, peak=pk,
-                          hard=hard if layers[-1].cls == BLD[1] else None, dense=dense)
+    order = sorted(cells)
+    args = (layers, hdr, bool(bbox), hard if layers[-1].cls == BLD[1] else None, dense)
+    for cell, (data, cc, cv, pk) in zip(order, forked(args, file_job, order, workers)):
         hardened = cc.pop(('hard', 0), 0)
         for k, n in cc.items():
             counts[k] = counts.get(k, 0) + n
