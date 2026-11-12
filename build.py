@@ -383,7 +383,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         run(py, tool('poi_apply.py'), '--config', conf, work, part, os.path.join(stage, 'poi-' + unit),
             env=env_v)
         stamp('poi_apply', '%s %s' % (work, out), part)
-        os.replace(part, s1)
+        shutil.move(part, s1)    # the stage dir may be on another volume than the card
 
     def poicap(src, dst, workdir, *extra):
         run(poi_py, tool('build_poicap.py'), '--config', conf, '--area', area_arg, *extra,
