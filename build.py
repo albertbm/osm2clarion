@@ -313,7 +313,7 @@ def make_config(P, local, cells, base, osm, work):
     cfg = dict(
         units=units, cells=cells, sec4_cells=need('build', 'sec4_cells'),
         areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in need('areas').items()},
-        dealer=need('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
+        dealer=raw.get('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
         camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=need('card_naming'),
         cards_log=need('build', 'cards_log'), poicap=need('poicap'), poi_python=B.get('poi_python', sys.executable),
         roads_poc=need('roads_poc'), addr=need('addr'), allow_leftovers=B.get('allow_leftovers', []),
@@ -332,6 +332,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         raise SystemExit('--out must be CARDS/builds/%s-NNN-%s-SLUG.img' % (naming['prefix'], '|'.join(naming['units'])))
     number, unit, slug = int(m.group(1)), m.group(2), m.group(3)
     cards = os.path.dirname(os.path.dirname(out))
+    os.makedirs(os.path.dirname(out), exist_ok=True)
     manifest = out[:-4] + '.manifest.json'
     # the card is built under .partial names and renamed only after the check step passes
     part, mpart = out + '.partial', manifest + '.partial'

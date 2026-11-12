@@ -24,9 +24,10 @@ postcodes = "/path/to/postnumeraskra.csv"
 # [build]
 # poi_python = "/path/to/python3"
 
-# Optional. The profile anchors POI search on a public landmark; this replaces it with your
-# own place. Every field is needed: tile_l1 and tile_l2 are the icon's parcel positions
-# (level, y0, x0, row, col, px, py) and house_cell the HOUSE001 file it sits in.
+# Optional. One place of your own, such as your dealer, with a POI icon and a POINT record.
+# street, town and house must match the address register as the card spells them, in
+# capitals with accents. tile_l1 and tile_l2 are the icon's parcel positions (level, y0,
+# x0, row, col, px, py), measured by hand, and house_cell the HOUSE001 file it sits in.
 # [dealer]
 # lon = -21.9312
 # lat = 64.1457
@@ -35,7 +36,7 @@ postcodes = "/path/to/postnumeraskra.csv"
 # category = 43
 # name = "NAME"
 # street = "STREET"
-# town = "TOWN"
+# town = "REYKJAVÍK"
 # house = "1"
 # icon = "0x806c"
 # tile_l1 = [1, 96, 902, 6, 5, 348, 32]

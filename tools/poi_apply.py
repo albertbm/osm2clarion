@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Apply one dealer/POI set to a generated BUILD_DIR, write it onto CARD.img and refresh
-DRSTR: a road-tile icon (poi_badge.py), every camera in the config's camera file
-(camera_write.py), a building-scale icon (house_badge.py) and a POINT record anchored on
-ADDRE (point_add.py).
+"""Apply the cameras and the optional [dealer] to a generated BUILD_DIR, write them onto
+CARD.img and refresh DRSTR: every camera in the config's camera file (camera_write.py) and,
+for a dealer, a road-tile icon (poi_badge.py), a building-scale icon (house_badge.py) and a
+POINT record anchored on ADDRE (point_add.py).
 
     poi_apply.py --config PATH BUILD_DIR CARD.img OUT_DIR
 """
@@ -44,7 +44,7 @@ def run(argv):
     if not cfg_path:
         raise SystemExit('poi_apply.py needs --config PATH (or $O2C_CONFIG)')
     config = json.load(open(os.path.expanduser(cfg_path)))
-    dealer = config['dealer']
+    dealer = config.get('dealer')
     road_tiles = config['road_tiles']
 
     B, img, out = a.build_dir, a.card, a.out_dir
@@ -54,19 +54,23 @@ def run(argv):
         shutil.rmtree(os.path.join(out, d), ignore_errors=True)
 
     # 1: dealer/POI icon onto the road tile holding the dealer address
-    rd_in = B + '/rd/%s.DAT' % dealer['road_tile']
-    badge_out = out + '/%s.badge.DAT' % dealer['road_tile']
-    poi_badge.main([rd_in, badge_out, '--icon', dealer['icon'],
-                    '--pos', pos_arg(dealer['tile_l1']), '--pos', pos_arg(dealer['tile_l2'])])
+    if dealer:
+        rd_in = B + '/rd/%s.DAT' % dealer['road_tile']
+        badge_out = out + '/%s.badge.DAT' % dealer['road_tile']
+        poi_badge.main([rd_in, badge_out, '--icon', dealer['icon'],
+                        '--pos', pos_arg(dealer['tile_l1']), '--pos', pos_arg(dealer['tile_l2'])])
+    else:
+        print('no [dealer]: no dealer icon or POINT record')
 
     # 2: every OSM camera, at level 1 and level 2, over every road tile the build touches
     # (camera_write.py: several can share a parcel). The dealer tile goes in badged;
     # the rest go in as rd_build left them.
     cam_in, cam_out = out + '/cam_in', out + '/cam_out'
     os.makedirs(cam_in, exist_ok=True)
-    shutil.copy(badge_out, cam_in + '/%s.DAT' % dealer['road_tile'])
+    if dealer:
+        shutil.copy(badge_out, cam_in + '/%s.DAT' % dealer['road_tile'])
     for name in road_tiles:
-        if name != dealer['road_tile']:
+        if not dealer or name != dealer['road_tile']:
             shutil.copy(B + '/rd/%s.DAT' % name, cam_in + '/%s.DAT' % name)
     cameras = camera_write.load_cameras(os.path.expanduser(config['data'].get('cameras', '')), config['camera_speed_fallback'])
     report, missing = camera_write.write_cameras(cameras, cam_in, cam_out)
@@ -77,46 +81,51 @@ def run(argv):
         shutil.copy(src, final_tiles[name])
     print('cameras placed:', {cid: len(hits) for cid, hits in report.items()})
 
-    # 3: building-scale icon
-    house_in = B + '/house/' + dealer['house_cell'] + '.DAT'
-    house_out = out + '/' + dealer['house_cell'] + '.final.DAT'
-    house_badge.main([house_in, house_out, '--lon', str(dealer['lon']), '--lat', str(dealer['lat']),
-                      '--icon', dealer['icon']])
+    if dealer:
+        # 3: building-scale icon
+        house_in = B + '/house/' + dealer['house_cell'] + '.DAT'
+        house_out = out + '/' + dealer['house_cell'] + '.final.DAT'
+        house_badge.main([house_in, house_out, '--lon', str(dealer['lon']), '--lat', str(dealer['lat']),
+                          '--icon', dealer['icon']])
 
-    # 4: dealer POINT record, ADDRE-anchored
-    point_plain = B + '/addr/POINT001.DAT'
-    addre_plain = B + '/addr/ADDRE001.DAT'
-    pcmp, pind = wrap(open(point_plain, 'rb').read())
-    acmp, aind = wrap(open(addre_plain, 'rb').read())
-    open(out + '/POINT001.in.cmp', 'wb').write(pcmp)
-    open(out + '/POINT001.in.ind', 'wb').write(pind)
-    open(out + '/ADDRE001.cmp', 'wb').write(acmp)
-    open(out + '/ADDRE001.ind', 'wb').write(aind)
-    dealer_out = out + '/dealer_out'
-    os.makedirs(dealer_out, exist_ok=True)
-    point_add.main([out + '/POINT001.in.cmp', out + '/POINT001.in.ind', dealer_out,
-                    str(dealer['lat']), str(dealer['lon']),
-                    '--category', str(dealer['category']), '--name', dealer['name'],
-                    '--street', dealer['street'], '--town', dealer['town'], '--house', dealer['house'],
-                    '--addre', out + '/ADDRE001.cmp', out + '/ADDRE001.ind', '--data-id', '1'])
+        # 4: dealer POINT record, ADDRE-anchored
+        point_plain = B + '/addr/POINT001.DAT'
+        addre_plain = B + '/addr/ADDRE001.DAT'
+        pcmp, pind = wrap(open(point_plain, 'rb').read())
+        acmp, aind = wrap(open(addre_plain, 'rb').read())
+        open(out + '/POINT001.in.cmp', 'wb').write(pcmp)
+        open(out + '/POINT001.in.ind', 'wb').write(pind)
+        open(out + '/ADDRE001.cmp', 'wb').write(acmp)
+        open(out + '/ADDRE001.ind', 'wb').write(aind)
+        dealer_out = out + '/dealer_out'
+        os.makedirs(dealer_out, exist_ok=True)
+        point_add.main([out + '/POINT001.in.cmp', out + '/POINT001.in.ind', dealer_out,
+                        str(dealer['lat']), str(dealer['lon']),
+                        '--category', str(dealer['category']), '--name', dealer['name'],
+                        '--street', dealer['street'], '--town', dealer['town'], '--house', dealer['house'],
+                        '--addre', out + '/ADDRE001.cmp', out + '/ADDRE001.ind', '--data-id', '1'])
 
     # 5: write onto the card
-    point_size = os.path.getsize(dealer_out + '/POINT001.DAT')
     ed = Editor(img)
     for name, path in final_tiles.items():
         ed.write('MAPAL001', '%s.DAT' % name, open(path, 'rb').read())
-    ed.write('HOUSE001', dealer['house_cell'] + '.DAT', open(house_out, 'rb').read())
-    ed.write('REFER001', 'POINT001.DAT.cmp', open(dealer_out + '/POINT001.DAT.cmp', 'rb').read())
-    ed.write('REFER001', 'POINT001.DAT.ind', open(dealer_out + '/POINT001.DAT.ind', 'rb').read())
+    if dealer:
+        point_size = os.path.getsize(dealer_out + '/POINT001.DAT')
+        ed.write('HOUSE001', dealer['house_cell'] + '.DAT', open(house_out, 'rb').read())
+        ed.write('REFER001', 'POINT001.DAT.cmp', open(dealer_out + '/POINT001.DAT.cmp', 'rb').read())
+        ed.write('REFER001', 'POINT001.DAT.ind', open(dealer_out + '/POINT001.DAT.ind', 'rb').read())
     ed.close()
 
     # 6: refresh DRSTR for every changed entry
     refresh = {('MAPAL001', '%s.DAT' % name): None for name in final_tiles}
-    refresh[('HOUSE001', dealer['house_cell'] + '.DAT')] = None
-    refresh[('REFER001', 'POINT001.DAT')] = point_size
+    shown = list(final_tiles.values())
+    if dealer:
+        refresh[('HOUSE001', dealer['house_cell'] + '.DAT')] = None
+        refresh[('REFER001', 'POINT001.DAT')] = point_size
+        shown += [house_out, dealer_out + '/POINT001.DAT.cmp', dealer_out + '/POINT001.DAT.ind']
     sizes, free = drstr_refresh.refresh(img, refresh)
     print('drstr refreshed:', sizes, 'free', free)
-    for p in list(final_tiles.values()) + [house_out, dealer_out + '/POINT001.DAT.cmp', dealer_out + '/POINT001.DAT.ind']:
+    for p in shown:
         print(sha(p), p)
 
 

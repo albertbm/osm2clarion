@@ -52,7 +52,7 @@ class TestConfig(unittest.TestCase):
 
     def test_config_is_json_with_the_tools_keys(self):
         cfg = json.loads(json.dumps(config()))
-        for key in ('units', 'cells', 'sec4_cells', 'areas', 'dealer', 'road_tiles', 'data', 'card_naming',
+        for key in ('units', 'cells', 'sec4_cells', 'areas', 'road_tiles', 'data', 'card_naming',
                     'cards_log', 'poicap', 'roads_poc', 'addr'):
             self.assertIn(key, cfg)
         self.assertEqual(cfg['cells'], ['B58R078R', 'B58R080R', 'B60R078R', 'B60R080R'])
@@ -64,10 +64,13 @@ class TestConfig(unittest.TestCase):
 
     def test_a_missing_table_is_named(self):
         P = clarion_profile.load('iceland')
-        P.raw = {k: v for k, v in P.raw.items() if k != 'dealer'}
+        P.raw = {k: v for k, v in P.raw.items() if k != 'poicap'}
         with self.assertRaises(SystemExit) as e:
             build.make_config(P, {}, P.cells, '/b.img', None, '/work')
-        self.assertIn('[dealer]', str(e.exception))
+        self.assertIn('[poicap]', str(e.exception))
+
+    def test_the_dealer_is_optional(self):
+        self.assertIsNone(config()['dealer'])
 
     def test_icode_defaults_to_the_base_card_and_local_wins(self):
         self.assertEqual(config()['units']['ZE1']['icode'], '/cards/bases/base.img')
