@@ -45,6 +45,10 @@ def tool(name):
     return os.path.join(TOOLS, name)
 
 
+# the OSM readers need pyosmium, which the interpreter running build.py may not have
+OSM_PY = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python']
+
+
 def expand(path):
     return os.path.expanduser(path)
 
@@ -142,8 +146,8 @@ def area_steps(P, prof, base, out, work, area, osm):
 
     def osm_step():
         pbf = need_osm()
-        run(tool('osm_turns.py'), pbf, turns_all)
-        run(tool('osm_roads.py'), pbf, roads, '--public', '--relations', ','.join(map(str, A['relations'])),
+        run(*OSM_PY, tool('osm_turns.py'), pbf, turns_all)
+        run(*OSM_PY, tool('osm_roads.py'), pbf, roads, '--public', '--relations', ','.join(map(str, A['relations'])),
             '--turns', turns_all, turns, '--ramp-names')
 
     def strip():
@@ -259,9 +263,9 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         with open(conf, 'w', encoding='utf-8') as f:
             json.dump(cfg, f, ensure_ascii=False, indent=1)
         if not os.path.exists(turns):
-            run(py, tool('osm_turns.py'), pbf, turns, env=env)
+            run(*OSM_PY, tool('osm_turns.py'), pbf, turns, env=env)
         if not os.path.exists(coast):
-            run(py, tool('extract_coast.py'), pbf, coast, env=env)
+            run(*OSM_PY, tool('extract_coast.py'), pbf, coast, env=env)
 
     def cards_step():
         prep()
