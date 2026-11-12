@@ -15,75 +15,152 @@ the Nissan e-NV200 (QY8202PB), European and US market. The format is undocumente
 | Route guidance, including long routes on the coarse graph | works |
 | Roundabout ring markers | works |
 | Speed-limit signs | works |
-| Speed cameras from OSM | extractor and writer exist, not wired into the Iceland build |
+| Speed cameras from OSM | works when a camera file is given (`tools/extract_cameras.py` makes one) |
 | Address database and search | works: street search, City-first, house numbers, tested on the bench and in a car |
 | POI icons and search | works |
 | House numbers along a street | works |
-| Signposts, names on unnamed ramps | built and unit-tested, not wired into the Iceland build |
+| Names on unnamed ramps | written by both builds |
+| Signposts | built and unit-tested, not written by either build |
 | Lake, fjord and river names | not written |
 | Showing the card's own map version | unsolved |
 
-Addresses come from a CSV import (Iceland's own national registry, or any source in the
-same shape) or from OSM; see [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
+Addresses come from a CSV import. The only reader today is for Iceland's address register;
+another country needs its columns mapped in `tools/addr/addr_csv.py`. See
+[ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
 
 Iceland is a country added to a card that lacked it. Finland replaces the roads of one town on
 a card that already has the country. Updating a whole country is untested.
+
+## Install
+
+- [uv](https://docs.astral.sh/uv/). `uv run build.py` makes a `.venv` with Python 3.12 and
+  the shapely and osmium versions in `uv.lock`, and every step runs under it. Another shapely
+  can move a point and change the card's bytes, so use the locked versions.
+- macOS or Linux. On APFS (macOS), btrfs or XFS a card copy shares blocks with its base and
+  costs almost nothing; elsewhere each copy is a full 16 GB.
+- Disk: an Iceland build needs about 1 GB in `--work` plus the card (16 GB), and up to three
+  card copies at once where copies cannot share blocks. Finland needs 4.6 GiB in `--work`
+  and 7.4 GiB for the card.
+
+```
+git clone https://github.com/albertbm/osm2clarion
+cd osm2clarion
+uv run python -m unittest discover -s tests
+```
+
+## The base card
+
+Every build starts from a full image of a card that runs in your unit. The build reads it and
+never writes it. The image holds the unit's software and the factory map database, which is
+licensed data: keep it to yourself.
+
+To make one, take the SD card out of the unit, put it in a reader and copy the whole device,
+not a partition. Find the device with `diskutil list` (macOS) or `lsblk` (Linux), then:
+
+```
+sudo dd if=/dev/rdisk4 of=IS-000-ZE1-base.img bs=4m      # macOS, rdiskN for disk4
+sudo dd if=/dev/sdb of=IS-000-ZE1-base.img bs=4M         # Linux
+```
+
+Keep the image read-only (`chmod a-w`) and keep the card itself as it was.
+
+The unit checks every map file's DATA VERSION against the one stored in its own memory, and
+refuses a card that does not match. A build stamps the version that the profile's
+`[units.UNIT]` table gives, so the base card must come from a unit of that type with that
+version. The Iceland profile knows `14/11/17/01` (ZE0, 2014 database) and `17/09/01/01`
+(ZE1 and ME0, 2017 database). To see what a base carries:
+
+```
+uv run tools/card_verify.py --card IS-000-ZE1-base.img --version 17/09/01/01
+```
+
+Only the `version` line matters for a base card; it passes when every stamp matches.
 
 ## Build a card
 
 One command builds every card. The profile in `profiles/NAME.toml` holds everything that
 differs between regions: the areas, the cells, the units and their DATA VERSION, what gets
-written, and where the data files are.
+written, and where the data files are. `[build] mode` picks the chain.
 
 ```
-uv run --with osmium --with shapely python build.py --profile NAME \
-    --base BASE-CARD.img --out OUT.img
+uv run build.py --profile NAME --base BASE-CARD.img --out OUT.img [options]
 ```
 
-`--base` is read, never written. `--work DIR` holds what is generated (default `build/` followed by
-the name of `--out`). `--list` names the steps, `--only STEP` runs one and `--from STEP`
-resumes at one. Each step prints the command it runs. Both builds need `shapely` and `osmium`
-for Python; the `uv run` above fetches them.
+| Option | What |
+|---|---|
+| `--work DIR` | where generated files go (default `build/` and the name of `--out`); a rerun reuses the steps whose inputs did not change |
+| `--osm FILE` | the OSM extract, instead of the profile's `pbf` |
+| `--area A,B` | build only these `[areas.NAME]` tables |
+| `--local FILE` | the local file (see below) |
+| `--list` | print the steps |
+| `--only STEP` | run one step |
+| `--from STEP` | run from one step to the end |
+| `--what TEXT` | the description for the card's row in the cards log |
+| `--prev IMG` | an earlier card the check step compares against |
+| `--map-from CARD` | Iceland: copy the map of a finished card with the same DATA VERSION onto this unit's base |
+| `--restamp-from CARD` | Iceland: the same for a card with another DATA VERSION; every stamp is rewritten |
+
+Each step prints the command it runs, so a step can be repeated by hand. The card is written
+as `OUT.img.partial` and renamed to `OUT.img` only after the check step passes. A failed card
+stays at `.partial`.
 
 Paths and values that belong to one machine go in a local file, merged over the profile table
 by table. The profile's `[build] local` names it (`local/NAME.toml`, ignored by git), and
-`--local FILE` overrides that. Relative data paths in the profile are read from the repository
-root.
+`--local FILE` overrides that. Relative data paths are read from the repository root.
 
-### Iceland, QY8
+### Iceland (QY8, generate mode)
 
-`[build] mode = "generate"`. The card is built from scratch on the unit's base card:
-background, land use, roads with turn restrictions, the coarse file with its graph, the
-building-scale map, addresses and POI icons, for every `[areas.NAME]` table (`--area a,b`
-picks some). `--out` is `CARDS/builds/IS-NNN-UNIT-SLUG.img`: the unit and the slug come from
-that name, `CARDS` is two directories up, and the card list there (`cards_log`) gets a row.
-`--what TEXT` is that row's description, `--prev IMG` a card to compare against at the end.
+The card is built from scratch on the unit's base card: background, land use, roads with turn
+restrictions, the coarse file with its graph, the building-scale map, addresses and POI icons
+for every `[areas.NAME]` table.
 
-The profile needs, per unit, a `[units.UNIT]` table with the `version` the unit checks. The
-local file adds `icode` (the card the ICODE files are read from; the base card when left out),
-an optional `consent_cmd` run on the finished image (`{img}` stands for it), the `[data]`
-paths, a `[dealer]` address and `poi_python`, the interpreter for the POI steps.
-
-`[data]` holds `pbf`, `turns`, `coast`, `addresses`, `postcodes` and `cameras`. The turn
-restriction and coastline files are made from the extract when they are missing. The address
-and postcode files are Iceland's national registry in CSV; see [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
-
-### Finland, QY7
-
-`[build] mode = "area"`. For a stock European Clarion QY7221NL card (2014 database) and a
-Geofabrik `finland-latest.osm.pbf`. The card keeps its own map. The roads are stripped from
-every tile, and the roads of one town are rebuilt from OSM and written into a copy of the
-image. `profiles/finland.toml` names the town (`jyvaskyla`).
+1. Download `iceland-latest.osm.pbf` from download.geofabrik.de (Europe, Iceland).
+2. Download the address register, `Stadfangaskra.csv`, from HMS (fasteignaskra.is, open
+   data), and the postcode list from Pósturinn (postur.is) saved as `;`-separated CSV with
+   the postcode in the first column and the town in the second.
+3. Copy [examples/iceland.local.toml](examples/iceland.local.toml) to `local/iceland.toml`,
+   or anywhere and pass `--local`, and fill in the three paths in `[data]`.
+4. Build. `--out` must be `CARDS/builds/IS-NNN-UNIT-SLUG.img`: the unit (`ZE0`, `ZE1` or
+   `ME0`) and the slug come from the name, `CARDS` is two directories up, and the cards log
+   there (`CARDS/CARDS.md`) gets a row once the card passes its check.
 
 ```
-uv run --with osmium --with shapely python build.py --profile finland \
-    --base STOCK-CARD.img --osm finland-latest.osm.pbf --out NEW-CARD.img
+mkdir -p cards/builds
+uv run build.py --profile iceland --base IS-000-ZE1-base.img \
+    --out cards/builds/IS-001-ZE1-iceland.img --work work/ZE1
 ```
 
-`--area NAME` picks the town if the profile lists more than one. `--work` takes about 4.6 GiB
-and the card image is 7.4 GiB. A second area is one more `[areas.NAME]` table: an OSM
-relation, the one tile cell it sits in, and a bbox. The `[grid]` cells are left out of the
-profile: build.py takes every tile on the base card that the `[grid]` boxes touch.
+A full build takes 10 to 40 minutes; most of it is the building-scale map.
+
+The three units share the map. Once one card is built, the other units' cards take a minute:
+
+```
+uv run build.py --profile iceland --base IS-000-ZE0-base.img \
+    --out cards/builds/IS-001-ZE0-iceland.img --work work/ZE0 \
+    --restamp-from cards/builds/IS-001-ZE1-iceland.img
+```
+
+`--restamp-from` rewrites the DATA VERSION, so it serves a unit on another database (ZE1 to
+ZE0). `--map-from` copies the files as they are and refuses a source with another version
+(ZE1 to ME0). Both keep the target's own software and settings.
+
+The unit must also accept a car position west of 20 W first; see the shipment bound below.
+
+### Finland (QY7, area mode)
+
+The base card keeps its own map. The roads are stripped from every tile, and the roads of one
+town are rebuilt from OSM. For a stock European Clarion QY7221NL card (2014 database) and
+Geofabrik's `finland-latest.osm.pbf`. `profiles/finland.toml` names the town (`jyvaskyla`).
+
+```
+uv run build.py --profile finland --base STOCK-CARD.img \
+    --osm finland-latest.osm.pbf --out NEW-CARD.img --work work/finland
+```
+
+`--area NAME` picks the town if the profile lists more than one. A second area is one more
+`[areas.NAME]` table: an OSM relation, the one tile cell it sits in, and a bbox. The `[grid]`
+cells are left out of the profile: build.py takes every tile on the base card that the
+`[grid]` boxes touch.
 
 Limits of the Finland card:
 
@@ -93,15 +170,32 @@ Limits of the Finland card:
   likely to crash.
 - Guidance has not been tried on a unit.
 
+## Try a card before the car
+
+A card image can be booted in a QEMU-based emulator of the Clarion unit before it goes into a
+car, with the unit's own NAND dump. That is the cheap way to see whether the unit accepts the
+card and draws the map. Address search and the car position need a real GPS feed or a drive,
+so the final test is on the unit.
+
+## The 20 W shipment bound
+
+The unit's firmware drops any GPS position outside its shipment area. On European units that
+is longitude -20 to 68. Outside it, the map draws but the car never appears, and Adjust
+Current Location fails too. Iceland lies west of -20, so an Iceland card needs the unit's
+firmware patched: a table in the navigation program on the unit's NAND flash. Finland and the
+rest of Europe lie inside the bound and need no patch.
+
+The patch is a separate step, not in this repository. It needs a dump of the unit's NAND, the
+table edited, and the dump written back.
+
 ## Profiles
 
-One TOML per region in `profiles/`. `python3 tools/clarion_profile.py iceland` prints what
-the tools will read.
+One TOML per region in `profiles/`. `uv run tools/clarion_profile.py iceland` prints what the
+tools will read. The keys are explained in comments in `profiles/iceland.toml` and
+`profiles/finland.toml`.
 
 ## Limits
 
-- The firmware rejects positions outside its shipment area (longitude -20 to 68 on European
-  units). The map draws but the car never appears. A NAND patch fixes it; the card can't.
 - Stand-alone Iceland cards are built from scratch, own tiles and own coarse file. Adding
   a country to a card that already carries others is untested; the coarse file is written
   fresh, not merged into what is there.
@@ -122,10 +216,11 @@ the tools will read.
 |---|---|
 | [FORMAT.md](docs/FORMAT.md) | card files, tile grid, tile header, index |
 | [GEOMETRY.md](docs/GEOMETRY.md) | tile records, section by section |
-| [BUILD-LOG.md](docs/BUILD-LOG.md) | what the unit accepted and refused |
+| [BUILD-LOG.md](docs/BUILD-LOG.md) | how the format was worked out: what the unit accepted and refused |
+| [BUILD-STEPS.md](docs/BUILD-STEPS.md) | what each step of the Iceland chain writes, and the options behind it |
 | [ROAD-CLASSES.md](docs/ROAD-CLASSES.md) | road widths and the OSM mapping |
 | [LEVEL5.md](docs/LEVEL5.md) | the coarse levels |
-| [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md) | addresses: bring your own source (CSV or OSM) |
+| [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md) | addresses: the register reader and the shape another source needs |
 
 ## Licence
 
