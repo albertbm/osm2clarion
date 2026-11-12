@@ -66,6 +66,7 @@ class TestChain(unittest.TestCase):
         P = clarion_profile.load('iceland')
         plan, _ = build.generate_steps(P, P.path, '/b.img', self.out, os.path.join(self.tmp.name, 'work'),
                                        None, None, LOCAL, {})
+        self.plan = plan
         self.check = dict(plan)['check']
         with open(self.out + '.partial', 'wb') as f:
             f.write(b'card')
@@ -91,6 +92,27 @@ class TestChain(unittest.TestCase):
         with self.assertRaises(SystemExit) as e:
             self.check()
         self.assertIn('not the image build_poicap-addr wrote', str(e.exception))
+
+    def test_me0_without_consent_fails(self):
+        P = clarion_profile.load('iceland')
+        out = self.out.replace('ZE1', 'ME0')
+        plan, _ = build.generate_steps(P, P.path, '/b.img', out, os.path.join(self.tmp.name, 'work'),
+                                       None, None, LOCAL, {})
+        with self.assertRaises(SystemExit) as e:
+            dict(plan)['consent']()
+        self.assertIn('consent_cmd', str(e.exception))
+        os.replace(self.out + '.partial', out + '.partial')
+        with open(out[:-4] + '.manifest.json.partial', 'w') as f:
+            json.dump(dict(post_steps=[dict(name=n, image_sha256=self.sha) for n in build.CHAIN]), f)
+        with self.assertRaises(SystemExit) as e:
+            dict(plan)['check']()
+        self.assertIn('needs the consent step', str(e.exception))
+
+    def test_a_unit_with_no_consent_records_none(self):
+        self.manifest([])
+        dict(self.plan)['consent']()
+        with open(self.out[:-4] + '.manifest.json.partial') as f:
+            self.assertEqual(json.load(f)['consent'], 'none')
 
     def test_the_full_chain_passes_this_test(self):
         m = dict(post_steps=[dict(name=n, image_sha256=self.sha) for n in build.CHAIN])

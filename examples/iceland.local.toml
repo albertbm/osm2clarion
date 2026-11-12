@@ -9,12 +9,14 @@ pbf = "/path/to/iceland-latest.osm.pbf"
 # Þjóðskrá Íslands, in CSV; see docs/ADDRESS-IMPORT.md.
 addresses = "/path/to/Stadfangaskra.csv"
 postcodes = "/path/to/postnumeraskra.csv"
-# Optional. Speed cameras from tools/extract_cameras.py. No file means no camera icons.
+# Optional. Speed cameras from tools/extract_cameras.py. Leave it out for no camera icons;
+# a path set here must exist.
 # cameras = "/path/to/cameras.json"
 
 # Optional, per unit. icode is the card the ICODE files are read from; the base card when
 # left out. consent_cmd runs on the finished image, {img} standing for its path, for a unit
-# that needs a patch the card build does not make.
+# that needs a patch the card build does not make. The profile's ME0 sets consent = "required",
+# so an ME0 build fails without it.
 # [units.ZE1]
 # icode = "/path/to/another-ZE1-card.img"
 # consent_cmd = "/path/to/tool {img}"
@@ -38,7 +40,7 @@ postcodes = "/path/to/postnumeraskra.csv"
 # tile_l2 = [2, 96, 900, 1, 17, 599, 1032]
 
 # Optional. A speed for each camera whose OSM node has none, by camera id. A camera with
-# neither is left off the card.
+# neither fails the build, unless [build] allow_missing_speed = true leaves it off the card.
 # [camera_speed_fallback]
 # "C1-street-a" = 60
 

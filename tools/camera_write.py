@@ -103,17 +103,25 @@ def place_one(t, cam, level, cam_id):
     return dict(row=row, col=col, x=x, y=y, direction=direction, idx=s['idx'])
 
 
-def load_cameras(path, speed_fallback):
+def load_cameras(path, speed_fallback, required=False, allow_missing_speed=False):
     """cameras.json with every speed filled in. OSM rarely tags a speed on the camera node,
-    and the record needs one, so speed_fallback gives it per camera id; a camera with neither
-    is left out. No file means no cameras."""
+    and the record needs one, so speed_fallback gives it per camera id. A camera with neither
+    fails unless allow_missing_speed, which leaves it out. No file means no cameras, unless
+    the path was set on purpose (required)."""
     if not os.path.exists(path):
+        if required:
+            raise SystemExit('no camera file at %s, which the local file names' % path)
         print('no camera file at %s: the card gets no camera icons (extract_cameras.py makes one)' % path)
         return []
+    with open(path) as f:
+        listed = json.load(f)
     cams = []
-    for c in json.load(open(path)):
+    for c in listed:
         if c['speed_limit_kmh'] is None:
             if c['id'] not in speed_fallback:
+                if not allow_missing_speed:
+                    raise SystemExit('camera %s has no speed and no camera_speed_fallback entry '
+                                     '(or set [build] allow_missing_speed)' % c['id'])
                 print('camera %s has no speed and no camera_speed_fallback entry: left out' % c['id'])
                 continue
             c['speed_limit_kmh'] = speed_fallback[c['id']]

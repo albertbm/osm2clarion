@@ -13,8 +13,8 @@ step prints its command, so any of them can be run again by hand.
 | `poi` | `poi_apply.py`: the dealer icon, speed cameras, the building-scale icon and the dealer's POINT record |
 | `icons` | `build_poicap.py`: POI icons and POINT search records from the OSM extract |
 | `addr` | `build_poicap.py --house-ranges ALL --all-streets`: the address database with house-number ranges |
-| `consent` | the unit's `consent_cmd` from the local file, if it has one |
-| `check` | `card_check.py` (road graph and coarse file) and `card_verify.py` (DATA VERSION, index, CMP.LST, MMAIN, towns, inventory); renames the card on a pass |
+| `consent` | the unit's `consent_cmd` from the local file, if it has one; a unit with `consent = "required"` in the profile fails without one |
+| `check` | needs every step of the chain in the manifest and the card to be the image the last one wrote, then runs `card_check.py` (road graph and coarse file) and `card_verify.py` (DATA VERSION, index, CMP.LST, MMAIN, towns, inventory); renames the card on a pass and prints the cameras, dealer and consent the manifest records |
 
 With `--map-from` or `--restamp-from` the chain is `prep`, `map` or `restamp`, `consent`,
 `check`.

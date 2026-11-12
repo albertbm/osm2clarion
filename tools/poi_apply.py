@@ -72,7 +72,9 @@ def run(argv):
     for name in road_tiles:
         if not dealer or name != dealer['road_tile']:
             shutil.copy(B + '/rd/%s.DAT' % name, cam_in + '/%s.DAT' % name)
-    cameras = camera_write.load_cameras(os.path.expanduser(config['data'].get('cameras', '')), config['camera_speed_fallback'])
+    cameras = camera_write.load_cameras(os.path.expanduser(config['data'].get('cameras', '')),
+                                        config['camera_speed_fallback'], config.get('cameras_required', False),
+                                        config.get('allow_missing_speed', False))
     report, missing = camera_write.write_cameras(cameras, cam_in, cam_out)
     assert not missing, 'camera(s) outside the built tiles: %r' % missing
     final_tiles = {}
@@ -124,6 +126,9 @@ def run(argv):
         refresh[('REFER001', 'POINT001.DAT')] = point_size
         shown += [house_out, dealer_out + '/POINT001.DAT.cmp', dealer_out + '/POINT001.DAT.ind']
     sizes, free = drstr_refresh.refresh(img, refresh)
+    # build.py records these in the manifest
+    with open(os.path.join(out, 'applied.json'), 'w') as f:
+        json.dump(dict(cameras=len(cameras), dealer='yes' if dealer else 'no'), f)
     print('drstr refreshed:', sizes, 'free', free)
     for p in shown:
         print(sha(p), p)

@@ -105,6 +105,7 @@ version = "17/09/01/01"
 
 [units.ME0]
 version = "17/09/01/01"
+consent = "required"       # the build fails without consent_cmd, which goes in the local file
 
 [areas.capital]
 # Reykjavikurborg, Seltjarnarnesbaer, Kopavogsbaer, Gardabaer, Hafnarfjardarkaupstadur, Mosfellsbaer

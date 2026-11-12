@@ -127,16 +127,32 @@ class TestCameras(unittest.TestCase):
         import camera_write
         self.assertEqual(camera_write.load_cameras('/no/such/cameras.json', {}), [])
 
-    def test_a_camera_with_no_speed_is_left_out(self):
+    def test_a_missing_explicit_camera_file_fails(self):
+        import camera_write
+        with self.assertRaises(SystemExit):
+            camera_write.load_cameras('/no/such/cameras.json', {}, required=True)
+        self.assertTrue(config({'data': {'cameras': '/no/such/cameras.json'}})['cameras_required'])
+        self.assertFalse(config()['cameras_required'])
+
+    def cams(self, **kw):
         import camera_write
         cams = [dict(id='a', speed_limit_kmh=None), dict(id='b', speed_limit_kmh=None), dict(id='c', speed_limit_kmh=50)]
         with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
             json.dump(cams, f)
         try:
-            got = camera_write.load_cameras(f.name, {'a': 60})
+            return camera_write.load_cameras(f.name, {'a': 60}, **kw)
         finally:
             os.remove(f.name)
+
+    def test_a_camera_with_no_speed_fails(self):
+        with self.assertRaises(SystemExit) as e:
+            self.cams()
+        self.assertIn('camera b', str(e.exception))
+
+    def test_a_camera_with_no_speed_is_left_out_when_allowed(self):
+        got = self.cams(allow_missing_speed=True)
         self.assertEqual([(c['id'], c['speed_limit_kmh']) for c in got], [('a', 60), ('c', 50)])
+        self.assertTrue(config({'build': {'allow_missing_speed': True}})['allow_missing_speed'])
 
 
 if __name__ == '__main__':

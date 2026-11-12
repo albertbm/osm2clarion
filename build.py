@@ -32,6 +32,7 @@ import glob, hashlib, json, os, re, shlex, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.join(HERE, 'tools')
 sys.path.insert(0, TOOLS)
+import buildstamp
 import cardcopy
 import clarion_profile
 
@@ -336,7 +337,10 @@ def make_config(P, local, cells, base, osm, work):
         units=units, cells=cells, sec4_cells=need('build', 'sec4_cells'),
         areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in need('areas').items()},
         dealer=raw.get('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
-        camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=need('card_naming'),
+        camera_speed_fallback=raw.get('camera_speed_fallback', {}),
+        # a camera file the local file names must exist; the profile's default may be missing
+        cameras_required=bool(local.get('data', {}).get('cameras')),
+        allow_missing_speed=bool(B.get('allow_missing_speed')), card_naming=need('card_naming'),
         cards_log=need('build', 'cards_log'), poicap=need('poicap'),
         roads_poc=need('roads_poc'), addr=need('addr'), allow_leftovers=B.get('allow_leftovers', []),
         profile=P.path)
@@ -368,6 +372,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     # the address and POI steps stamp the unit's DATA VERSION into what they write
     env_v = dict(env, CLARION_DATA_VERSION=version)
     s1, s2 = (os.path.join(stage, '%s-%s.img' % (k, unit)) for k in ('s1', 's2'))
+    consent_required = cfg['units'][unit].get('consent') == 'required'
 
     def stamp(name, cmd, target):
         run(py, tool('buildstamp.py'), 'post-step', mpart, name, cmd, target, env=env_v)
@@ -404,6 +409,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         run(py, tool('poi_apply.py'), '--config', conf, work, part, os.path.join(stage, 'poi-' + unit),
             env=env_v)
         stamp('poi_apply', '%s %s' % (work, out), part)
+        with open(os.path.join(stage, 'poi-' + unit, 'applied.json')) as f:
+            buildstamp.set_fields(mpart, **json.load(f))
         shutil.move(part, s1)    # the stage dir may be on another volume than the card
 
     def poicap(src, dst, workdir, *extra):
@@ -426,6 +433,10 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     def consent():
         cmd = cfg['units'][unit].get('consent_cmd')
         if not cmd:
+            if consent_required:
+                raise SystemExit('unit %s needs consent_cmd: the profile sets consent = "required"' % unit)
+            print('no consent_cmd for %s: no consent patch' % unit)
+            buildstamp.set_fields(mpart, consent='none')
             return
         cmd = expand(cmd).replace('{img}', shlex.quote(part))
         print('\n$', cmd, flush=True)
@@ -434,6 +445,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if not consent_ok(r.returncode, r.stdout + r.stderr):
             raise SystemExit('consent step failed (exit %d)' % r.returncode)
         stamp('me0_consent', cfg['units'][unit]['consent_cmd'], part)
+        buildstamp.set_fields(mpart, consent='ran')
 
     def map_step():
         prep()
@@ -453,12 +465,15 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     def check():
         prep()      # card_verify reads the register through the config
-        import buildstamp
         buildstamp.set_fields(mpart, deps=buildstamp.deps())
         card_sha = cardcopy.sha256(part)
         print(card_sha, part)
         with open(mpart) as f:
-            bad = chain_problems(json.load(f), card_sha, not (args.get('map-from') or args.get('restamp-from')))
+            m = json.load(f)
+        full = not (args.get('map-from') or args.get('restamp-from'))
+        bad = chain_problems(m, card_sha, full)
+        if consent_required and m.get('consent') != 'ran':
+            bad.append('unit %s needs the consent step, which did not run' % unit)
         if bad:
             raise SystemExit('check failed: ' + '; '.join(bad))
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
@@ -473,6 +488,9 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         import cards_log
         cards_log.add(os.path.join(cards, cfg['cards_log']), number, unit, slug, args.get('what') or slug,
                       base, cards)
+        src = args.get('map-from') or args.get('restamp-from')
+        print('cameras=%s dealer=%s consent=%s' % (m.get('cameras', 'as on ' + str(src)),
+                                                   m.get('dealer', 'as on ' + str(src)), m.get('consent')))
 
     def clear_stale(plan_names):
         """A run that makes the card refuses a finished one and removes a half-made one."""
