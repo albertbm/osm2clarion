@@ -335,12 +335,14 @@ def link_ids(links, level=1):
         n[cls] += 1; out.append(n[cls])
     return out
 
-def link_groups(links, chain=True):
-    """Link positions grouped into shapes, broken before a group passes MAX_POINTS."""
+def link_groups(links, chain=True, upper=None):
+    """Link positions grouped into shapes, broken before a group passes MAX_POINTS and where
+    the level-2 link (upper, from upper_links) changes: a shape names one."""
     groups = []; npts = 0
     for k, l in enumerate(links):
         n = len(l[8]) + 1
-        if chain and groups and links[k - 1][9] == l[9] and npts + n <= MAX_POINTS:
+        same = upper is None or upper[k - 1] == upper[k]
+        if chain and groups and links[k - 1][9] == l[9] and same and npts + n <= MAX_POINTS:
             groups[-1].append(k); npts += n
         else:
             groups.append([k]); npts = n + 1
@@ -387,6 +389,71 @@ def map_turns(parcels, turns, level=1):
         if len(f) > 1 or len(t) > 1: stats['way runs through the node, ambiguous'] += 1; continue
         out.setdefault(pc, []).append((nd, f[0], t[0])); stats['mapped'] += 1
     return out, stats
+
+class WayLine:
+    """A way's polyline with the distance along it of any point on it."""
+    def __init__(self, nodes):
+        self.pts = [tuple(p) for p in nodes]
+        self.cum = [0.0]
+        for a, b in zip(self.pts, self.pts[1:]): self.cum.append(self.cum[-1] + dist(a, b))
+        self.at = collections.defaultdict(list)
+        for p, s in zip(self.pts, self.cum): self.at[p].append(s)
+
+    def along(self, geo):
+        """(metres off the line, [distances along it]); a way node gives every visit to it."""
+        geo = tuple(geo)
+        if geo in self.at: return 0.0, self.at[geo]
+        kx = 111320 * math.cos(math.radians(geo[1])); best = (float('inf'), 0.0)
+        for (a, b), s in zip(zip(self.pts, self.pts[1:]), self.cum):
+            ux, uy = (b[0] - a[0]) * kx, (b[1] - a[1]) * 111320
+            px, py = (geo[0] - a[0]) * kx, (geo[1] - a[1]) * 111320
+            n = ux * ux + uy * uy
+            t = max(0.0, min(1.0, (px * ux + py * uy) / n)) if n else 0.0
+            d = math.hypot(px - t * ux, py - t * uy)
+            if d < best[0]: best = (d, s + t * math.sqrt(n))
+        return best[0], [best[1]]
+
+    def span(self, ga, gb, length):
+        """(metres off the line, from, to) of a link; a node visited twice is taken where
+        it fits the link's length."""
+        da, sa = self.along(ga); db, sb = self.along(gb)
+        _, lo, hi = min((abs(abs(y - x) - length), min(x, y), max(x, y)) for x in sa for y in sb)
+        return da + db, lo, hi
+
+
+def upper_links(ways, l2_parcels, parcels, l2_hw):
+    """Per level-1 parcel, per link: the id of the level-2 link it is part of, or None. That
+    is the link of the same way, in the level-2 parcel over it, whose stretch of the way
+    holds the level-1 link's middle. The unit pairs the two by class and id, so a road
+    whose class differs between the levels gets None."""
+    lines = collections.defaultdict(list)
+    for w in ways: lines[w['id']].append(WayLine(w['nodes']))
+    def place(wid, ga, gb, length):
+        return min(((n,) + line.span(ga, gb, length) for n, line in enumerate(lines[wid])), key=lambda v: v[1])
+    index = collections.defaultdict(list)
+    for (y, x, row, col), P in l2_parcels.items():
+        if P.get('ring'): continue
+        for l, lid in zip(P['links'], link_ids(P['links'], 2)):
+            n, _, lo, hi = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
+            index[l[3], n, y * 8 + row, x * 8 + col].append((lo, hi, fa_encode.layer_class(l[5], 2)[1], lid))
+    out = {}; stats = collections.Counter()
+    for (y, x, row, col), P in parcels.items():
+        if P.get('ring'): continue
+        found = out[y, x, row, col] = []
+        for l in P['links']:
+            if l[5] not in l2_hw: found.append(None); continue
+            n, _, lo, hi = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
+            mid = (lo + hi) / 2
+            near = sorted((max(a - mid, mid - b, 0.0), cls, lid)
+                          for a, b, cls, lid in index.get((l[3], n, (y * 32 + row) // 4, (x * 32 + col) // 4), ()))
+            if not near or near[0][0] > UPPER_REACH: stats['no level-2 link'] += 1; found.append(None)
+            elif near[0][1] != fa_encode.layer_class(l[5], 1)[1]: stats['class differs'] += 1; found.append(None)
+            else: stats['found'] += 1; found.append(near[0][2])
+    upper_links.stats = stats
+    return out
+
+UPPER_REACH = 10    # metres a level-1 link's middle may sit outside its level-2 link's stretch
+
 
 def chains_of(links, idx, chain=True, ids=None, groups=None):
     """Shapes as [(link id, from index, to index, inner points)] chains over link_groups."""
@@ -545,7 +612,7 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to):
     return max(nbrs, key=lambda n: cosine(n[1]))[0]
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
-                   l1_index=None, signs=None, l1_adj=None, l2_hw=None):
+                   l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
     encode_parcels.unpaired = []
@@ -621,8 +688,10 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                                l1_next=l1_next)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
-        groups = link_groups(P['links'], chain)
+        up = upper.get(pc) if upper else None
+        groups = link_groups(P['links'], chain, up)
         chains = chains_of(P['links'], idx, chain, ids, groups)
+        uppers = [[fa_encode.UPPER_LEVEL[2] | up[g[0]]] if up and up[g[0]] is not None else [] for g in groups]
         L = P['links']
         hws = [L[g[0]][5] for g in groups]
         label_of = [label(L[g[0]][4], L[g[0]][6]) for g in groups]
@@ -647,14 +716,14 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             gs = {}
             for s in found: gs.setdefault(s['exit'][0], {})[s['exit'][1]] = 0
             fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area)
+                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers)
             occ = fa_encode.occurrence_words(fa_encode.build_record.last_index)
             subs = signpost_subs(found, occ)
             L_of_key = dict(zip((s['key'] for s in subs), sec4_write.sub_offsets(subs)))
             gs = {i: {n: L_of_key[occ[i][n] - 22] for n in o} for i, o in gs.items()}
             encode_parcels.signposts[pc] = subs
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area)
+                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items, base)
@@ -840,17 +909,25 @@ def main():
                 for key, nd in P['nodes'].items():
                     # the two edge nodes either side of a parcel line share one geo
                     l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
+        upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else None
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
                               l1_index=(l1_index if level == 2 else None), signs=signs,
-                              l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None))
+                              l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None),
+                              upper=upper)
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)
                          for pc, subs in sorted(encode_parcels.signposts.items())]
         parcels = own(parcels)
-        shapes = [c for P in parcels.values() for c in chains_of(P['links'], P['index'], chain)]
+        shapes = [c for pc, P in parcels.items()
+                  for c in chains_of(P['links'], P['index'], chain,
+                                     groups=link_groups(P['links'], chain, upper.get(pc) if upper else None))]
+        if upper:
+            st = upper_links.stats
+            report.append(f"level 1: links named in a shape's level-2 word {st['found']}, on a level-2 road with "
+                          f"no level-2 link found {st['no level-2 link']}, class differs between the levels {st['class differs']}")
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
         for (y, x, row, col), (plain, comp, fplain, fcomp, _) in recs.items():

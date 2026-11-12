@@ -196,6 +196,44 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual(withg[-2:], [0xffff, 63], 'tail: key then G')
         self.assertEqual(plain[-1], 0xffff)
 
+    def test_shape_words_with_upper_link(self):
+        plain = fa_encode.shape_words(self.CHAIN, self.NODES, styles=[0x101e, 0x101e])
+        up = fa_encode.shape_words(self.CHAIN, self.NODES, styles=[0x101e, 0x101e], upper=[0x2007])
+        self.assertEqual(up[0], 0x2000 | plain[0] + 1, 'count in bits 13-15, length one word more')
+        self.assertEqual(up[1:6], plain[1:6])
+        self.assertEqual(up[6:8], [0x2007, 0x0000], 'before the last header word')
+        self.assertEqual(up[8:], plain[7:])
+        pts = fa_encode.point_words(self.CHAIN, 1, [0x101e, 0x101e], head=1)
+        self.assertEqual([o for o, _, _ in pts], [o + 1 for o, _, _ in fa_encode.point_words(self.CHAIN, 1, [0x101e, 0x101e])])
+        for slot, xoff, nid in fa_encode.key_slots(self.CHAIN, [0x101e, 0x101e], head=1):
+            self.assertEqual(up[xoff] & 0x7ff, self.NODES[nid][0])
+            self.assertEqual(up[slot], 0xffff)
+        rec, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, [self.CHAIN, [(3, 2, 3, [])]], hws=['primary', 'primary'],
+                                        styles=[[0x101e, 0x101e], [0x101e]], country=352, uppers=[[0x2007], []])
+        strings = fa_encode.link_strings(rec)
+        self.assertEqual([s['typ'] for s in strings], [2, 0])
+        self.assertEqual([[p[1] for p in s['pts']] for s in strings], [[100, 300, 600, 900, 1100, 1500], [1500, 900]])
+        shapes = fa_encode.parse_record(rec, 1)[2]
+        self.assertTrue(all(S['ok'] for S in shapes))
+        self.assertEqual([S['links'] for S in shapes], [[1, 2], [3]])
+
+    def test_link_groups_break_where_the_upper_link_changes(self):
+        link = lambda a, b: (a, b, 10.0, 1, None, 'primary', None, None, [], 0, 0, None)
+        L = [link(0, 1), link(1, 2), link(2, 3)]
+        self.assertEqual(rd_build.link_groups(L, True), [[0, 1, 2]])
+        self.assertEqual(rd_build.link_groups(L, True, [7, 7, 8]), [[0, 1], [2]])
+        self.assertEqual(rd_build.link_groups(L, True, [None, None, None]), [[0, 1, 2]])
+
+    def test_way_line_span(self):
+        line = rd_build.WayLine([(0.0, 64.0), (0.001, 64.0), (0.001, 64.001), (0.0, 64.0)])
+        off, lo, hi = line.span((0.0005, 64.0), (0.001, 64.0005), 80)
+        self.assertLess(off, 0.01)
+        self.assertAlmostEqual(lo, rd_build.dist((0.0, 64.0), (0.0005, 64.0)), 3)
+        self.assertGreater(hi, lo)
+        total = line.cum[-1]
+        _, lo, hi = line.span((0.001, 64.001), (0.0, 64.0), total - line.cum[2])
+        self.assertEqual((lo, hi), (line.cum[2], total), 'the closing node counts as the end, not the start')
+
     def test_point_and_key_slots_shift_with_g(self):
         gs = {0: 11, 1: 37, 2: 63}
         pts = fa_encode.point_words(self.CHAIN, 1, [0x101e, 0x101e], gs)

@@ -86,14 +86,18 @@ def restyled(styles):
     """Per link, whether its header carries a style word: the first always, a later one only where it changes."""
     return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
-def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False):
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False, upper=()):
     """Section-1 shape words for one link chain: start point, then each link's header and
     points, with x flags 0x4000/0x2000/0x1000/0x0800 marking link starts, style changes and
     ends (docs/GEOMETRY.md), and the one-way sense OR'd into bits 15-14 of y.
 
     gs (level 1 only) maps a node occurrence to its guidance word G: occurrence n is the
     start node of link n, occurrence len(chain) the chain's last node. The occurrence's y
-    gets bit 0x1000 and G follows its key word."""
+    gets bit 0x1000 and G follows its key word.
+
+    upper: the upper-level links the chain is part of, highest level first, one word each
+    (UPPER_LEVEL[level] | link id). The unit finds an upper-level route link's level-1 links
+    by them (Navi.exe 0x34bf3c, 0x34d3e4)."""
     if cls is None: cls = 8 if level == 1 else 7
     if styles is None or level != 1: styles = [style_word(None)] * len(chain)
     if dirs is None: dirs = [0] * len(chain)
@@ -105,8 +109,8 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     # word 3 bits 14-12 = 7 on factory ring strings (Koln 89%, UK 95%, ~0% elsewhere): the
     # 3-bit code section 2 carries in w4. Word 4: word offset of the name entry, 0xffff = none
     code = 0x7000 if ring else 0
-    if level == 1: out = [cls << 12, code | FMT.shape_w3, name_off, FMT.shape_w5, 0x0000]
-    else: out = [cls << 12, code, name_off, 0x0000, 0x0000]
+    if level == 1: out = [cls << 12, code | FMT.shape_w3, name_off, FMT.shape_w5, *upper, 0x0000]
+    else: out = [cls << 12, code, name_off, 0x0000, *upper, 0x0000]
     sx, sy = nodes[chain[0][1]]
     out += [0x0800 | sx, 0x2800 | sy | dirbits(0) | (0x1000 if 0 in gs else 0)]
     npts = 1
@@ -134,25 +138,28 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     # tail word: the chain's last node's key (build_record fills it in); 0xffff default = no twin
     if level == 1: out += [0xffff] + ([gs[len(chain)]] if len(chain) in gs else [])
     body = [0x8000 | npts] + out
-    return [len(body) + 1] + body
+    return [len(upper) << 13 | len(body) + 1] + body
+
+UPPER_LEVEL = {2: 0x2000, 4: 0x6000, 5: 0x8000}   # level code, top three bits of an upper-link word
 
 def header_words(fresh, has_g):
     """Words of one link header: [style] key [G] lid."""
     return 2 + (1 if fresh else 0) + (1 if has_g else 0)
 
-def point_words(chain, level=1, styles=None, gs=None):
-    """[(word offset, link id, role)] for every point shape_words writes; role is start, end or vertex."""
+def point_words(chain, level=1, styles=None, gs=None, head=0):
+    """[(word offset, link id, role)] for every point shape_words writes; role is start, end or vertex.
+    head: upper-link words in the shape's header."""
     fresh = restyled(styles) if styles and level == 1 else [n == 0 and level == 1 for n in range(len(chain))]
     if gs is None or level != 1: gs = {}
-    out = [(7, chain[0][0], 'start')]
-    q = 9
+    out = [(7 + head, chain[0][0], 'start')]
+    q = 9 + head
     for n, (lid, a, b, inner) in enumerate(chain):
         q += header_words(fresh[n], n in gs)
         for k in range(len(inner) + 1):
             out.append((q, lid, 'end' if k == len(inner) else 'vertex')); q += 2
     return out
 
-def key_slots(chain, styles=None, gs=None):
+def key_slots(chain, styles=None, gs=None, head=0):
     """Level-1 only. Per node occurrence in one shape chain: (key slot offset, x-word
     offset, node index), both relative to the shape's own word 0 (its length word). The
     key slot is where a ring pointer gets WRITTEN (one per link header, the link's start
@@ -164,7 +171,7 @@ def key_slots(chain, styles=None, gs=None):
     occurrence, sits at key slot + 1."""
     fresh = restyled(styles) if styles else [n == 0 for n in range(len(chain))]
     if gs is None: gs = {}
-    q = 9; px = 7; slots = []
+    q = 9 + head; px = 7 + head; slots = []
     for n, (lid, a, b, inner) in enumerate(chain):
         slots.append((q + (1 if fresh[n] else 0), px, a))
         q += header_words(fresh[n], n in gs) + 2 * (len(inner) + 1)
@@ -172,7 +179,7 @@ def key_slots(chain, styles=None, gs=None):
     slots.append((q, px, chain[-1][2]))
     return slots
 
-def identical_node_keys(chains, styles, at, order, gs=None):
+def identical_node_keys(chains, styles, at, order, gs=None, heads=None):
     """{absolute word offset in `unit`: key value} for every node-record key slot across a
     whole level-1 0x00fa record (measured on factory parcels a40c d03e, a73c d34c, a8ef
     cd6c: a ring in every case, 222,878 of 222,878 three-member groups and 27,827 of 27,827
@@ -185,7 +192,8 @@ def identical_node_keys(chains, styles, at, order, gs=None):
     in (ascending by layer, not by chain index, so it is not the same as sorted(at))."""
     occ = []   # (slot abs offset, x-word abs offset, node index), true record order
     for i in order:
-        for slot, xoff, nid in key_slots(chains[i], styles[i] if styles[i] else None, gs.get(i) if gs else None):
+        for slot, xoff, nid in key_slots(chains[i], styles[i] if styles[i] else None, gs.get(i) if gs else None,
+                                         heads[i] if heads else 0):
             occ.append((at[i] + slot, at[i] + xoff, nid))
     by_node = collections.defaultdict(list)
     for k, (_, _, nid) in enumerate(occ):
@@ -238,8 +246,9 @@ def junctions(chains):
     return sum(1 for n in deg.values() if n >= 3)
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None, country=None, dirs=None, gs=None, rings=None, area=None):
+                 styles=None, country=None, dirs=None, gs=None, rings=None, area=None, uppers=None):
     """A level-1 or level-2 road-shape record and its compressed form, shapes grouped by layer.
+    uppers: each chain's upper-link words (shape_words).
 
     gs, level 1 only: {chain index: {node occurrence: G}} as shape_words takes it. G is the
     link-word index of the occurrence's section-4 sub-record, which depends on this record's
@@ -251,8 +260,10 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     if styles is None: styles = [None] * len(chains)
     if dirs is None: dirs = [None] * len(chains)
     if gs is None or level != 1: gs = {}
+    if uppers is None: uppers = [()] * len(chains)
+    heads = [len(u) for u in uppers]
     shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i),
-                          ring=bool(rings and rings[i]))
+                          ring=bool(rings and rings[i]), upper=uppers[i])
               for i, c in enumerate(chains)]
     if level == 1: unit = [junctions(chains)] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word
@@ -266,7 +277,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
         order += grp
     if len(unit) % 2: unit.append(0)
     if level == 1:   # identical-node key chain, computed with the whole record in view
-        for off, key in identical_node_keys(chains, styles, at, order, gs).items():
+        for off, key in identical_node_keys(chains, styles, at, order, gs, heads).items():
             unit[off] = key
     per_row, per_col = {1: (32, 32), 2: (8, 8)}[level]
     code = clarion_bg.parcel_code(level, y0 * per_row + row, x0 * per_col + col)
@@ -289,7 +300,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     # where each chain landed, in record words: the address files point at these
     build_record.last_index = dict(code=code, unit=2 * w[7], shapes=[
         dict(chain=i, at=2 * w[7] + at[i], layer=lc[i][0], cls=lc[i][1], length=len(shapes[i]),
-             points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level, styles[i], gs.get(i))])
+             points=[(2 * w[7] + at[i] + o, lid, role) for o, lid, role in point_words(chains[i], level, styles[i], gs.get(i), heads[i])])
         for i in sorted(at)])
     return plain, comp
 
@@ -297,7 +308,7 @@ def occurrence_words(index):
     """{chain index: [record word offset of each node occurrence's x word]} from a last_index."""
     return {S['chain']: [o for o, _, role in S['points'] if role in ('start', 'end')] for S in index['shapes']}
 
-STRING_HDR = {0: 7, 2: 8, 4: 9}   # words from the length word to the first point, by the type in word 0's top nibble
+STRING_HDR = {0: 7, 2: 8, 4: 9, 6: 10}   # words from the length word to the first point, by the type in word 0's top nibble
 
 def link_strings(plain):
     """Every link string of a level-1 0x00fa record with its node records, in the factory's
