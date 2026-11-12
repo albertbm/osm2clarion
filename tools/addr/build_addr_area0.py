@@ -56,6 +56,7 @@ import point_io  # noqa: E402
 import refer_header  # noqa: E402
 import shape_index  # noqa: E402
 import zcode_io  # noqa: E402
+from poi_point import word_starts  # noqa: E402
 from build_icode_clean import TOWNS  # noqa: E402
 from addr_csv import addresses, towns  # noqa: E402
 
@@ -115,6 +116,12 @@ def word_keys(name, kw):
     s = fold(name)
     starts = [0] + [j + 1 for j, c in enumerate(s) if c == ' ' and j + 1 < len(s)]
     return [(keyunits(s[p:], kw), p > 0) for p in starts if s[p].isalnum()]
+
+
+def point_word_keys(name, kw):
+    """word_keys by the factory's POINT rule, which poi_point checks the ADM frame against."""
+    s = fold(name)
+    return [(keyunits(s[p:], kw), p > 0) for p in word_starts(s)]
 
 
 def house_items(nums):
@@ -239,7 +246,7 @@ def build_point(ents):
     lw, ow, iy, ix = addre_io.parcel_point(lat, lon)
     kw, cr = 2, 14
     keys, recs, names = [], [], []
-    for u, later in word_keys(TOWN, kw):
+    for u, later in point_word_keys(TOWN, kw):
         keys.append((u, len(recs), 1))
         slot = len(recs)
         ref = REF_BASE + 4 * slot
@@ -256,7 +263,7 @@ def build_point(ents):
     adm_names = [(TOWN, LADDER[:2], LANG_OTHER), (TOWN, LADDER, LANG_OTHER)]
     adm_keys = {}
     for i, (nm, lv, lang) in enumerate(adm_names):
-        for u, later in word_keys(nm, frames.ADM_KW):
+        for u, later in point_word_keys(nm, frames.ADM_KW):
             adm_keys.setdefault(u, []).append((i, later))
     at = frames.up(len(out))
     frame, h, dfo = frames.adm(at, AREA, NLEVEL, adm_names, adm_keys)
@@ -570,7 +577,7 @@ def build_point_capital(ents):
     kw, cr = 2, 14
     keyhits = collections.defaultdict(list)
     for t in tlist:
-        for u, later in word_keys(t, kw): keyhits[u].append((t, later))
+        for u, later in point_word_keys(t, kw): keyhits[u].append((t, later))
     names, recs, keys = [], [], []
     slot_of = {}
     for t in tlist:
@@ -600,7 +607,7 @@ def build_point_capital(ents):
         adm_names += [(t, ladder(t)[:2], LANG_OTHER), (t, ladder(t), LANG_OTHER)]
     adm_keys = collections.defaultdict(list)
     for i, (nm, lv, lang) in enumerate(adm_names):
-        for u, later in word_keys(nm, frames.ADM_KW):
+        for u, later in point_word_keys(nm, frames.ADM_KW):
             adm_keys[u].append((i, later))
     at = frames.up(len(out))
     frame, h, dfo = frames.adm(at, AREA, NLEVEL, adm_names, adm_keys)
