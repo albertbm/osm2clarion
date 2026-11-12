@@ -94,7 +94,8 @@ Before the map steps, the turn restrictions, the coastline and the speed cameras
 the OSM extract into BUILD_DIR/osm, each a stamped step written under a temp name and then
 moved, so a newer extract reruns them and the same one reuses them. The cameras step runs
 `extract_cameras.py` with the boxes of the areas `--area` names (all areas without it):
-`highway=speed_camera` nodes and `enforcement` relations, one camera per device node. No map
+`highway=speed_camera` nodes and `enforcement` relations. Each device node is a camera, and a
+device on an average-speed section gets one camera per direction of travel. No map
 step reads the cameras, so a rerun of that step reruns nothing else. `poi_apply.py` writes
 them onto the road tiles; a camera with no `maxspeed` takes the speed of the built road
 nearest it, its `maxspeed` or else the class default the road links carry, and the step's
