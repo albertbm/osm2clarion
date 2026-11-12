@@ -97,6 +97,8 @@ uv run build.py --profile NAME --base BASE-CARD.img --out OUT.img [options]
 | `--from STEP` | run from one step to the end |
 | `--what TEXT` | the description for the card's row in the cards log |
 | `--prev IMG` | an earlier card the check step compares against |
+| `--stage DIR` | Iceland: where the POI steps keep their in-between images (default `WORK/stage`) |
+| `--write GROUPS` | Iceland: what the cards step writes onto the card, overriding the profile's `[build] write` |
 | `--map-from CARD` | Iceland: copy the map of a finished card with the same DATA VERSION onto this unit's base |
 | `--restamp-from CARD` | Iceland: the same for a card with another DATA VERSION; every stamp is rewritten |
 
