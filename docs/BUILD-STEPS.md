@@ -31,7 +31,7 @@ With `--map-from` or `--restamp-from` the chain is `prep`, `map` or `restamp`, `
 | `sec4` | `sec4_write.py`: section-4 country records on the rebuilt tile |
 | `master` | `make_mmain.py`: MMAIN001.DAT from the tile headers |
 | `card` | a copy of the base card with the tiles, the coarse file and MMAIN written on |
-| `check` | reads every written file back off the image, then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
+| `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cell and the coarse file (never on a factory tile), then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
 
 ## build_gen_lev.py
 

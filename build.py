@@ -257,8 +257,8 @@ def area_steps(P, prof, base, out, work, area, osm):
             'MAPAL001:LEV3456R.DAT')
 
     def check():
-        """The card is renamed to OUT only when every file reads back as built and the index,
-        MMAIN and DATA VERSION agree."""
+        """The card is renamed to OUT only when every file reads back as built, the rebuilt
+        cell has roads that parse, and the index, MMAIN and DATA VERSION agree."""
         import card_verify, fatread
         if not os.path.exists(part):
             raise SystemExit('no card in progress (%s); run from the card step' % part)
@@ -275,6 +275,8 @@ def area_steps(P, prof, base, out, work, area, osm):
         if bad:
             raise SystemExit('check failed: %s do not read back as built' % ', '.join(bad))
         print('%d written files read back as built' % len(want))
+        # the roads of our own rebuilt cell and coarse file; the factory tiles are never parsed
+        run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out)
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()

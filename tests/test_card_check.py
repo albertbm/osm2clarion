@@ -142,5 +142,17 @@ class TestResultShape(unittest.TestCase):
         self.assertEqual(r, dict(name='x', passed=True, counts={'a': 1}, notes=['note']))
 
 
+class TestTwoRecords(unittest.TestCase):
+    def test_qy7_graph_records_come_in_two_parts(self):
+        import clarion_format
+        for level in (2, 4, 5):
+            self.assertTrue(card_check.two_records(clarion_format.X08_02, level))
+            self.assertFalse(card_check.two_records(clarion_format.X08_03, level))
+
+    def test_a_cell_with_no_roads_fails(self):
+        r = card_check.check_tiles([], {'tiles': (0, 0)}, collections.Counter())
+        self.assertFalse(r['passed'])
+
+
 if __name__ == '__main__':
     unittest.main()

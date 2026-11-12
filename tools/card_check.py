@@ -30,6 +30,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
+import clarion_format
 import clarion_rd
 import fa_encode
 import lev_file
@@ -43,6 +44,12 @@ MAXSTEPS = 400
 
 
 # Loading: tiles and LEV3456R.DAT into the record dicts every rule below reads.
+
+def two_records(fmt, level):
+    """QY7 (X08-02) stores a graph record's part A and part B as zlib records of their own, in
+    the pairs 2c and 2c + 1 of a column, at levels 2, 4 and 5; QY8 ships one record."""
+    return clarion_format.slot_body(2, dict(fmt.levels[2])[level]) == 512
+
 
 def load_road_tiles(paths, errors=None):
     """L1 {(row,col): parsed record}, L2 {(row,col): (parsed a, parsed part-b)},
@@ -60,12 +67,26 @@ def load_road_tiles(paths, errors=None):
                     continue
                 if 'nnodes' in a:
                     L1[clarion_bg.parcel_rowcol(1, *a['code'])] = a
+            two = two_records(t.fmt, 2)
+            parts = {}
             for r in t.records(section=2, level=2):
                 pl = r.plain()
+                if two:
+                    parts.setdefault((r.dir_off, r.slot, r.k // 2), {})[r.k % 2] = pl
+                    continue
                 try:
                     pa_b = rd_check.part_a(pl, 2)
                     a = clarion_rd.parse_record(pa_b)
                     b = clarion_rd.parse_part_b(pl[len(pa_b):])
+                except Exception:
+                    errors['L2'] += 1
+                    continue
+                if 'nnodes' in a:
+                    L2[clarion_bg.parcel_rowcol(2, *a['code'])] = (a, b)
+            for ab in parts.values():
+                try:
+                    a = clarion_rd.parse_record(ab[0])
+                    b = clarion_rd.parse_part_b(ab[1])
                 except Exception:
                     errors['L2'] += 1
                     continue
@@ -98,9 +119,18 @@ def load_lev(path):
         if layer['level'] not in (4, 5):
             continue
         recs = {}
+        two = two_records(lev['fmt'], layer['level'])
         for d in layer['dirs']:
             for row, rr in enumerate(d['rows']):
-                for col, rec in enumerate(rr or []):
+                rr = rr or []
+                if two:
+                    for col in range(len(rr) // 2):
+                        ra, rb = rr[2 * col], rr[2 * col + 1]
+                        if ra and rb:
+                            recs[row, col] = (clarion_rd.parse_record(ra['plain']),
+                                              clarion_rd.parse_part_b(rb['plain']))
+                    continue
+                for col, rec in enumerate(rr):
                     if rec:
                         a, b = rec['raw']
                         recs[row, col] = (clarion_rd.parse_record(a), clarion_rd.parse_part_b(b))
