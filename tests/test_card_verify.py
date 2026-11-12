@@ -68,5 +68,44 @@ class TestTowns(unittest.TestCase):
         self.assertTrue(self.verdict(named=1000, match=999, **{'not in register': 1})[0])
 
 
+class FakeFat:
+    """Clusters of 4 bytes; the chain jumps, so reads come in runs."""
+    spc, bps = 1, 4
+
+    def __init__(self, chain, data):
+        self.order, self.data = chain, data
+
+    def chain(self, c):
+        return self.order
+
+    def csec(self, c):
+        return c - 2
+
+    def rd(self, off, n):
+        return self.data[off:off + n]
+
+
+class TestStreaming(unittest.TestCase):
+    def test_chunks_follow_the_chain(self):
+        import fatread
+        data = bytes(range(40))
+        fs = fatread.Fat32.__new__(fatread.Fat32)
+        fs.f = FakeFat([2, 3, 4, 7, 8, 9], data)
+        want = data[0:12] + data[20:30]
+        self.assertEqual(b''.join(fs.chunks(2, 22)), want)
+        self.assertEqual(b''.join(fs.chunks(2, 22, most=4)), want)
+        self.assertEqual(list(fs.chunks(2, 0)), [])
+        with self.assertRaises(ValueError):
+            list(fs.chunks(2, 30))
+
+    def test_a_stamp_split_across_pieces_is_found(self):
+        b = stamped('17/09/01/01')
+        for cut in range(1, len(b)):
+            st = card_verify.Stamps()
+            st.feed(b[:cut])
+            st.feed(b[cut:])
+            self.assertEqual(st.found, {'17/09/01/01'})
+
+
 if __name__ == '__main__':
     unittest.main()

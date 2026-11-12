@@ -23,41 +23,109 @@ Exit status 0 only if every check passes.
 import argparse
 import collections
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import struct
 import sys
+import zlib
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, 'addr'))
-from buildstamp import sha  # noqa: E402
-from card_pack import mmain_card, stamp_text, unwrap  # noqa: E402
-from card_scope import card_files, cmp_lst, drstr_check  # noqa: E402
+import fatread  # noqa: E402
+from card_pack import mmain_card, stamp_text  # noqa: E402
+from card_scope import cmp_lst, drstr_check, entries  # noqa: E402
 
 UNREGISTERED = 0.01     # the share of named records whose street the register may lack
 STAMP = re.compile(re.escape(stamp_text('')) + b'((?:\x00[0-9/]){11})')
+STAMP_LEN = len(stamp_text('')) + 22
+# read whole: the root index files, the .ind halves and what the towns check parses
+WHOLE = ('REFER001/ADDRE001.DAT.cmp', 'REFER001/ADDRE001.DAT', 'REFER001/ICODE001.DAT')
 
 
 def result(name, ok, counts, notes=()):
     return dict(name=name, passed=bool(ok), counts=dict(counts), notes=list(notes))
 
 
-def plain_files(files):
-    """{path: plain bytes} of the scoped files, packed pairs unpacked under the .cmp name."""
-    out = {}
-    for p, b in files.items():
-        if '/' not in p or p.endswith('.ind'):
-            continue
-        out[p] = unwrap(b, files[p[:-4] + '.ind']) if p.endswith('.cmp') else b
-    return out
+class Stamps:
+    """DATA VERSION stamps in a byte stream fed piece by piece."""
+
+    def __init__(self):
+        self.found, self.tail = set(), b''
+
+    def feed(self, b):
+        buf = self.tail + b
+        self.found |= {m.group(1).decode('utf-16-be') for m in STAMP.finditer(buf)}
+        self.tail = buf[-(STAMP_LEN - 1):]
 
 
-def check_version(plain, version):
+def stamps_in(b):
+    st = Stamps()
+    st.feed(b)
+    return st.found
+
+
+def read_card(img):
+    """One streamed pass over the scoped files, so a full stock card fits in memory.
+    -> ({path: bytes for the few read whole, else the size}, {path: dict(size, sha256,
+    stamps, head)}, {path: plain bytes of the files read whole})."""
+    files, info, plain = {}, {}, {}
+    with fatread.Fat32(img) as fs:
+        ents = entries(fs)
+        for p, (sz, c) in ents.items():
+            if p.endswith('.ind'):
+                files[p] = b''.join(fs.chunks(c, sz))
+        for p, (sz, c) in sorted(ents.items()):
+            whole = '/' not in p or p in WHOLE
+            h, st, head, keep, out = hashlib.sha256(), Stamps(), b'', [], []
+            ind = files.get(p[:-4] + '.ind') if p.endswith('.cmp') else None
+            if p.endswith('.cmp') and ind is None:
+                raise SystemExit('%s has no .ind on the card' % p)
+            if ind is not None:
+                n, _, blocks, _ = struct.unpack_from('<IIII', ind)
+                offs = list(struct.unpack_from('<%dI' % blocks, ind, 16)) + [sz]
+                buf, pos, k = b'', 0, 0
+            for d in fs.chunks(c, sz):
+                h.update(d)
+                if len(head) < 0x400:
+                    head += d[:0x400 - len(head)]
+                if whole:
+                    keep.append(d)
+                if ind is None:
+                    if '/' in p and not p.endswith('.ind'):
+                        st.feed(d)
+                    continue
+                # a packed file's blocks are separate zlib streams; scan each one unpacked
+                buf += d
+                while k < blocks and pos + len(buf) >= offs[k + 1]:
+                    pl = zlib.decompress(buf[offs[k] - pos:offs[k + 1] - pos])
+                    buf, pos, k = buf[offs[k + 1] - pos:], offs[k + 1], k + 1
+                    st.feed(pl)
+                    if whole:
+                        out.append(pl)
+            if ind is not None and k != blocks:
+                raise SystemExit('%s: %d of %d packed blocks on the card' % (p, k, blocks))
+            if whole:
+                files[p] = b''.join(keep)
+                if ind is not None:
+                    plain[p] = b''.join(out)
+                    if len(plain[p]) != n:
+                        raise SystemExit('%s unpacks to %d bytes, its .ind says %d' % (p, len(plain[p]), n))
+                elif '/' in p:
+                    plain[p] = files[p]
+            elif p not in files:
+                files[p] = sz
+            info[p] = dict(size=sz, sha256=h.hexdigest(), stamps=st.found, head=head)
+    return files, info, plain
+
+
+def check_version(stamps, version):
+    """stamps: {path: the stamps found in it, or its plain bytes}."""
     st, notes = collections.Counter(), []
-    for p, b in sorted(plain.items()):
-        found = {m.group(1).decode('utf-16-be') for m in STAMP.finditer(b)}
+    for p, b in sorted(stamps.items()):
+        found = b if isinstance(b, set) else stamps_in(b)
         st['stamped' if found else 'no stamp'] += 1
         if found - {version}:
             notes.append('%s carries %s' % (p, ', '.join(sorted(found))))
@@ -80,8 +148,8 @@ def check_cmp_lst(img, files):
                   [] if ok else ['CMP.LST does not list the card\'s .cmp files'])
 
 
-def check_mmain(files):
-    heads = [b[:0x400] for p, b in sorted(files.items()) if p.startswith('MAPAL001/') and p.endswith('.DAT')]
+def check_mmain(files, info):
+    heads = [info[p]['head'] for p in sorted(info) if p.startswith('MAPAL001/') and p.endswith('.DAT')]
     nhouse = sum(1 for p in files if p.startswith('HOUSE001/') and p.endswith('.DAT'))
     have = files['MMAIN001.DAT']
     try:
@@ -173,17 +241,17 @@ def check_inventory(files, manifest, allow):
 
 
 def verify(img, version, towns=False, manifest=None, allow=(), skip=()):
-    files = card_files(img)
-    plain = plain_files(files)
-    checks = [c() for name, c in (('version', lambda: check_version(plain, version)),
+    files, info, plain = read_card(img)
+    stamps = {p: i['stamps'] for p, i in info.items() if '/' in p and not p.endswith('.ind')}
+    checks = [c() for name, c in (('version', lambda: check_version(stamps, version)),
                                   ('index', lambda: check_index(files)),
                                   ('cmp_lst', lambda: check_cmp_lst(img, files)),
-                                  ('mmain', lambda: check_mmain(files))) if name not in skip]
+                                  ('mmain', lambda: check_mmain(files, info))) if name not in skip]
     if towns:
         checks.append(check_towns(plain, register_pairs()))
     if manifest is not None:
         checks.append(check_inventory(files, manifest, allow))
-    return checks, files
+    return checks, info
 
 
 def main(argv):
@@ -199,7 +267,7 @@ def main(argv):
     if a.manifest:
         with open(a.manifest) as f:
             m = json.load(f)
-    checks, files = verify(a.card, a.version, a.towns, m, a.allow_new, a.skip)
+    checks, info = verify(a.card, a.version, a.towns, m, a.allow_new, a.skip)
     print('== %s ==' % os.path.basename(a.card))
     for c in checks:
         print('[%s] %s  %s' % ('PASS' if c['passed'] else 'FAIL', c['name'],
@@ -208,7 +276,7 @@ def main(argv):
             print('    ' + n)
     ok = all(c['passed'] for c in checks)
     if m is not None:
-        m['final_files'] = [dict(path=p, size=len(b), sha256=sha(b)) for p, b in sorted(files.items())]
+        m['final_files'] = [dict(path=p, size=i['size'], sha256=i['sha256']) for p, i in sorted(info.items())]
         m['final_checks'] = checks
         with open(a.manifest, 'w') as f:
             json.dump(m, f, indent=1, ensure_ascii=False)

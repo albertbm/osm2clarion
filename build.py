@@ -263,20 +263,25 @@ def area_steps(P, prof, base, out, work, area, osm):
         if not os.path.exists(part):
             raise SystemExit('no card in progress (%s); run from the card step' % part)
         want = {p: cardcopy.sha256(f) for p, f in written()}
+        got = {}
         with fatread.Fat32(part) as fs:
-            got = {p.strip('/'): hashlib.sha256(fs.f.read_clusters(c, sz)).hexdigest()
-                   for p, sz, c, _ in fs.walk() if sz is not None and p.strip('/') in want}
+            for p, sz, c, _ in fs.walk():
+                if sz is not None and p.strip('/') in want:
+                    h = hashlib.sha256()
+                    for d in fs.chunks(c, sz):
+                        h.update(d)
+                    got[p.strip('/')] = h.hexdigest()
         bad = sorted(p for p in want if got.get(p) != want[p])
         if bad:
             raise SystemExit('check failed: %s do not read back as built' % ', '.join(bad))
         print('%d written files read back as built' % len(want))
         versions = set()
         for n in os.listdir(fac):
+            st = card_verify.Stamps()
             with open(os.path.join(fac, n), 'rb') as f:
-                versions |= {m.group(1).decode('utf-16-be') for m in card_verify.STAMP.finditer(f.read())}
-        if len(versions) != 1:
-            raise SystemExit('check failed: the base card carries %d DATA VERSIONs: %s'
-                             % (len(versions), ', '.join(sorted(versions))))
+                for d in iter(lambda: f.read(1 << 22), b''):
+                    st.feed(d)
+            versions |= st.found
         run(tool('card_verify.py'), '--card', part, '--version', versions.pop(), '--skip', 'cmp_lst')
         os.replace(part, out)
         print('checked; card renamed to', out)

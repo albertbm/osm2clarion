@@ -187,6 +187,30 @@ class Fat32:
                 else:
                     yield path, sz, c, mt
 
+    def chunks(self, clus, size, most=1 << 22):
+        """The file's bytes in pieces of at most `most`, adjacent clusters read in one go."""
+        f, left, run = self.f, size, []
+        csize = f.spc * f.bps
+
+        def flush():
+            d = f.rd(f.csec(run[0]) * f.bps, len(run) * csize)
+            return d[:left]
+        for c in f.chain(clus) if size else ():
+            if run and (c != run[-1] + 1 or len(run) * csize >= most):
+                d = flush()
+                left -= len(d)
+                yield d
+                run = []
+            run.append(c)
+            if left <= len(run) * csize:
+                break
+        if run and left > 0:
+            d = flush()
+            left -= len(d)
+            yield d
+        if left:
+            raise ValueError('%d bytes past the end of the cluster chain' % left)
+
     def md5(self, clus, size):
         import hashlib
         h, n, f = hashlib.md5(), 0, self.f

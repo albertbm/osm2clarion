@@ -29,6 +29,17 @@ def card_files(img):
     return out
 
 
+def entries(fs):
+    """{card path: (size, first cluster)} of every file in SCOPE and the root index files."""
+    out = {}
+    for p, sz, c, _ in fs.walk():
+        parts = p.strip('/').split('/')
+        if sz is not None and ((len(parts) == 2 and parts[0] in SCOPE)
+                               or (len(parts) == 1 and parts[0] in ROOT_FILES)):
+            out['/'.join(parts)] = (sz, c)
+    return out
+
+
 def cmp_lst(img):
     """CMP.LST from the card's own .cmp files: sorted, NUL-separated, no trailing NUL."""
     with fatread.Fat32(img) as fs:
@@ -38,7 +49,8 @@ def cmp_lst(img):
 
 
 def drstr_check(drs, files):
-    """Problems with the index's rows for the scoped folders, against the card."""
+    """Problems with the index's rows for the scoped folders, against the card. files maps
+    a path to its bytes, or to its size for any but a .ind."""
     recs = {r['name']: r for r in dir_records(drs)}
     bad = []
     for d in SCOPE:
@@ -56,7 +68,7 @@ def drstr_check(drs, files):
             if n.endswith('.ind'):
                 have[n[:-4]] = struct.unpack_from('<I', b)[0]    # indexed as one file, inflated size
             elif not n.endswith('.cmp'):
-                have[n] = len(b)
+                have[n] = b if isinstance(b, int) else len(b)   # a size alone will do
         for n in sorted(set(listed) | set(have)):
             if listed.get(n) != have.get(n):
                 bad.append('%s/%s index %s card %s' % (d, n, listed.get(n), have.get(n)))
