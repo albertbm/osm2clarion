@@ -224,14 +224,28 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual(rd_build.link_groups(L, True, [7, 7, 8]), [[0, 1], [2]])
         self.assertEqual(rd_build.link_groups(L, True, [None, None, None]), [[0, 1, 2]])
 
+    def test_follow_upper_turns_links_against_their_upper_link(self):
+        link = lambda a, b, way, chain, d=0: (a, b, 10.0, way, None, 'primary', None, None, ['%d.1' % a, '%d.2' % a], chain, d, None)
+        L = [link(0, 1, 1, 0), link(1, 2, 1, 0, 1), link(2, 3, 1, 0), link(5, 6, 2, 1)]
+        parcels = {'p': {'links': list(L)}}
+        n = rd_build.follow_upper(parcels, {'p': [7, 7, 8, None]}, {'p': [True, True, False, True]})
+        self.assertEqual(n, 2)
+        got = parcels['p']['links']
+        self.assertEqual([(l[0], l[1]) for l in got], [(2, 1), (1, 0), (2, 3), (5, 6)])
+        self.assertEqual(got[0][10], -1, 'a one-way link keeps its sense when turned')
+        self.assertEqual(got[0][8], ['1.2', '1.1'], 'inner points turn with the link')
+        self.assertEqual(got[2:], L[2:], 'a link that runs with its upper link, or has none, stays')
+
     def test_way_line_span(self):
         line = rd_build.WayLine([(0.0, 64.0), (0.001, 64.0), (0.001, 64.001), (0.0, 64.0)])
-        off, lo, hi = line.span((0.0005, 64.0), (0.001, 64.0005), 80)
+        off, lo, hi, fwd = line.span((0.0005, 64.0), (0.001, 64.0005), 80)
+        self.assertTrue(fwd)
+        self.assertFalse(line.span((0.001, 64.0005), (0.0005, 64.0), 80)[3])
         self.assertLess(off, 0.01)
         self.assertAlmostEqual(lo, rd_build.dist((0.0, 64.0), (0.0005, 64.0)), 3)
         self.assertGreater(hi, lo)
         total = line.cum[-1]
-        _, lo, hi = line.span((0.001, 64.001), (0.0, 64.0), total - line.cum[2])
+        _, lo, hi, _ = line.span((0.001, 64.001), (0.0, 64.0), total - line.cum[2])
         self.assertEqual((lo, hi), (line.cum[2], total), 'the closing node counts as the end, not the start')
 
     def test_point_and_key_slots_shift_with_g(self):

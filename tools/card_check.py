@@ -573,6 +573,62 @@ def check_coarse_graph_present(L2, lev4, lev5):
     return result('coarse_graph_present', ok, st)
 
 
+def upper_shapes(SH1):
+    """{(level-2 parcel, class, level-2 link id): [(start, end)]} of the level-1 shapes whose
+    header names the link, in level-1 units from the level-2 parcel's corner. A point on a
+    parcel's far edge is the next parcel's 0."""
+    out = collections.defaultdict(list)
+    def at(pc, x, y): return (pc[1] % 4) * 2048 + (x + (x == 2047)), (pc[0] % 4) * 2048 + (y + (y == 2047))
+    for pc, pl in SH1.items():
+        try:
+            shapes = fa_encode.parse_record(pl, 1)[2]
+        except Exception:
+            continue
+        w = struct.unpack('>%dH' % (len(pl) // 2), pl)
+        for S in shapes:
+            q = S['at'] + 6 + (w[S['at'] + 3] & 3)
+            ids = [u & 0x1fff for u in w[q:q + (w[S['at']] >> 13)] if u & 0xe000 == 0x2000]
+            if ids and S['ends']:
+                out[(pc[0] // 4, pc[1] // 4), S['cls'], ids[0]].append((at(pc, *S['ends'][0][0]), at(pc, *S['ends'][-1][1])))
+    return out
+
+
+def check_upper_link_shapes(L2, SH1, tol=8):
+    """The level-1 shapes naming a level-2 link run the way the link runs: the unit takes
+    the shape that starts where the last one ended (Navi.exe 0x34d2b8), so one drawn
+    backwards ends its walk. Factory B50R068R: none backwards on 46,835 links."""
+    named = upper_shapes(SH1)
+    st = collections.Counter()
+    def near(p, q): return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
+    for pc2, (a, b) in L2.items():
+        first = {}
+        for nd in a['nodes']:
+            for e in nd['entries']:
+                if not e['cls'] & 0x8000 and not e['id'] & 0x2000:
+                    first[e['cls'] & 0xf, e['id'] & 0x1fff] = (4 * (nd['x'] + (nd['x'] == 2047)), 4 * (nd['y'] + (nd['y'] == 2047)))
+        for (cls, lid), node in first.items():
+            left = list(named.get((pc2, cls, lid), ()))
+            if not left:
+                continue
+            st['links named'] += 1
+            pos = next((s for s, e in left if near(s, node)), None)
+            if pos is None:
+                st['backwards' if any(near(e, node) for s, e in left) else 'no shape at the first node'] += 1
+                continue
+            while True:
+                nxt = next((g for g in left if g[0] == pos), None)
+                if nxt is None:
+                    break
+                left.remove(nxt)
+                pos = nxt[1]
+            if not left:
+                st['walked'] += 1
+            else:
+                st['backwards' if any(e == pos for s, e in left) else 'walk stops short'] += 1
+    return result('upper_link_shapes', st['backwards'] == 0, st,
+                  ['level-2 links with a level-1 shape drawn backwards: %d (want 0)' % st['backwards']])
+
+
 def run_all(L1, L2, SH1, lev4, lev5):
     out = []
     out.append(check_expansion(L1, L2))
@@ -583,6 +639,7 @@ def run_all(L1, L2, SH1, lev4, lev5):
     out.append(check_l1_link_direction(L1, L2))
     out.append(check_l2_nflags(L2))
     out.append(check_roundabouts(L1, L2, SH1))
+    out.append(check_upper_link_shapes(L2, SH1))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     return out

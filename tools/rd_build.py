@@ -295,12 +295,15 @@ def own(parcels):
     """The parcels of the cell itself, without the ring around it."""
     return {pc: P for pc, P in parcels.items() if not P['ring']}
 
+def flip(c):
+    """A chain of links turned to run the other way."""
+    return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
+
 def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
     def key(c): return (c[0][5], c[0][4], c[0][6])
-    def flip(c): return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
     ends = collections.defaultdict(list)
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -414,18 +417,19 @@ class WayLine:
         return best[0], [best[1]]
 
     def span(self, ga, gb, length):
-        """(metres off the line, from, to) of a link; a node visited twice is taken where
-        it fits the link's length."""
+        """(metres off the line, from, to, runs the way's direction) of a link; a node
+        visited twice is taken where it fits the link's length."""
         da, sa = self.along(ga); db, sb = self.along(gb)
-        _, lo, hi = min((abs(abs(y - x) - length), min(x, y), max(x, y)) for x in sa for y in sb)
-        return da + db, lo, hi
+        _, lo, hi, fwd = min((abs(abs(y - x) - length), min(x, y), max(x, y), x <= y) for x in sa for y in sb)
+        return da + db, lo, hi, fwd
 
 
 def upper_links(ways, l2_parcels, parcels, l2_hw):
     """Per level-1 parcel, per link: the id of the level-2 link it is part of, or None. That
     is the link of the same way, in the level-2 parcel over it, whose stretch of the way
     holds the level-1 link's middle. The unit pairs the two by class and id, so a road
-    whose class differs between the levels gets None."""
+    whose class differs between the levels gets None. upper_links.against marks the links
+    that run against their level-2 link, for follow_upper."""
     lines = collections.defaultdict(list)
     for w in ways: lines[w['id']].append(WayLine(w['nodes']))
     def place(wid, ga, gb, length):
@@ -434,23 +438,38 @@ def upper_links(ways, l2_parcels, parcels, l2_hw):
     for (y, x, row, col), P in l2_parcels.items():
         if P.get('ring'): continue
         for l, lid in zip(P['links'], link_ids(P['links'], 2)):
-            n, _, lo, hi = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
-            index[l[3], n, y * 8 + row, x * 8 + col].append((lo, hi, fa_encode.layer_class(l[5], 2)[1], lid))
-    out = {}; stats = collections.Counter()
+            n, _, lo, hi, fwd = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
+            index[l[3], n, y * 8 + row, x * 8 + col].append((lo, hi, fa_encode.layer_class(l[5], 2)[1], lid, fwd))
+    out = {}; against = {}; stats = collections.Counter()
     for (y, x, row, col), P in parcels.items():
         if P.get('ring'): continue
-        found = out[y, x, row, col] = []
+        found = out[y, x, row, col] = []; turned = against[y, x, row, col] = []
         for l in P['links']:
+            turned.append(False)
             if l[5] not in l2_hw: found.append(None); continue
-            n, _, lo, hi = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
+            n, _, lo, hi, fwd = place(l[3], P['nodes'][l[0]]['geo'], P['nodes'][l[1]]['geo'], l[2])
             mid = (lo + hi) / 2
-            near = sorted((max(a - mid, mid - b, 0.0), cls, lid)
-                          for a, b, cls, lid in index.get((l[3], n, (y * 32 + row) // 4, (x * 32 + col) // 4), ()))
+            near = sorted((max(a - mid, mid - b, 0.0), cls, lid, f2)
+                          for a, b, cls, lid, f2 in index.get((l[3], n, (y * 32 + row) // 4, (x * 32 + col) // 4), ()))
             if not near or near[0][0] > UPPER_REACH: stats['no level-2 link'] += 1; found.append(None)
             elif near[0][1] != fa_encode.layer_class(l[5], 1)[1]: stats['class differs'] += 1; found.append(None)
-            else: stats['found'] += 1; found.append(near[0][2])
-    upper_links.stats = stats
+            else: stats['found'] += 1; found.append(near[0][2]); turned[-1] = fwd != near[0][3]
+    upper_links.stats = stats; upper_links.against = against
     return out
+
+def follow_upper(parcels, upper, against):
+    """Turn the links under each level-2 link to run its way; returns how many turned. The
+    unit walks them by taking the shape that starts where the last one ended (Navi.exe 0x34d2b8)."""
+    turned = 0
+    for pc, up in upper.items():
+        L = parcels[pc]['links']; k = 0
+        while k < len(L):
+            j = k + 1
+            while j < len(L) and L[j][9] == L[k][9] and up[j] == up[k]: j += 1
+            if up[k] is not None and 2 * sum(against[pc][k:j]) > j - k:
+                L[k:j] = flip(L[k:j]); turned += j - k
+            k = j
+    return turned
 
 UPPER_REACH = 10    # metres a level-1 link's middle may sit outside its level-2 link's stretch
 
@@ -910,6 +929,7 @@ def main():
                     # the two edge nodes either side of a parcel line share one geo
                     l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
         upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else None
+        turned = follow_upper(parcels, upper, upper_links.against) if upper else 0
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
@@ -927,7 +947,8 @@ def main():
         if upper:
             st = upper_links.stats
             report.append(f"level 1: links named in a shape's level-2 word {st['found']}, on a level-2 road with "
-                          f"no level-2 link found {st['no level-2 link']}, class differs between the levels {st['class differs']}")
+                          f"no level-2 link found {st['no level-2 link']}, class differs between the levels {st['class differs']}, "
+                          f"turned to run the way their level-2 link runs {turned}")
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
         for (y, x, row, col), (plain, comp, fplain, fcomp, _) in recs.items():

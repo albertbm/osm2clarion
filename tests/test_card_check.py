@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 10)
+        self.assertEqual(len(checks), 11)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
