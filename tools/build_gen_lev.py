@@ -15,7 +15,7 @@ Each is one of:
     leftover    no step produced it
 
     build_gen_lev.py --config PATH --unit NAME --slug NAME BUILD_DIR [--base IMG] [--what TEXT]
-                     [--coast PATH] [--reuse] [--number N]
+                     [--coast PATH] [--reuse] [--number N] [--partial]
                      [--map-from CARD | --restamp-from CARD]
                      [--roads [--also NAME,NAME] [--to NAME,NAME [--by time]] | --area NAME[,NAME...] [--coarse-graph]]
                      [--write lev|tiles,addr] [--addr-only NAME,NAME]
@@ -31,7 +31,8 @@ card is written under CARDS/builds following card_naming.build_pattern, with its
 beside it, one past the highest existing number, or the same number when the newest build is
 this slug on another unit (twins share a number), or the number --number gives. A line goes to the top of the cards log
 (config cards_log), status untested; --what is its "what changed" text (default: the slug).
---reuse skips steps whose outputs exist.
+--reuse skips steps whose outputs exist. --partial writes the card and its manifest with a
+.partial suffix and leaves out the log line; build.py renames them once its check step passes.
 
 --map-from CARD writes the map, address and POI files of a finished card onto this unit's base, as
 they are: nothing is generated, restamped or recompressed, so the DATA VERSION stays the source
@@ -103,6 +104,7 @@ from drstr_sizes import set_sizes  # noqa: E402
 from fatedit import Editor  # noqa: E402
 import fatread  # noqa: E402
 import buildstamp  # noqa: E402
+import cards_log  # noqa: E402
 from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
 _CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
@@ -483,7 +485,7 @@ def manifest(img, S, B, exp):
     files = card_files(img)
     recipe = os.path.abspath(__file__)
     tools_rev = dict(osm2clarion=git_rev(OSM_ROOT), leaf_is_map=git_rev(REPO))
-    diff_dest = os.path.splitext(img)[0] + '.o2c.diff'
+    diff_dest = os.path.splitext(final_name(img))[0] + '.o2c.diff'
     o2c_dirty, o2c_diff_sha = buildstamp.save_diff_if_dirty(OSM_ROOT, diff_dest)
     osm2clarion = dict(head=buildstamp.git_head(OSM_ROOT), dirty=o2c_dirty, diff_sha256=o2c_diff_sha,
                         diff_file=os.path.basename(diff_dest) if o2c_dirty else None)
@@ -522,7 +524,7 @@ def manifest(img, S, B, exp):
     missing = sorted(set(exp) - set(files))
     steps_out = [dict(name=s['name'], command=command(s), ran=s.get('ran'),
                        stamp=buildstamp.load_stamp(buildstamp.stamp_path(B, s['name']))) for s in S]
-    return dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), tools=tools_rev,
+    return dict(card=final_name(img), built=time.strftime('%Y-%m-%d %H:%M:%S'), tools=tools_rev,
                 osm2clarion=osm2clarion, leaf=leaf,
                 steps=steps_out, files=rows, missing_on_card=missing, index_problems=index_bad)
 
@@ -578,36 +580,40 @@ def next_number(unit, slug):
     return top if twins and (top, unit) not in have else top + 1
 
 
+PARTIAL = False     # --partial: write IMG.partial and its manifest, leave the rename and the log to build.py
+
+
 def new_card(unit, slug, base=None, number=None):
+    """(number, path written, base): a fresh cp -c of the base at the build's name, or at that
+    name plus .partial with --partial."""
     default_base = CONFIG['card_naming']['base_pattern'].format(prefix=CARD_PREFIX, unit=unit)
     base = os.path.abspath(os.path.expanduser(base or '%s/bases/%s' % (CARDS, default_base)))
     n = number or next_number(unit, slug)
     name = CARD_BUILD_PATTERN.format(prefix=CARD_PREFIX, number=n, unit=unit, slug=slug)
-    img = '%s/builds/%s' % (CARDS, name)
-    assert not os.path.exists(img), img
+    final = '%s/builds/%s' % (CARDS, name)
+    img = final + '.partial' if PARTIAL else final
+    for p in (final, img):
+        if os.path.exists(p):
+            raise SystemExit('%s already exists' % p)
     subprocess.run(['cp', '-c', base, img], check=True)
     os.chmod(img, 0o644)       # the base is read-only and cp keeps its mode
     print('card %s from %s' % (img, base))
     return n, img, base
 
 
+def final_name(img):
+    return img[:-len('.partial')] if img.endswith('.partial') else img
+
+
+def manifest_name(img):
+    """The manifest beside the card, .partial while the card is."""
+    m = os.path.splitext(final_name(img))[0] + '.manifest.json'
+    return m + '.partial' if img.endswith('.partial') else m
+
+
 def cards_line(n, unit, slug, what, base):
-    """Add the build to the top of the cards log, or add the unit to its twin's line."""
-    p = CARDS + '/' + CARDS_LOG
-    lines = open(p).read().split('\n')
-    head = next(i for i, l in enumerate(lines) if l.startswith('|---'))
-    for i in range(head + 1, len(lines)):
-        cells = [c.strip() for c in lines[i].split('|')]
-        if len(cells) > 4 and cells[1] == '%03d' % n and cells[4] == slug:
-            cells[3] = ', '.join(sorted(set(cells[3].split(', ')) | {unit}))
-            lines[i] = '| ' + ' | '.join(cells[1:-1]) + ' |'
-            break
-    else:
-        shown_base = os.path.relpath(base, CARDS) if os.path.commonpath((base, CARDS)) == CARDS else base
-        what = 'Base `%s`; %s' % (shown_base, what)
-        lines.insert(head + 1, '| %03d | %s | %s | %s | %s | untested |'
-                     % (n, time.strftime('%Y-%m-%d'), unit, slug, what))
-    open(p, 'w').write('\n'.join(lines))
+    if not PARTIAL:
+        cards_log.add(CARDS + '/' + CARDS_LOG, n, unit, slug, what, base, CARDS)
 
 
 def map_from(unit, slug, src, base, number, what, B):
@@ -622,10 +628,10 @@ def map_from(unit, slug, src, base, number, what, B):
     bad = drstr_check(got['DRSTR001.DAT'], got)
     if bad:
         raise SystemExit('index rows off: ' + '; '.join(bad))
-    m = dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
+    m = dict(card=final_name(img), built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
              map_from=src, tools=dict(osm2clarion=git_rev(OSM_ROOT)),
              files=[dict(path=p, size=len(want[p]), sha256=sha(want[p]), status='copied') for p in paths])
-    with open(os.path.splitext(img)[0] + '.manifest.json', 'w') as f:
+    with open(manifest_name(img), 'w') as f:
         json.dump(m, f, indent=1, ensure_ascii=False)
     cards_line(n, unit, slug, what, base)
     print('copied %d files from %s' % (len(paths), src))
@@ -658,14 +664,14 @@ def restamp_from(unit, slug, src, base, number, what, B):
     bad = drstr_check(got['DRSTR001.DAT'], got)
     if bad:
         raise SystemExit('index rows off: ' + '; '.join(bad))
-    m = dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
+    m = dict(card=final_name(img), built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
              restamp_from=src, data_version=dict(source=old, card=VERSION),
              tools=dict(osm2clarion=git_rev(OSM_ROOT)),
              steps=[dict(name=s['name'], command=command(s), ran=s.get('ran')) for s in S],
              files=[dict(path=p, size=len(exp[p][0]), sha256=sha(exp[p][0]),
                          status='generated' if exp[p][1] else 'restamped' if p not in bare else 'copied')
                     for p in sorted(exp)])
-    with open(os.path.splitext(img)[0] + '.manifest.json', 'w') as f:
+    with open(manifest_name(img), 'w') as f:
         json.dump(m, f, indent=1, ensure_ascii=False)
     cards_line(n, unit, slug, what, base)
     print('%d files from %s, DATA VERSION %s -> %s, %d without a stamp: %s'
@@ -683,6 +689,8 @@ def main(argv):
     unit, slug = opt('--unit'), opt('--slug')
     if unit not in UNITS or not slug:
         raise SystemExit(__doc__)
+    global PARTIAL
+    PARTIAL = '--partial' in argv
     B = os.path.abspath([a for i, a in enumerate(argv)
                          if not a.startswith('--') and (i == 0 or not argv[i - 1].startswith('--'))][0])
     if opt('--map-from'):
@@ -723,11 +731,11 @@ def main(argv):
     assemble(img, exp, groups)
     m = manifest(img, S, B, exp)
     m.update(unit=unit, base=base, number=n, slug=slug)
-    for p in (os.path.join(B, 'manifest.json'), os.path.splitext(img)[0] + '.manifest.json'):
+    for p in (os.path.join(B, 'manifest.json'), manifest_name(img)):
         with open(p, 'w') as f:
             json.dump(m, f, indent=1, ensure_ascii=False)
     report(m)
-    print('manifest:', os.path.splitext(img)[0] + '.manifest.json')
+    print('manifest:', manifest_name(img))
     problems = card_problems(m)
     if problems:
         raise SystemExit('the card is not what the steps made:\n  ' + '\n  '.join(problems))

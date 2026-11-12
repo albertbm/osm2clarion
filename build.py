@@ -17,6 +17,10 @@ picks the chain:
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
             rebuilt from OSM. --base is the card image, only read.
 
+The card is written as OUT.partial, with its manifest as MANIFEST.partial, and both are renamed
+and the cards log row written only once the check step passes. A run that starts the card again
+removes a .partial left by an earlier run and says so; a finished OUT is never overwritten.
+
 --work holds everything generated (default build/<name of OUT>). The profile's `local` file, or
 --local, is merged over the profile table by table; it holds paths and values that belong to one
 machine. Each step prints the command it runs, so a step can be repeated by hand. --list names
@@ -243,6 +247,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     number, unit, slug = int(m.group(1)), m.group(2), m.group(3)
     cards = os.path.dirname(os.path.dirname(out))
     manifest = out[:-4] + '.manifest.json'
+    # the card is built under .partial names and renamed only after the check step passes
+    part, mpart = out + '.partial', manifest + '.partial'
     area_arg = areas or ','.join(cfg['areas'])
     stage = args.get('stage') or os.path.join(cards, 'stage')
     version = cfg['units'][unit]['version']
@@ -257,7 +263,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     s1, s2 = (os.path.join(stage, '%s-%s.img' % (k, unit)) for k in ('s1', 's2'))
 
     def stamp(name, cmd, target):
-        run(py, tool('buildstamp.py'), 'post-step', manifest, name, cmd, target, env=env_v)
+        run(py, tool('buildstamp.py'), 'post-step', mpart, name, cmd, target, env=env_v)
 
     def prep():
         os.makedirs(os.path.dirname(conf), exist_ok=True)
@@ -276,18 +282,17 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if B.get('house'): cmd += ['--house']
         cmd += ['--write', args.get('write') or B['write']]
         if B.get('coarse_graph'): cmd += ['--coarse-graph']
-        cmd += ['--what', args.get('what') or slug]
+        cmd += ['--what', args.get('what') or slug, '--partial']
         run(*cmd, env=env)
-        if not os.path.exists(out):
-            raise SystemExit('the build wrote another card than %s; --out must be the next number in %s'
-                             % (out, os.path.join(cards, 'builds')))
+        if not os.path.exists(part):
+            raise SystemExit('the build wrote another card than %s' % part)
 
     def poi():
         os.makedirs(stage, exist_ok=True)
-        run(py, tool('poi_apply.py'), '--config', conf, work, out, os.path.join(stage, 'poi-' + unit),
+        run(py, tool('poi_apply.py'), '--config', conf, work, part, os.path.join(stage, 'poi-' + unit),
             env=env_v)
-        stamp('poi_apply', '%s %s' % (work, out), out)
-        os.replace(out, s1)
+        stamp('poi_apply', '%s %s' % (work, out), part)
+        os.replace(part, s1)
 
     def poicap(src, dst, workdir, *extra):
         run(poi_py, tool('build_poicap.py'), '--config', conf, '--area', area_arg, *extra,
@@ -300,56 +305,75 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     def addr():
         shapes = sorted(glob.glob(os.path.join(work, 'rd', '*.shapes.json')))
-        poicap(s2, out, 'addr-' + unit, '--house-ranges', 'ALL', '--all-streets', '--shapes', *shapes,
+        poicap(s2, part, 'addr-' + unit, '--house-ranges', 'ALL', '--all-streets', '--shapes', *shapes,
                '--addresses', cfg['data']['addresses'], '--postcodes', cfg['data']['postcodes'])
         for f in (s1, s2):
             if os.path.exists(f): os.remove(f)
-        stamp('build_poicap-addr', '--area %s --house-ranges ALL --all-streets' % area_arg, out)
+        stamp('build_poicap-addr', '--area %s --house-ranges ALL --all-streets' % area_arg, part)
 
     def consent():
         cmd = cfg['units'][unit].get('consent_cmd')
         if not cmd:
             return
-        cmd = expand(cmd).replace('{img}', out)
+        cmd = expand(cmd).replace('{img}', part)
         print('\n$', cmd, flush=True)
         r = subprocess.run(cmd, shell=True, env=env_v, capture_output=True, text=True)
         print(r.stdout + r.stderr, end='')
         # a base that carries the patch already is fine; nnt exits 1 for it
         if r.returncode and 'already patched' not in r.stdout + r.stderr:
             raise SystemExit('consent step failed (exit %d)' % r.returncode)
-        stamp('me0_consent', cfg['units'][unit]['consent_cmd'], out)
+        stamp('me0_consent', cfg['units'][unit]['consent_cmd'], part)
 
     def map_step():
         prep()
         run(py, tool('build_gen_lev.py'), '--config', conf, '--unit', unit, '--slug', slug, work,
             '--number', str(number), '--base', base, '--map-from', args['map-from'],
-            '--what', args.get('what') or slug, env=env)
-        if not os.path.exists(out):
-            raise SystemExit('the build wrote another card than %s' % out)
+            '--what', args.get('what') or slug, '--partial', env=env)
+        if not os.path.exists(part):
+            raise SystemExit('the build wrote another card than %s' % part)
 
     def restamp_step():
         prep()
         run(py, tool('build_gen_lev.py'), '--config', conf, '--unit', unit, '--slug', slug, work,
             '--number', str(number), '--base', base, '--restamp-from', args['restamp-from'],
-            '--what', args.get('what') or slug, env=env)
-        if not os.path.exists(out):
-            raise SystemExit('the build wrote another card than %s' % out)
+            '--what', args.get('what') or slug, '--partial', env=env)
+        if not os.path.exists(part):
+            raise SystemExit('the build wrote another card than %s' % part)
 
     def check():
-        run('shasum', '-a', '256', out)
-        run(py, tool('card_check.py'), '--card', out, '--cells', ','.join(cfg['road_tiles']),
+        run('shasum', '-a', '256', part)
+        run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
         groups = (args.get('write') or B['write']).split(',')
         towns = ['--towns'] if args.get('map-from') or args.get('restamp-from') or 'addr' in groups else []
-        run(py, tool('card_verify.py'), '--card', out, '--version', version, *towns, '--manifest', manifest,
+        run(py, tool('card_verify.py'), '--card', part, '--version', version, *towns, '--manifest', mpart,
             '--allow-new', *cfg['allow_leftovers'], env=env)
+        os.replace(mpart, manifest)
+        os.replace(part, out)
+        print('checked; card renamed to', out)
+        import cards_log
+        cards_log.add(os.path.join(cards, cfg['cards_log']), number, unit, slug, args.get('what') or slug,
+                      base, cards)
+
+    def clear_stale(plan_names):
+        """A run that makes the card refuses a finished one and removes a half-made one."""
+        if not {'cards', 'map', 'restamp'} & set(plan_names):
+            if not any(os.path.exists(p) for p in (part, s1, s2)):
+                raise SystemExit('no card in progress (%s); run from the start' % part)
+            return
+        if os.path.exists(out):
+            raise SystemExit('%s already exists; pick the next number' % out)
+        for p in (part, mpart, s1, s2):
+            if os.path.exists(p):
+                os.remove(p)
+                print('removed a stale file from an earlier run:', p)
 
     if args.get('map-from'):
-        return [('prep', prep), ('map', map_step), ('check', check)]
+        return [('prep', prep), ('map', map_step), ('check', check)], clear_stale
     if args.get('restamp-from'):
-        return [('prep', prep), ('restamp', restamp_step), ('consent', consent), ('check', check)]
+        return [('prep', prep), ('restamp', restamp_step), ('consent', consent), ('check', check)], clear_stale
     return [('prep', prep), ('cards', cards_step), ('poi', poi), ('icons', icons), ('addr', addr),
-            ('consent', consent), ('check', check)]
+            ('consent', consent), ('check', check)], clear_stale
 
 
 def main():
@@ -376,6 +400,7 @@ def main():
     work = os.path.abspath(expand(args.get('work') or os.path.join('build', os.path.basename(out)[:-4])))
     os.makedirs(work, exist_ok=True)
     P, prof = profile_with_cells(P, P.path or 'default', base, work)
+    before = None
     if mode == 'area':
         plan = area_steps(P, prof, base, out, work, args.get('area'), args.get('osm'))
     else:
@@ -390,7 +415,7 @@ def main():
                     local = tomllib.load(f)
             elif args.get('local'):
                 raise SystemExit('no such local file: %s' % lp)
-        plan = generate_steps(P, prof, base, out, work, args.get('area'), args.get('osm'), local, args)
+        plan, before = generate_steps(P, prof, base, out, work, args.get('area'), args.get('osm'), local, args)
     names = [n for n, _ in plan]    # --map-from and --restamp-from run a shorter chain
     if 'only' in args:
         plan = [(n, f) for n, f in plan if n == args['only']] or sys.exit(
@@ -398,6 +423,8 @@ def main():
     elif 'from' in args:
         if args['from'] not in names: raise SystemExit('no step %r (have: %s)' % (args['from'], ', '.join(names)))
         plan = plan[names.index(args['from']):]
+    if before:
+        before([n for n, _ in plan])
     for name, fn in plan:
         print('\n===== %s' % name, flush=True)
         fn()
