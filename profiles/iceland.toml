@@ -85,8 +85,8 @@ write = "lev,tiles,addr"   # what is written onto the card; the rest is only che
 coarse_graph = true
 # every drivable public road of each area's relations is built; the areas are the [areas] tables
 cards_log = "CARDS.md"
-sec4_cells = ["B60R080R"]
-road_tiles = ["B58R078R", "B58R080R", "B60R080R"]
+sec4_cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
+road_tiles = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
 poi_python = "python3"   # the interpreter for the POI and address steps; needs shapely and osmium
 
 [card_naming]
@@ -100,14 +100,11 @@ build_pattern = "{prefix}-{number:03d}-{unit}-{slug}.img"
 [units.ZE0]
 version = "14/11/17/01"
 
-
 [units.ZE1]
 version = "17/09/01/01"
 
-
 [units.ME0]
 version = "17/09/01/01"
-
 
 [areas.capital]
 # Reykjavikurborg, Seltjarnarnesbaer, Kopavogsbaer, Gardabaer, Hafnarfjardarkaupstadur, Mosfellsbaer
@@ -144,6 +141,12 @@ bbox = [-21.913085, 63.8197256, -20.9192135, 64.1450656]   # lon_min, lat_min, l
 relations = [8810681, 8809518, 8808785, 8803280, 56206, 14433161]
 cells = ["B58R078R", "B58R080R"]
 bbox = [-20.9854781, 63.2960926, -18.654022, 64.0]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.sudurland_rest]
+# The rest of Sudurland: Blaskogabyggd, Grimsnes- og Grafningshreppur, Hrunamannahreppur, Skeida- og Gnupverjahreppur, Skaftarhreppur, Hornafjordur
+relations = [9177051, 9176913, 8817618, 8813115, 56208, 55966]
+cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
+bbox = [-21.4387848, 63.3995405, -14.496599, 64.8676]   # lon_min, lat_min, lon_max, lat_max
 
 [data]
 # Relative paths are read from the repository root.
@@ -187,6 +190,7 @@ kjos = []
 sudurnes = ["Reykjanesbær", "Suðurnesjabær", "Grindavíkurbær", "Sveitarfélagið Vogar"]
 arborg = ["Sveitarfélagið Ölfus", "Hveragerðisbær", "Sveitarfélagið Árborg"]
 sudurland = []
+sudurland_rest = []
 
 [poicap.settlements]
 "REYKJAVÍK" = { la = "0xb01e", lo = "0xc31c", x = 1511, y = 829 }
@@ -207,8 +211,6 @@ alphabet = "AÁBDÐEÉFGHIÍJKLMNOÓPRSTUÚVXYÝÞÆÖ"
 towns_expected = ["Akranes", "Eyrarbakki", "Garðabær", "Garðabær (Álftanes)", "Garður", "Grindavík", "Hafnarfjörður", "Hveragerði", "Keflavíkurflugvöllur", "Kjós", "Kópavogur", "Mosfellsbær", "Reykjanesbær", "Reykjavík", "Sandgerði", "Selfoss", "Seltjarnarnes", "Stokkseyri", "Vogar", "Þorlákshöfn", "Ölfus"]
 poc_town = "REYKJAVÍK"
 poc_box = [63.4, -24.53, 66.65, -13.41]
-
-
 
 [addr.area_municipalities.capital]
 0000 = "Reykjavík"
@@ -243,3 +245,11 @@ poc_box = [63.4, -24.53, 66.65, -13.41]
 8613 = "Rangárþing eystra"
 8508 = "Mýrdalshreppur"
 8000 = "Vestmannaeyjabær"
+
+[addr.area_municipalities.sudurland_rest]
+8721 = "Bláskógabyggð"
+8719 = "Grímsnes- og Grafningshreppur"
+8710 = "Hrunamannahreppur"
+8720 = "Skeiða- og Gnúpverjahreppur"
+8509 = "Skaftárhreppur"
+8401 = "Sveitarfélagið Hornafjörður"
