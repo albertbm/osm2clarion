@@ -4,7 +4,7 @@ They are not the same and must not be treated as the same.
 
 ## The tools in this repository
 
-GPL-3.0-or-later. Copyright (C) 2026 Albert. The full text is in [LICENSE](LICENSE).
+GPL-3.0-or-later. Copyright (C) 2026 the osm2clarion contributors. The full text is in [LICENSE](LICENSE).
 
 This covers `build.py`, everything in `tools/`, the profiles, the docs and the tests. Nothing
 else.
