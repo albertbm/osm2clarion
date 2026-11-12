@@ -661,6 +661,14 @@ def check_upper_link_shapes(L1, L2, SH1):
                   ['level-2 links with a level-1 shape drawn backwards: %d (want 0)' % st['backwards']])
 
 
+def shape_headers(SH1):
+    """(level-1 parcel, class, point-count word, upper-link words) of every level-1 road shape."""
+    for pc, w, shapes in road_shapes(SH1):
+        for S in shapes:
+            q = S['at'] + 6 + (w[S['at'] + 3] & 3)
+            yield pc, S['cls'], w[S['at'] + 1], w[q:q + (w[S['at']] >> 13)]
+
+
 def check_l2_nodes_on_l1(L1, L2, tol=8):
     """Every level-2 node sits on the level-1 node its block names, and that node carries
     0x2000: a level-2 link is whole level-1 links. Factory B50R068R: 41,875 of 41,875 within
@@ -686,6 +694,23 @@ def check_l2_nodes_on_l1(L1, L2, tol=8):
                   ['level-2 nodes off their level-1 node or on an unflagged one: %d (factory 0, pass at 0.05%%)' % bad])
 
 
+def check_traffic_shapes(SH1, none=0.01, some=0.4, streets=0.02):
+    """Bit 14 of a shape's point-count word marks a road of the country's traffic (TMC)
+    location table; the traffic module lists only such shapes (Navi.exe 0x4de924). Factory
+    class 0-6 shapes: 50% to 100% set in thirteen countries with a table, 0.2% to 0.6% in
+    Belarus, Albania and North Macedonia, which have none; class 8 and up 0.02% to 1.2%.
+    A card is one or the other."""
+    st = collections.Counter()
+    for pc, cls, w1, words in shape_headers(SH1):
+        grp = 'main' if cls <= 6 else 'street' if cls >= 8 and cls != 10 else None
+        if grp:
+            st[grp] += 1
+            st[grp + ' set'] += bool(w1 & fa_encode.TRAFFIC)
+    ok = (st['main set'] <= none * st['main'] or st['main set'] >= some * st['main']) and st['street set'] <= streets * st['street']
+    return result('traffic_shapes', ok, st, ['set on %d of %d class 0-6 shapes (want under %d%% or over %d%%), %d of %d class 8+ (want %d%% or less)'
+                                             % (st['main set'], st['main'], 100 * none, 100 * some, st['street set'], st['street'], 100 * streets)])
+
+
 def run_all(L1, L2, SH1, lev4, lev5):
     out = []
     out.append(check_expansion(L1, L2))
@@ -698,6 +723,7 @@ def run_all(L1, L2, SH1, lev4, lev5):
     out.append(check_roundabouts(L1, L2, SH1))
     out.append(check_upper_link_shapes(L1, L2, SH1))
     out.append(check_l2_nodes_on_l1(L1, L2))
+    out.append(check_traffic_shapes(SH1))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     return out

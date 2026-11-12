@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 12)
+        self.assertEqual(len(checks), 13)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -164,6 +164,29 @@ class TestUpperLinks(unittest.TestCase):
         r = card_check.check_l2_nodes_on_l1(L1, self.l2())
         self.assertFalse(r['passed'])
         self.assertEqual(r['counts']['level-1 node not flagged'], 1)
+
+
+class TestTrafficShapes(unittest.TestCase):
+    def record(self, flagged):
+        import struct
+        import fa_encode
+        nodes = [(100, 100), (300, 300), (600, 600), (900, 900)]
+        chains = [[(1, 0, 1, [])], [(2, 1, 2, [])], [(3, 2, 3, [])]]
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, nodes, chains, hws=['primary'] * 3, country=352)
+        buf = bytearray(plain)
+        for S in fa_encode.parse_record(plain, 1)[2][:flagged]:
+            w1 = struct.unpack_from('>H', buf, 2 * S['at'] + 2)[0]
+            struct.pack_into('>H', buf, 2 * S['at'] + 2, w1 | fa_encode.TRAFFIC)
+        return {(0, 0): bytes(buf)}
+
+    def test_none_or_most_main_roads_pass(self):
+        self.assertTrue(card_check.check_traffic_shapes(self.record(0))['passed'], 'a country with no table')
+        self.assertTrue(card_check.check_traffic_shapes(self.record(3))['passed'], 'a country with one')
+
+    def test_a_third_fails(self):
+        r = card_check.check_traffic_shapes(self.record(1))
+        self.assertFalse(r['passed'])
+        self.assertEqual((r['counts']['main set'], r['counts']['main']), (1, 3))
 
 
 class TestResultShape(unittest.TestCase):

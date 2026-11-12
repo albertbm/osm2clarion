@@ -141,6 +141,10 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
     return [len(upper) << 13 | len(body) + 1] + body
 
 UPPER_LEVEL = {2: 0x2000, 4: 0x6000, 5: 0x8000}   # level code, top three bits of an upper-link word
+# Bit 14 of a shape's point-count word: the road is in its country's traffic (TMC) location
+# table. The traffic module lists only such shapes (Navi.exe 0x4de924). Never written here:
+# factory shapes in a country with no table (Belarus, Albania) have it clear too.
+TRAFFIC = 0x4000
 
 def header_words(fresh, has_g):
     """Words of one link header: [style] key [G] lid."""
