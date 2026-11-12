@@ -38,7 +38,7 @@ def load_config(path):
     SETTLEMENTS = {name: dict(la=int(v['la'], 16), lo=int(v['lo'], 16), x=v['x'], y=v['y'])
                     for name, v in poicap['settlements'].items()}
     FOLD = poicap['fold']
-    ADDR_ONLY = poicap['addr_only_default']
+    ADDR_ONLY = poicap.get('addr_only_default')
     # a facility gets its refs and icon from the road tile it lies in, so every road tile
     POI_TILES = CONFIG.get('road_tiles') or [poicap['poi_tile']]
     return CONFIG
@@ -341,6 +341,8 @@ def build_house_ranges(workdir, args):
     if args.area != 'capital':
         print('warning: only ADDRE001 and ZCODE001 are replaced; POINT001 remains from the base card')
     if not args.all_streets and args.area == 'capital':
+        if not ADDR_ONLY:
+            raise SystemExit('without --all-streets this needs [poicap] addr_only_default')
         cmd += ['--only', ADDR_ONLY]
     if args.no_ranges_town:
         cmd += ['--no-ranges-town', args.no_ranges_town]

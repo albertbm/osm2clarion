@@ -28,18 +28,6 @@ def sha(path):
     return hashlib.sha256(open(path, 'rb').read()).hexdigest()
 
 
-def load_cameras(path, speed_fallback):
-    """cameras.json with every speed_limit_kmh filled in - speed_fallback where the camera
-    node itself carries none (cameras/README.md: no maxspeed on the camera node itself; the
-    record needs a speed field regardless, so this is the nearest OSM way's own maxspeed
-    tag, read directly off the PBF by hand)."""
-    cams = json.load(open(path))
-    for c in cams:
-        if c['speed_limit_kmh'] is None:
-            c['speed_limit_kmh'] = speed_fallback[c['id']]
-    return cams
-
-
 def pos_arg(t):
     return ','.join(str(x) for x in t)
 
@@ -79,7 +67,7 @@ def run(argv):
     for name in road_tiles:
         if name != dealer['road_tile']:
             shutil.copy(B + '/rd/%s.DAT' % name, cam_in + '/%s.DAT' % name)
-    cameras = load_cameras(os.path.expanduser(config['data']['cameras']), config['camera_speed_fallback'])
+    cameras = camera_write.load_cameras(os.path.expanduser(config['data'].get('cameras', '')), config['camera_speed_fallback'])
     report, missing = camera_write.write_cameras(cameras, cam_in, cam_out)
     assert not missing, 'camera(s) outside the built tiles: %r' % missing
     final_tiles = {}

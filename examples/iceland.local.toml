@@ -1,0 +1,57 @@
+# The values profiles/iceland.toml leaves to one machine. Copy this file to local/iceland.toml
+# (git ignores local/) or pass it with --local FILE; build.py merges it over the profile table
+# by table. Relative paths are read from the repository root.
+
+[data]
+# Required. The extract from download.geofabrik.de/europe/iceland.html.
+pbf = "/path/to/iceland-latest.osm.pbf"
+# Required. Staðfangaskrá (the address register) and the postcode list, both from
+# Þjóðskrá Íslands, in CSV; see docs/ADDRESS-IMPORT.md.
+addresses = "/path/to/Stadfangaskra.csv"
+postcodes = "/path/to/postnumeraskra.csv"
+# Optional. Speed cameras from tools/extract_cameras.py. No file means no camera icons.
+# cameras = "/path/to/cameras.json"
+
+# Optional, per unit. icode is the card the ICODE files are read from; the base card when
+# left out. consent_cmd runs on the finished image, {img} standing for its path, for a unit
+# that needs a patch the card build does not make.
+# [units.ZE1]
+# icode = "/path/to/another-ZE1-card.img"
+# consent_cmd = "/path/to/tool {img}"
+
+# Optional. The interpreter for the POI and address steps; the one running build.py when
+# left out.
+# [build]
+# poi_python = "/path/to/python3"
+
+# Optional. The profile anchors POI search on a public landmark; this replaces it with your
+# own place. Every field is needed: tile_l1 and tile_l2 are the icon's parcel positions
+# (level, y0, x0, row, col, px, py) and house_cell the HOUSE001 file it sits in.
+# [dealer]
+# lon = -21.9312
+# lat = 64.1457
+# house_cell = "B60107A1"
+# road_tile = "B60R080R"
+# category = 43
+# name = "NAME"
+# street = "STREET"
+# town = "TOWN"
+# house = "1"
+# icon = "0x806c"
+# tile_l1 = [1, 96, 902, 6, 5, 348, 32]
+# tile_l2 = [2, 96, 900, 1, 17, 599, 1032]
+
+# Optional. A speed for each camera whose OSM node has none, by camera id. A camera with
+# neither is left off the card.
+# [camera_speed_fallback]
+# "C1-street-a" = 60
+
+# Optional, for the single-street test build only (build_addr_area0.py without --area):
+# street: postcode, street: house number to anchor on (0 for the centroid), and the streets
+# build_poicap.py keeps without --all-streets.
+# [addr.poc_streets]
+# "Laugavegur" = 101
+# [addr.poc_anchor]
+# "Laugavegur" = 1
+# [poicap]
+# addr_only_default = "LAUGAVEGUR"

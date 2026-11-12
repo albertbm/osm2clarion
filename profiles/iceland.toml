@@ -182,11 +182,9 @@ bbox = [-16.7971, 64.4222, -13.4948065, 65.9659481]   # lon_min, lat_min, lon_ma
 [data]
 # Relative paths are read from the repository root.
 pbf = "build/iceland-latest.osm.pbf"
-turns = "build/turns_iceland.json"     # made from the pbf when missing
 addresses = "build/address/addresses.csv"
 postcodes = "build/address/postcodes.csv"
-coast = "build/coast_iceland.json"     # made from the pbf when missing
-cameras = "build/cameras.json"
+cameras = "build/cameras.json"       # optional: no file, no camera icons
 
 [dealer]
 # A public landmark stands in for the dealer address every POI build anchors on.
@@ -239,8 +237,8 @@ austurland = ["Múlaþing", "Fjarðabyggð", "Fljótsdalshreppur", "Vopnafjarða
 SELTJARNARNES = { la = "0xb01f", lo = "0xc30c", x = 385, y = 742 }
 
 [addr]
-# The local file supplies poc_streets (street: postcode), poc_anchor (street: house number, 0 for
-# none) and, in [poicap], addr_only_default; they name the streets the address build pins first.
+# poc_streets, poc_anchor and [poicap] addr_only_default are only for the single-street test
+# build; see examples/iceland.local.toml.
 format = "stadfangaskra"
 box = [63.8, 64.4, -22.8, -20.85]
 alphabet = "AÁBDÐEÉFGHIÍJKLMNOÓPRSTUÚVXYÝÞÆÖ"

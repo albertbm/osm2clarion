@@ -238,21 +238,28 @@ def make_config(P, local, cells, base, osm, work):
         p = expand(p)
         return p if os.path.isabs(p) or '$' in p else os.path.join(root, p)
 
-    for table, key in (('addr', 'poc_streets'), ('addr', 'poc_anchor'), ('poicap', 'addr_only_default')):
-        if key not in raw.get(table, {}):
-            raise SystemExit('no [%s] %s: the profile leaves it to the local file' % (table, key))
-    data = {k: path(v) for k, v in raw['data'].items()}
+    def need(table, key=None):
+        """A table the generate chain cannot run without, or a clear exit naming it."""
+        t = raw.get(table)
+        if key is not None:
+            t = (t or {}).get(key)
+        if t is None:
+            raise SystemExit('profile %s (with its local file) has no %s' % (
+                P.name, '[%s] %s' % (table, key) if key else '[%s] table' % table))
+        return t
+
+    data = {k: path(v) for k, v in need('data').items()}
     if osm: data['pbf'] = os.path.abspath(osm)
     units = {}
-    for u, c in raw['units'].items():
+    for u, c in need('units').items():
         units[u] = dict(c, icode=c.get('icode') or os.path.abspath(base))
     cfg = dict(
-        units=units, cells=cells, sec4_cells=B['sec4_cells'],
-        areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in raw['areas'].items()},
-        dealer=raw['dealer'], road_tiles=B['road_tiles'], data=data,
-        camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=raw['card_naming'],
-        cards_log=B['cards_log'], poicap=raw['poicap'], poi_python=B.get('poi_python', sys.executable),
-        roads_poc=raw['roads_poc'], addr=raw['addr'], allow_leftovers=B.get('allow_leftovers', []),
+        units=units, cells=cells, sec4_cells=need('build', 'sec4_cells'),
+        areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in need('areas').items()},
+        dealer=need('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
+        camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=need('card_naming'),
+        cards_log=need('build', 'cards_log'), poicap=need('poicap'), poi_python=B.get('poi_python', sys.executable),
+        roads_poc=need('roads_poc'), addr=need('addr'), allow_leftovers=B.get('allow_leftovers', []),
         profile=P.path)
     return cfg
 

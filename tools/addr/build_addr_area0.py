@@ -74,10 +74,11 @@ def _config():
 
 _cfg = _config()
 TOWN = _cfg['addr']['poc_town']
-STREETS = _cfg['addr']['poc_streets']       # street -> its postcode in the address register
+# the single-street test build only; --area builds never read these two
+STREETS = _cfg['addr'].get('poc_streets', {})       # street -> its postcode in the address register
 # the link each record points at is the one nearest this house number, or the street's
 # address centroid where None
-ANCHOR = _cfg['addr']['poc_anchor']
+ANCHOR = _cfg['addr'].get('poc_anchor', {})
 FOLD_IS = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
 LANG_OTHER = 20      # ADM's local-language code where it is none of the 18 menu
                      # languages: Andorra, Belarus and POINT020 write their own names at 20
@@ -301,6 +302,8 @@ def main():
     if a.area:
         a.areas, a.municipalities = parse_areas(a.area)
         return main_area(a)
+    if not STREETS:
+        raise SystemExit('without --area this builds the test streets in [addr] poc_streets, and there are none')
     od = Path(a.outdir)
     od.mkdir(parents=True, exist_ok=True)
     records = [R for p in a.shapes for R in json.load(open(p))['records']]

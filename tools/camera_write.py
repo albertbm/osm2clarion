@@ -104,6 +104,24 @@ def place_one(t, cam, level, cam_id):
     return dict(row=row, col=col, x=x, y=y, direction=direction, idx=s['idx'])
 
 
+def load_cameras(path, speed_fallback):
+    """cameras.json with every speed filled in. OSM rarely tags a speed on the camera node,
+    and the record needs one, so speed_fallback gives it per camera id; a camera with neither
+    is left out. No file means no cameras."""
+    if not os.path.exists(path):
+        print('no camera file at %s: the card gets no camera icons (extract_cameras.py makes one)' % path)
+        return []
+    cams = []
+    for c in json.load(open(path)):
+        if c['speed_limit_kmh'] is None:
+            if c['id'] not in speed_fallback:
+                print('camera %s has no speed and no camera_speed_fallback entry: left out' % c['id'])
+                continue
+            c['speed_limit_kmh'] = speed_fallback[c['id']]
+        cams.append(c)
+    return cams
+
+
 def write_cameras(cams, tiledir, outdir, levels=(1, 2)):
     """Writes every camera into whichever tile covers it; returns ({camera id: [placement,
     ...]}, [camera ids with no covering tile at any level])."""

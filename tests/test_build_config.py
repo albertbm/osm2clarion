@@ -57,10 +57,17 @@ class TestConfig(unittest.TestCase):
             self.assertIn(key, cfg)
         self.assertEqual(cfg['cells'], ['B58R078R', 'B58R080R', 'B60R078R', 'B60R080R'])
 
-    def test_missing_street_settings_are_refused(self):
+    def test_the_profile_alone_is_enough(self):
         P = clarion_profile.load('iceland')
-        with self.assertRaises(SystemExit):
+        cfg = build.make_config(P, {}, P.cells, '/b.img', None, '/work')
+        self.assertNotIn('poc_streets', cfg['addr'])
+
+    def test_a_missing_table_is_named(self):
+        P = clarion_profile.load('iceland')
+        P.raw = {k: v for k, v in P.raw.items() if k != 'dealer'}
+        with self.assertRaises(SystemExit) as e:
             build.make_config(P, {}, P.cells, '/b.img', None, '/work')
+        self.assertIn('[dealer]', str(e.exception))
 
     def test_icode_defaults_to_the_base_card_and_local_wins(self):
         self.assertEqual(config()['units']['ZE1']['icode'], '/cards/bases/base.img')
@@ -106,6 +113,23 @@ class TestCells(unittest.TestCase):
 
     def test_cell_box(self):
         self.assertEqual(clarion_profile.cell_box('B58R050R'), (20, 88 * 2 / 3, 28, 88 * 2 / 3 + 16 / 3))
+
+
+class TestCameras(unittest.TestCase):
+    def test_no_file_means_no_cameras(self):
+        import camera_write
+        self.assertEqual(camera_write.load_cameras('/no/such/cameras.json', {}), [])
+
+    def test_a_camera_with_no_speed_is_left_out(self):
+        import camera_write
+        cams = [dict(id='a', speed_limit_kmh=None), dict(id='b', speed_limit_kmh=None), dict(id='c', speed_limit_kmh=50)]
+        with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
+            json.dump(cams, f)
+        try:
+            got = camera_write.load_cameras(f.name, {'a': 60})
+        finally:
+            os.remove(f.name)
+        self.assertEqual([(c['id'], c['speed_limit_kmh']) for c in got], [('a', 60), ('c', 50)])
 
 
 if __name__ == '__main__':
