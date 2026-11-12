@@ -12,11 +12,26 @@ ZWBITS = 13   # 8 KiB window, as in the shipped files
 def quant(v, v0, span):
     return max(0, min(UNITS - 1, int(round((v - v0) / span * UNITS))))
 
+def solid(p):
+    """p without the holes clipping noise leaves (1e-29 deg^2 on a 1e-08 polygon): a cut can
+    never remove one that small, and no_holes would recurse until the stack runs out."""
+    holes = [r for r in p.interiors if Polygon(r).area > max(1e-14, p.area * 1e-9)]
+    return p if len(holes) == len(p.interiors) else Polygon(p.exterior, holes)
+
+
+def cut_x(p):
+    """Where to cut p so its first hole opens to the outside; strictly inside the hole's span."""
+    ring = p.interiors[0]
+    x, (a, _, c, _) = ring.centroid.x, ring.bounds
+    return x if a < x < c else (a + c) / 2
+
+
 def no_holes(p):
     """Hole-free pieces of a polygon: ring_shape fills only an exterior."""
+    p = solid(p)
     if not p.interiors:
         return [p]
-    x = p.interiors[0].centroid.x
+    x = cut_x(p)
     a, b, c, d = p.bounds
     out = []
     for half in (box(a - 1, b - 1, x, d + 1), box(x, b - 1, c + 1, d + 1)):

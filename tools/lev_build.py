@@ -62,9 +62,10 @@ def arcmin(y0, y1, x0, x1):
 
 def no_holes(poly):
     """Cut a polygon at its holes until none is left: a record's polygons have no holes."""
+    poly = bg_encode.solid(poly)
     if not poly.interiors:
         return [poly]
-    x = poly.interiors[0].centroid.x
+    x = bg_encode.cut_x(poly)
     x0, y0, x1, y1 = poly.bounds
     out = []
     for half in (box(x0 - 1, y0 - 1, x, y1 + 1), box(x, y0 - 1, x1 + 1, y1 + 1)):
