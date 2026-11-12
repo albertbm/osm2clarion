@@ -168,6 +168,7 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None, graph_bbox=None
             print('level %d routing: %d records, %d nodes, %d links' % (level, nrec, nnodes, nlinks))
         print('level 2 hierarchy flags: %s' % ', '.join('%#x=%d' % x for x in sorted(graph_stats['l2_flags'].items())))
         print('level 2 tiles patched: %s' % graph_stats['l2_patched'])
+        print('coarse link words: %s' % (', '.join('%s %d' % x for x in sorted(graph_stats['coarse_words'].items())) or 'none'))
         for level, st in sorted(lev_roads.graph_build(levels, graph_stats['shapes'], P.country).items()):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels, %d links without a shape' % ((level,) + st))
 

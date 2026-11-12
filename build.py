@@ -212,6 +212,7 @@ def area_steps(P, prof, base, out, work, area, osm):
     def roads_step():
         args = ['--keep-names'] * bool(B.get('keep_names')) + ['--upper-names'] * bool(B.get('upper_names'))
         if B.get('turn_restrictions'): args += ['--turn-restrictions', turns]
+        if B.get('coarse_graph'): args += ['--coarse-words']   # the coarse step fills them
         run(tool('rd_build.py'), '--profile', prof, *args, tile_src, tile_roads, cell, roads)
 
     def coarse():

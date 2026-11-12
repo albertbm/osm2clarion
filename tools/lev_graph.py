@@ -9,12 +9,13 @@ import clarion_bg
 import clarion_format
 import clarion_rd
 import clarion_tile
+import fa_encode
 import lev_file
 import rd_build
 import rd_encode
 from tile_scan import TileScan
 
-FACTORY_CLASSES = {4: set(range(16)), 5: set(range(7)) | {10, 11, 12}}
+FACTORY_CLASSES = fa_encode.COARSE_CLASSES
 
 
 def part_a(raw):
@@ -35,9 +36,8 @@ def l2_geo(pc, x, y):
 
 
 def l2_drawn(tile):
-    """{(parcel, class, link id): (points, route number)} of a tile's level-2 road shapes, the
-    points as (lon, lat) in drawn order."""
-    import fa_encode
+    """{(parcel, class, link id): (points, route number, shape)} of a tile's level-2 road
+    shapes, the points as (lon, lat) in drawn order and the shape as (parcel, word offset)."""
     shapes, names, out = {}, {}, {}
     for r in tile.records(section=1, level=2):
         pl = r.plain()
@@ -59,7 +59,7 @@ def l2_drawn(tile):
             for at, (kind, lid) in sorted(S['points'].items()):
                 run.append(l2_geo(pc, w[at] & 0x7ff, w[at + 1] & 0x7ff))
                 if kind == 'end':
-                    out[pc, S['cls'], lid & 0x1fff] = (run, ref); run = run[-1:]
+                    out[pc, S['cls'], lid & 0x1fff] = (run, ref, (pc, S['at'])); run = run[-1:]
     return out
 
 
@@ -98,6 +98,7 @@ def emitted_l2_layer(paths):
         for (cls, lid), pair in sorted(ends.items()):
             assert len(pair) == 2, (pc, cls, lid, len(pair))
             (i, ei), (j, ej) = pair
+            if ei['id'] & 0x2000: (i, ei), (j, ej) = (j, ej), (i, ei)   # a link runs from the end without the flag
             # bits 14-15 of a level-2 length word are the factory's per-link code, not multiplier bits
             length = (rd_encode.unscaled(ei['b']) + rd_encode.unscaled(ej['b'])) / 2
             tenths = (rd_encode.unscaled(ei['a'], rd_encode.TIME_UNITS) + rd_encode.unscaled(ej['a'], rd_encode.TIME_UNITS)) / 2
@@ -106,11 +107,12 @@ def emitted_l2_layer(paths):
             direction = 1 if bits == (0x4000, 0x8000) else -1 if bits == (0x8000, 0x4000) else 0
             assert ei['w4'] == ej['w4'], (pc, cls, lid, ei['w4'], ej['w4'])
             ends = [l2_geo(pc, rec['nodes'][k]['x'], rec['nodes'][k]['y']) for k in (i, j)]
-            path, ref = drawn.get((pc, cls, lid), (ends, None))
+            path, ref, shape = drawn.get((pc, cls, lid), (ends, None, None))
             if path[0] != ends[0] and path[-1] == ends[0]: path = path[::-1]
             links.append(dict(a=gids[i], b=gids[j], length=length, cls=cls, speed=speed,
                               direction=direction, w4=ei['w4'], parcel=pc, child=(pc, lid),
-                              next_a=gids[j], next_b=gids[i], pa=pc, pb=pc, path=path, ref=ref))
+                              next_a=gids[j], next_b=gids[i], pa=pc, pb=pc, path=path, ref=ref,
+                              members=[(pc, cls, lid)], shape=shape))
     return dict(nodes=nodes, links=links, level=2, records=records, paths=list(paths))
 
 
@@ -169,12 +171,15 @@ def encodable(length_m, kmh):
 
 
 def collapse(per):
-    """Collapse compatible degree-two child nodes without crossing a target-parcel boundary."""
+    """Collapse compatible degree-two child nodes without crossing a target-parcel boundary.
+    The links of one level-2 shape join first, so a shape is never left over two links: its
+    header names one (fill_coarse_words)."""
     owners = collections.defaultdict(set)
     for parent, links in per.items():
         for link in links:
             owners[link['a']].add(parent); owners[link['b']].add(parent)
-    for parent, links in per.items():
+    for parent, shapes in ((parent, shapes) for shapes in (True, False) for parent in per):
+        links = per[parent]
         changed = True
         while changed:
             changed = False; inc = collections.defaultdict(list)
@@ -184,8 +189,12 @@ def collapse(per):
                 if len(at) != 2 or len(owners[node]) != 1: continue
                 p, q = at; a, b = links[p], links[q]
                 if a['cls'] != b['cls']: continue
-                x = a['b'] if a['a'] == node else a['a']
-                y = b['b'] if b['a'] == node else b['a']
+                if shapes and (a.get('shape') is None or a.get('shape') != b.get('shape')): continue
+                # only two links that run the same way join: the shapes under the merged link
+                # all run its way then, as the unit takes them to (Navi.exe 0x3605a0)
+                if (a['b'] == node) != (b['a'] == node): continue
+                if a['b'] != node: a, b = b, a
+                x, y = a['a'], b['b']
                 if x == y: continue
                 def allows(link, u, v):
                     return (link['direction'] == 0 or
@@ -197,10 +206,10 @@ def collapse(per):
                 length = a['length'] + b['length']
                 speed = length / (a['length'] / a['speed'] + b['length'] / b['speed'])
                 if not encodable(length, speed): continue
-                # the drawn line runs x to y, as the merged link does
-                pa = a.get('path', [])[::1 if a['b'] == node else -1]
-                pb = b.get('path', [])[::1 if b['a'] == node else -1]
+                pa, pb = a.get('path', []), b.get('path', [])
                 merged = dict(a=x, b=y, length=length, cls=a['cls'], speed=speed,
+                              members=a.get('members', []) + b.get('members', []),
+                              shape=a.get('shape') if shapes else None,
                               path=pa + pb[1:], ref=(a if a['length'] >= b['length'] else b).get('ref'),
                               direction=0 if fwd and back else 1 if fwd else -1,
                               w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'],
@@ -416,6 +425,57 @@ def patch_l2_flags_zlib(data, flags, found):
     return bytearray(clarion_tile.write_tile(t, clarion_tile.default_order(t)))
 
 
+def fill_record(plain, level, upper, st):
+    """Write the level-4 and level-5 ids into one road-shape record's header words; True if any changed."""
+    w = struct.unpack('>%dH' % (len(plain) // 2), plain)
+    pc = clarion_bg.parcel_rowcol(level, w[0], w[1])
+    pc2 = (pc[0] // 4, pc[1] // 4) if level == 1 else pc
+    changed = False
+    for S in fa_encode.parse_record(bytes(plain), level)[2]:
+        q = S['at'] + 6 + (w[S['at'] + 3] & 3); words = w[q:q + (w[S['at']] >> 13)]
+        if level == 1: lids = [u & 0x1fff for u in words if u & 0xe000 == fa_encode.UPPER_LEVEL[2]][:1]
+        else: lids = [lid & 0x1fff for lid in S['links']]
+        ids = [upper.get((pc2, S['cls'], lid), {}) for lid in lids]
+        if any(i != ids[0] for i in ids): st['shapes over more than one coarse link'] += 1
+        for k, u in enumerate(words):
+            lv = {fa_encode.UPPER_LEVEL[4]: 4, fa_encode.UPPER_LEVEL[5]: 5}.get(u & 0xe000)
+            if lv is None: continue
+            if not ids or lv not in ids[0]: st['L%d words left empty' % lv] += 1; continue
+            struct.pack_into('>H', plain, 2 * (q + k), u & 0xe000 | ids[0][lv])
+            st['L%d words in level-%d shapes' % (lv, level)] += 1; changed = True
+    return changed
+
+
+def fill_coarse_words(paths, upper):
+    """Write the coarse link ids into the header words rd_build --coarse-words left for them.
+    upper: {(level-2 parcel, class, link id): {4: id, 5: id}}. A record keeps its size, so
+    the shape index and the address references into it stay good. Only for a tile of our own."""
+    st = collections.Counter()
+    for path in paths:
+        data = open(path, 'rb').read()
+        fmt = clarion_format.of_header(data[:0x1000])
+        t = clarion_tile.read_tile(data)
+        for sec in t['sections']:
+            if sec['id'] != 1: continue
+            for L in sec['levels']:
+                if L['level'] not in (1, 2): continue
+                for D in L['dirs']:
+                    for s in D['slots'].values():
+                        body = bytearray(s['body'])
+                        for r in s['recs']:
+                            if r['k'] % 2: continue   # the background record
+                            plain = bytearray(fmt.inflate(r['raw']))
+                            if len(plain) < 44 or struct.unpack_from('>H', plain, 4)[0] != 0x00fa: continue
+                            if not fill_record(plain, L['level'], upper, st): continue
+                            r['raw'] = fmt.deflate(bytes(plain))
+                            struct.pack_into('>II', body, 8 * r['k'], len(r['raw']) // 2, len(plain) // 2)
+                        s['body'] = bytes(body)
+        tmp = path + '.coarse.tmp'
+        with open(tmp, 'wb') as f: f.write(clarion_tile.write_tile(t, clarion_tile.default_order(t)))
+        os.replace(tmp, path)
+    return st
+
+
 def build(ways, profile, l2_tiles, bbox=None):
     """({4: directory, 5: directory}, statistics) for lev_build.
 
@@ -444,7 +504,14 @@ def build(ways, profile, l2_tiles, bbox=None):
         for gid in R['gids']:
             pc, i = child_node_ref(child, gid, parent, 4)
             flags[pc, i] = 0x4000 if gid in upper5 else 0x2000
+    upper = collections.defaultdict(dict)
+    for lv, recs in ((4, r4), (5, r5)):
+        for R in recs.values():
+            for link, lid in zip(R['links'], R['ids']):
+                for m in link.get('members', ()): upper[m][lv] = lid
+    words = collections.Counter()
     if bbox is None:
+        words = fill_coarse_words(l2_tiles, upper)
         patch_l2_flags(l2_tiles, flags)
     fmt = profile.fmt
     box = (origin[0] + 88, origin[0], (origin[1] - fmt.x_base) & 0xffff, (origin[1] + 88 - fmt.x_base) & 0xffff)
@@ -454,6 +521,7 @@ def build(ways, profile, l2_tiles, bbox=None):
     stats['l2_patched'] = bbox is None
     stats['shapes'] = {4: link_shapes(4, r4, origin), 5: link_shapes(5, r5, origin)}
     stats['l2_flags'] = collections.Counter(flags.values())
+    stats['coarse_words'] = words
     return dirs, stats
 
 

@@ -145,6 +145,13 @@ UPPER_LEVEL = {2: 0x2000, 4: 0x6000, 5: 0x8000}   # level code, top three bits o
 # table. The traffic module lists only such shapes (Navi.exe 0x4de924). Never written here:
 # factory shapes in a country with no table (Belarus, Albania) have it clear too.
 TRAFFIC = 0x4000
+# the level-2 classes the level-4 and level-5 graphs carry (lev_graph builds them from these)
+COARSE_CLASSES = {4: set(range(16)), 5: set(range(7)) | {10, 11, 12}}
+
+def coarse_words(cls):
+    """Header words for the level-5 and level-4 links over a level-2 link of this class, highest
+    level first, ids left 0: lev_graph.fill_coarse_words writes them once the coarse graph exists."""
+    return [UPPER_LEVEL[lv] for lv in (5, 4) if cls in COARSE_CLASSES[lv]]
 
 def header_words(fresh, has_g):
     """Words of one link header: [style] key [G] lid."""

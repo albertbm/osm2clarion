@@ -494,6 +494,24 @@ def follow_upper(parcels, upper, against):
 
 UPPER_REACH = 10    # metres a level-1 link's middle may sit outside its level-2 link's stretch
 
+def coarse_runs(parcels):
+    """Per level-2 parcel, a number per link that changes where the level-4 graph can keep a
+    node: a junction, a chain's end, a change of one-way sense, a loop closing on itself. A
+    level-2 shape names one level-4 link, so link_groups ends it there (lev_graph.collapse
+    joins no further)."""
+    out = {}
+    for pc, P in parcels.items():
+        if P.get('ring'): continue
+        L = P['links']; deg = collections.Counter(k for l in L for k in l[:2]); runs = []; seen = set()
+        for k, l in enumerate(L):
+            joined = (k and L[k - 1][9] == l[9] and L[k - 1][1] == l[0] and deg[l[0]] == 2 and L[k - 1][10] == l[10]
+                      and l[1] not in seen)
+            if not joined: seen = {l[0]}
+            seen.add(l[1])
+            runs.append(runs[-1] if joined else k)
+        out[pc] = runs
+    return out
+
 
 def chains_of(links, idx, chain=True, ids=None, groups=None):
     """Shapes as [(link id, from index, to index, inner points)] chains over link_groups."""
@@ -652,7 +670,7 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to):
     return max(nbrs, key=lambda n: cosine(n[1]))[0]
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
-                   l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None, l2_keys=frozenset()):
+                   l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None, coarse=False, l2_keys=frozenset()):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
     encode_parcels.unpaired = []
@@ -733,8 +751,12 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         up = upper.get(pc) if upper else None
         groups = link_groups(P['links'], chain, up)
         chains = chains_of(P['links'], idx, chain, ids, groups)
-        uppers = [[fa_encode.UPPER_LEVEL[2] | up[g[0]]] if up and up[g[0]] is not None else [] for g in groups]
         L = P['links']
+        def words(g):
+            above = fa_encode.coarse_words(fa_encode.layer_class(L[g[0]][5], 2)[1]) if coarse else []
+            if level == 2: return above
+            return above + [fa_encode.UPPER_LEVEL[2] | up[g[0]]] if up and up[g[0]] is not None else []
+        uppers = [words(g) for g in groups]
         hws = [L[g[0]][5] for g in groups]
         label_of = [label(L[g[0]][4], L[g[0]][6]) for g in groups]
         labels = []
@@ -878,6 +900,8 @@ def main():
         i = argv.index('--l2-classes'); l2 = clarion_profile.l2_classes(argv[i + 1]); del argv[i:i + 2]
     global UPPER_NAMES
     if '--upper-names' in argv: argv.remove('--upper-names'); UPPER_NAMES = True
+    coarse = '--coarse-words' in argv   # lev_build will run with these tiles and fill the words
+    if coarse: argv.remove('--coarse-words')
     index_path = None
     if '--shape-index' in argv:
         i = argv.index('--shape-index'); index_path = argv[i + 1]; del argv[i:i + 2]
@@ -955,14 +979,14 @@ def main():
                 for key, nd in P['nodes'].items():
                     # the two edge nodes either side of a parcel line share one geo
                     l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
-        upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else None
-        turned = follow_upper(parcels, upper, upper_links.against) if upper else 0
+        upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else coarse_runs(parcels) if coarse else None
+        turned = follow_upper(parcels, upper, upper_links.against) if level == 1 else 0
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
                               l1_index=(l1_index if level == 2 else None), signs=signs,
                               l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None),
-                              upper=upper, l2_keys=(l2_keys if level == 1 else frozenset()))
+                              upper=upper, coarse=coarse, l2_keys=(l2_keys if level == 1 else frozenset()))
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)
@@ -971,7 +995,7 @@ def main():
         shapes = [c for pc, P in parcels.items()
                   for c in chains_of(P['links'], P['index'], chain,
                                      groups=link_groups(P['links'], chain, upper.get(pc) if upper else None))]
-        if upper:
+        if level == 1:
             st = upper_links.stats
             report.append(f"level 1: links named in a shape's level-2 word {st['found']}, on a level-2 road with "
                           f"no level-2 link found {st['no level-2 link']}, class differs between the levels {st['class differs']}, "

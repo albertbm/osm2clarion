@@ -135,6 +135,9 @@ def load_lev(path):
                         a, b = rec['raw']
                         recs[row, col] = (clarion_rd.parse_record(a), clarion_rd.parse_part_b(b))
         out[layer['level']] = recs
+        if layer['level'] == 4 and layer['dirs']:
+            # the mesh the level-4 grid starts at; x is stored less 1024
+            out['origin'] = (layer['dirs'][0]['y'], (layer['dirs'][0]['x'] + 1024) & 0xffff)
     return out
 
 
@@ -620,6 +623,13 @@ def l1_node(L1, pc2, block):
     return l1_units(pc1, m['x'], m['y'])
 
 
+def child_parcel(level, par, word, origin):
+    """The parcel a level-4 or level-5 part-B block names, one level down."""
+    if level == 4:
+        return par[0] * 16 + origin[0] * 8 + (word >> 12), par[1] * 16 + origin[1] * 8 + (word >> 4 & 0xf)
+    return par[0] * 4 + (word >> 14), par[1] * 4 + (word >> 6 & 3)
+
+
 def walk_shapes(shapes, first):
     """Follow the shapes naming one upper link from the level-1 node under its first node,
     the way the unit does: the shape that starts where the last one ended (Navi.exe 0x34d2b8)."""
@@ -711,7 +721,57 @@ def check_traffic_shapes(SH1, none=0.01, some=0.4, streets=0.02):
                                              % (st['main set'], st['main'], 100 * none, 100 * some, st['street set'], st['street'], 100 * streets)])
 
 
-def run_all(L1, L2, SH1, lev4, lev5):
+def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
+    """A level-1 shape names its level-5, level-4 and level-2 links, highest first, each
+    level-4 link is named from below, and the shapes naming a coarse link run its way."""
+    st = collections.Counter()
+    if not lev4 or origin is None:
+        return result('coarse_link_words', True, st, ['no coarse graph loaded, nothing to check'])
+    order = {0x8000: 0, 0x6000: 1, 0x2000: 2}
+    for pc, cls, w1, words in shape_headers(SH1):
+        if not words:
+            continue
+        codes = [u & 0xe000 for u in words]
+        st['shapes with words'] += 1
+        if codes != sorted(codes, key=lambda c: order.get(c, 3)) or codes[-1] != 0x2000 or (0x8000 in codes and 0x6000 not in codes):
+            st['words out of order'] += 1
+
+    def under(level, par, k):
+        """The level-1 node under node k of a level-4 or level-5 record."""
+        rec = (lev4 if level == 4 else lev5).get(par)
+        block = blocks_of(rec[1]).get(k) if rec else None
+        if block is None:
+            return None
+        child = child_parcel(level, par, block['parcel'], origin)
+        if level == 5:
+            return under(4, child, block['child'])
+        return l1_node(L1, child, blocks_of(L2[child][1]).get(block['child'])) if child in L2 else None
+
+    base = (origin[0] * 32, origin[1] * 32)
+    for lv, span, recs in ((4, 64, lev4), (5, 256, lev5)):
+        named = upper_shapes(SH1, {4: 0x6000, 5: 0x8000}[lv], span, base)
+        links = {par + (cls, lid): k for par, (a, b) in recs.items() for cls, lid, k in first_ends(a)}
+        st['L%d names of no link' % lv] = sum(key[:2] in recs and key not in links for key in named)
+        for key, k in links.items():
+            node = under(lv, key[:2], k)
+            if node is None:
+                continue          # not under the loaded tiles
+            st['L%d links' % lv] += 1
+            if key in named:
+                st['L%d %s' % (lv, walk_shapes(named[key], node))] += 1
+            else:
+                st['L%d not named' % lv] += 1
+    n = st['L4 links'] + st['L5 links']
+    ok = (st['words out of order'] <= 0.001 * st['shapes with words']
+          and st['L4 names of no link'] + st['L5 names of no link'] <= 0.02 * n
+          and st['L4 backwards'] + st['L5 backwards'] <= 0.005 * n
+          and st['L4 not named'] <= 0.15 * st['L4 links'])
+    return result('coarse_link_words', ok, st,
+                  ['level-4 links no level-1 shape names: %d of %d (want 15%% or less); coarse links with a shape drawn backwards: %d (want 0.5%% or less)'
+                   % (st['L4 not named'], st['L4 links'], st['L4 backwards'] + st['L5 backwards'])])
+
+
+def run_all(L1, L2, SH1, lev4, lev5, origin=None):
     out = []
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
@@ -724,6 +784,7 @@ def run_all(L1, L2, SH1, lev4, lev5):
     out.append(check_upper_link_shapes(L1, L2, SH1))
     out.append(check_l2_nodes_on_l1(L1, L2))
     out.append(check_traffic_shapes(SH1))
+    out.append(check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     return out
@@ -856,7 +917,7 @@ def bit_note(xor):
 def load_for_check(tile_paths, lev_path):
     L1, L2, SH1 = load_road_tiles(tile_paths)
     lev = load_lev(lev_path)
-    return L1, L2, SH1, lev.get(4, {}), lev.get(5, {})
+    return L1, L2, SH1, lev.get(4, {}), lev.get(5, {}), lev.get('origin')
 
 
 def print_report(title, checks):
@@ -896,13 +957,13 @@ def main(argv):
             errors.update({'%s %s' % (cell, k): n for k, n in e.items()})
             L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'))
         checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
         errors = collections.Counter()
         L1, L2, SH1 = load_road_tiles(args.tiles, errors)
         levd = load_lev(args.lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'))
         checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
@@ -911,7 +972,7 @@ def main(argv):
     if args.factory:
         L1f, L2f, SH1f = load_road_tiles(args.factory)
         levf = load_lev(args.factory_lev)
-        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}))
+        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'))
         print_report('factory (%s)' % ', '.join(os.path.basename(f) for f in args.factory), fchecks)
         report['factory'] = dict(checks=fchecks)
 

@@ -8,6 +8,8 @@ road-shape record, and the offsets that tie the two together.
 The factory cases need a tile with section 4; set OSM2CLARION_FACTORY_TILE to one (B48R060R.DAT
 is the one the spec was measured on) or they skip. Nothing from it is written anywhere.
 """
+import struct
+import collections
 import json, os, struct, sys, tempfile, unittest, zlib
 from pathlib import Path
 
@@ -217,6 +219,22 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertTrue(all(S['ok'] for S in shapes))
         self.assertEqual([S['links'] for S in shapes], [[1, 2], [3]])
 
+    def test_coarse_words_are_filled_in_place(self):
+        self.assertEqual(fa_encode.coarse_words(4), [0x8000, 0x6000], 'highest level first, ids left for lev_graph')
+        self.assertEqual(fa_encode.coarse_words(7), [0x6000])
+        rec, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, [self.CHAIN], hws=['primary'], styles=[[0x101e, 0x101e]],
+                                        country=352, uppers=[fa_encode.coarse_words(4) + [0x2007]])
+        import lev_graph
+        pc = (96 * 32 + 7, 898 * 32 + 9)
+        buf = bytearray(rec); st = collections.Counter()
+        upper = {((pc[0] // 4, pc[1] // 4), 4, 7): {4: 21, 5: 3}}
+        self.assertTrue(lev_graph.fill_record(buf, 1, upper, st))
+        S = fa_encode.parse_record(bytes(buf), 1)[2][0]
+        w = struct.unpack('>%dH' % (len(buf) // 2), buf)
+        self.assertTrue(S['ok'])
+        self.assertEqual(w[S['at'] + 6:S['at'] + 9], (0x8003, 0x6015, 0x2007))
+        self.assertEqual(len(buf), len(rec), 'the record keeps its size')
+
     def test_pin_crossings_and_forced_nodes(self):
         # a way over the level-2 parcel line at lon -22.0: the crossing becomes a point of the way
         w = dict(id=1, hw='primary', nodes=[[-22.001, 64.01], [-21.999, 64.0105]])
@@ -227,6 +245,14 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual([len(run) for _, run in rd_build.cut(w['nodes'], 2)], [2, 2], 'not cut a second time')
         self.assertEqual(rd_build.pin_crossings([w]), pinned, 'a second pass adds nothing')
         self.assertEqual(len(w['nodes']), 3)
+
+    def test_coarse_runs_end_at_junctions(self):
+        link = lambda a, b, chain, d=0: (a, b, 10.0, 1, None, 'primary', None, None, [], chain, d, None)
+        L = [link(0, 1, 0), link(1, 2, 0), link(2, 3, 0), link(3, 4, 0, 1), link(2, 9, 1)]
+        runs = rd_build.coarse_runs({'p': dict(links=L)})['p']
+        self.assertEqual(runs, [0, 0, 2, 3, 4], 'a new run past the junction at node 2 and where the one-way sense changes')
+        loop = [link(7, 1, 0), link(1, 2, 0), link(2, 3, 0), link(3, 1, 0)]
+        self.assertEqual(rd_build.coarse_runs({'p': dict(links=loop)})['p'], [0, 1, 1, 3], 'a loop is not closed inside one run')
 
     def test_link_groups_break_where_the_upper_link_changes(self):
         link = lambda a, b: (a, b, 10.0, 1, None, 'primary', None, None, [], 0, 0, None)

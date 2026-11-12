@@ -120,7 +120,7 @@ def extract(img, path, dest):
     raise SystemExit('%s not on %s' % (path, img))
 
 
-def road_steps(B, also, to=None, by=None, area=None):
+def road_steps(B, also, to=None, by=None, area=None, coarse_graph=False):
     """Ways, then rd_build into step 1's tiles, then section 4: the card's tiles."""
     t = OSM; R = os.path.join(B, 'rd')
     turns_all = osm_paths(B)['turns']
@@ -138,8 +138,9 @@ def road_steps(B, also, to=None, by=None, area=None):
     for c in CELLS:
         dest = R + '/%s.DAT' % c if c not in sec4 else R + '/%s.nosec4.DAT' % c
         cmds.append([sys.executable, t + '/rd_build.py', '--profile', PROFILE, '--simplify', '2',
-                     '--l2-graph', '--upper-names', '--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
-                     '--shape-index', R + '/%s.shapes.json' % c])
+                     '--l2-graph', '--upper-names'] + (['--coarse-words'] if area and coarse_graph else [])   # lev fills them
+                    + ['--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
+                       '--shape-index', R + '/%s.shapes.json' % c])
         if c in sec4:
             cmds.append([sys.executable, t + '/sec4_write.py', dest, R + '/%s.DAT' % c, '--country', '352'])
             cmds.append([sys.executable, t + '/shape_index.py', 'verify', R + '/%s.shapes.json' % c, R + '/%s.DAT' % c])
@@ -285,7 +286,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
                     t + '/clarion_tile.py'],
              products=[p for _, p in tiles_out.values()] if roads else [],
              outputs={} if roads else tiles_out),
-    ] + (road_steps(B, also, to, by, area) if roads else []) + \
+    ] + (road_steps(B, also, to, by, area, coarse_graph) if roads else []) + \
         (house_step(B, landuse, coast, city_buffer, landuse_buffer) if house else []) + [
         dict(name='lev', cwd=OSM_ROOT,
              cmd=[sys.executable, t + '/lev_build.py', '--profile', PROFILE, '--coastline', coast]
