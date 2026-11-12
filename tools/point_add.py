@@ -31,7 +31,7 @@ sys.path.insert(0, os.path.join(HERE, 'addr'))
 import addre_io  # noqa: E402
 import point_io  # noqa: E402
 import frames  # noqa: E402
-from build_addr_area0 import AREA, LANG_OTHER, NLEVEL, REF_BASE, ladder, word_keys  # noqa: E402
+from build_addr_area0 import AREA, LANG_OTHER, NLEVEL, REF_BASE, ladder, point_word_keys  # noqa: E402
 from card_pack import wrap  # noqa: E402
 
 
@@ -104,7 +104,7 @@ def main(argv=None):
     names.append(point_io.name_record(
         a.name, ladder(a.town), NLEVEL, a.category, lat=lw, lon=ow, x=ix, y=iy,
         address=a.street, house=a.house, items=items, refs=refs, tel_idx=tel_idx))
-    for u, later in word_keys(a.name, p.kw):
+    for u, later in point_word_keys(a.name, p.kw):
         hits.setdefault(u, []).append((idx, 0x4000 if later else 0))
 
     keys, recs = [], []
@@ -129,7 +129,7 @@ def main(argv=None):
         adm_names += [(t, levels[:2], LANG_OTHER), (t, levels, LANG_OTHER)]
     adm_keys = {}
     for i, (nm, lv, lang) in enumerate(adm_names):
-        for u, later in word_keys(nm, frames.ADM_KW):
+        for u, later in point_word_keys(nm, frames.ADM_KW):
             adm_keys.setdefault(u, []).append((i, later))
     old_frame = frames.adm(p.extra_off, p.area, p.nlevel, adm_names, adm_keys)[0]
     assert old_frame == p.extra, 'ADM rebuild differs from the file'
@@ -154,7 +154,7 @@ def main(argv=None):
     struct.pack_into('>IH', out, 0x800 + 6 * 278, *s278)
     out = bytes(out)
     q = point_io.Point(out)
-    assert len(q.names) == len(p.names) + 1 and q.nrec == p.nrec + len(word_keys(a.name, p.kw))
+    assert len(q.names) == len(p.names) + 1 and q.nrec == p.nrec + len(point_word_keys(a.name, p.kw))
 
     os.makedirs(a.outdir, exist_ok=True)
     open(os.path.join(a.outdir, 'POINT001.DAT'), 'wb').write(out)
