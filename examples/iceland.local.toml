@@ -23,12 +23,15 @@ postcodes = "/path/to/postnumeraskra.csv"
 
 # Optional. One place of your own, such as your dealer, with a POI icon and a POINT record.
 # street, town and house must match the address register as the card spells them, in
-# capitals with accents. tile_l1 and tile_l2 are the icon's parcel positions (level, y0,
-# x0, row, col, px, py), measured by hand, and house_cell the HOUSE001 file it sits in.
+# capitals with accents. house_cell is the HOUSE001 file holding lon/lat:
+# house_encode.file_name(*house_encode.cell_of(lon, lat)) without .DAT. tile_l1 and tile_l2
+# are the icon's parcel positions (level, y0, x0, row, col, px, py) on the built road tile:
+# camera_write.find_parcel(tile, lon, lat, level) gives the directory (y0 = D['y'],
+# x0 = D['x']), row, col, px and py.
 # [dealer]
 # lon = -21.9312
 # lat = 64.1457
-# house_cell = "B60107A1"
+# house_cell = "BXXXXXXX"
 # road_tile = "B60R080R"
 # category = 43
 # name = "NAME"
@@ -36,8 +39,8 @@ postcodes = "/path/to/postnumeraskra.csv"
 # town = "REYKJAVÍK"
 # house = "1"
 # icon = "0x806c"
-# tile_l1 = [1, 96, 902, 6, 5, 348, 32]
-# tile_l2 = [2, 96, 900, 1, 17, 599, 1032]
+# tile_l1 = [1, 0, 0, 0, 0, 0, 0]
+# tile_l2 = [2, 0, 0, 0, 0, 0, 0]
 
 # Optional. A speed for each camera whose OSM node has none, by camera id. A camera with
 # neither fails the build, unless [build] allow_missing_speed = true leaves it off the card.
