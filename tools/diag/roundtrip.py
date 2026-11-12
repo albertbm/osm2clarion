@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Parse-then-build every section-1 level 5 and 4 record of a LEV3456R.DAT and
 count the byte-exact rebuilds, against a chosen clarion_bg module.
 

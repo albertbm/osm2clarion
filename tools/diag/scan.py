@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Per-tile record tally by (section, level), plus level-2 graph node/link totals."""
 import collections, os, resource, struct, sys, zlib
 HERE = os.path.dirname(os.path.abspath(__file__))

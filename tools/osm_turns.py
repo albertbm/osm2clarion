@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Turn restrictions of an OSM extract as JSON for rd_build.py.
 
     ./osm_turns.py iceland-latest.osm.pbf turns_iceland.json
@@ -7,7 +8,7 @@ Only `type=restriction` relations with a single **node** via member and one `fro
 `to` way are kept: those are the ones that land on a junction node of the road graph, which
 is where the card's regulation records live (KIWI 1.22 10.7.1.2). A way via member means the
 restriction spans an intermediate link and needs a path, not a node; those are counted and
-dropped. `only_*` restrictions are also counted and dropped -- they prohibit every turn
+dropped. `only_*` restrictions are also counted and dropped: they prohibit every turn
 except one, which is an expansion over the node's other links rather than a straight
 translation, and doing it wrong would block roads that are open.
 

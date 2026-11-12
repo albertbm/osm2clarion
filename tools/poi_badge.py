@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Add a dealer/POI icon point to an already-built tile, at one or more pre-measured
 positions.
 

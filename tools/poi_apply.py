@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Apply one dealer/POI set to a generated BUILD_DIR, write it onto CARD.img and refresh
 DRSTR: a road-tile icon (poi_badge.py), every camera in the config's camera file
 (camera_write.py), a building-scale icon (house_badge.py) and a POINT record anchored on

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compare two tiles record by record, keyed on (section, level, slot, k)."""
 import os, sys, struct
 HERE = os.path.dirname(os.path.abspath(__file__))

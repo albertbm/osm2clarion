@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Shared helpers for packing a .cmp/.ind pair and updating a card's MMAIN/editor reads.
 
 Split out of a country build's own clean-card tool, since nothing here is country-specific.

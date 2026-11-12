@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Build the generated map files, put them on a fresh copy of the unit's base card, and write
 the card's manifest.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Remove file entries from a directory inside a DRSTR001.DAT. Mirror of drstr_add.py.
 
 Removing a child shrinks its directory's child block by 0x20 bytes per entry, so every

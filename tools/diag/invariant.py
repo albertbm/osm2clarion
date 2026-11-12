@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Over every section-1 record of a tile: does the proposed invariant hold wherever
 clarion_bg.parse_record rebuilds byte-exactly, and fail only where it does not?"""
 import sys, os, zlib, struct

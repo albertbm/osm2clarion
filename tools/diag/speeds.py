@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Implied link speeds in a tile, decoded the way the factory cards decode."""
 import os, sys, collections, statistics
 HERE = os.path.dirname(os.path.abspath(__file__))

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """What the Iceland card's REFER headers declare."""
 import os
 

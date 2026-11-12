@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Sparse mirror of a card image's map partition: same tree, same names, same file sizes.
 
 make_drstr.py reads only the directory structure, the file sizes and the first four

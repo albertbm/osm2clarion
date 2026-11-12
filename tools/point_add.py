@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Add one facility (a POINT category) to an already-built card's POINT001 file.
 
 Proof of concept only: one facility at a hand-picked position, name and street. On a

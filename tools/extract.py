@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Copy one file out of a card image by walking the FAT. Caches FAT sectors so the
 cluster chain costs a handful of reads instead of one per cluster."""
 import sys, struct, os

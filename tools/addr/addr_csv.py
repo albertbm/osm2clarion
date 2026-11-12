@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Read an address CSV and its postcode register, filtered to a box or a municipality set.
 
 The column names and the box come from config['addr'] - this module reads the Icelandic

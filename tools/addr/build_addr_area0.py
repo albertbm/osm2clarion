@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Area 0's address files, written from Staðfangaskrá with no bytes taken from a factory card.
 
 Every byte comes from the register, from a decoded field, from the road tiles' shape index,

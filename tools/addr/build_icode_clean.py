@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Write REFER001/ICODE001.DAT and REFER002/ICODE001.DAT from scratch: one country, Iceland.
 
 The row and chain layout comes from icode_io. The country name, the tier labels and the

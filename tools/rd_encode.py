@@ -188,9 +188,9 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     twin's L1 child index or None)}. Level 1 ships zlib; level 2 raw, as two parts, the second a
     per-node connection table.
     l2_twin: [bool] aligned with nodes, True where the node also exists at level 2 (0x2000).
-    l1_pair: [(cell word, child index) or None] aligned with nodes, level 2 only -- the node's
+    l1_pair: [(cell word, child index) or None] aligned with nodes, level 2 only: the node's
     L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block).
-    l1_next: [(from a, from b)] aligned with links, level 2 only -- the L1 node next along the
+    l1_next: [(from a, from b)] aligned with links, level 2 only: the L1 node next along the
     link from each end's L1 twin; the descent (0x33aabc) looks that index up among the twin's
     L1 entries and dereferences NULL when it is not one of them."""
     default = 0x0898 if level == 1 else 0x0797

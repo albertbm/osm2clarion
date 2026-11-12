@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compare a card's FAT readdir order against the order in its own DRSTR001.DAT.
 
 Reads only the MBR, the FAT32 boot sector, the FAT sectors it needs for the

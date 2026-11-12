@@ -258,7 +258,7 @@ def build_graphs(ways, cell, level=1, chain=True):
             if side: nd['edge'] = side
     # a node on the line with nothing at the mirrored point in an already-built neighbour was
     # never a real crossing either (typically a dead end that just happens to quantize onto
-    # the line) -- nudge it off the line rather than leave it looking like a crossing with no
+    # the line); nudge it off the line rather than leave it looking like a crossing with no
     # edge entry; a neighbour that was never built at all (genuinely outside this run) is left
     # alone, since that is the ordinary tile-edge case, not this defect
     for pc, P in parcels.items():
@@ -600,7 +600,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                 l1_next_node(l1_pair[idx[b]], pc, l1_adj, gb, ga)))
             encode_parcels.l1_next_missing += sum(x is None for pair in l1_next for x in pair)
         # the factory marks a roundabout ring's own links (not its approach/exit spokes) with
-        # w4's top 3 bits all set, both ends alike, at both L1 and L2 -- measured on the Koln
+        # w4's top 3 bits all set, both ends alike, at both L1 and L2, measured on the Koln
         # and UK factory tiles, never on a plain one-way link's entries
         link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else 0 for l in P['links']]
         # w4 bits 1-2 (KIWI link direction, 7.A.8): 0 on a level-1-only link, 1-3 on a link that an

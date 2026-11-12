@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Filesystem-level diff of two card images: file list, sizes, mtimes and md5s."""
 import os, sys
 HERE = os.path.dirname(os.path.abspath(__file__))

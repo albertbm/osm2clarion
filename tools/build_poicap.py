@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Build the capital-area POI card: the base map untouched, plus every real OSM POI in
 the selected area (icon + POINT search facility), plus the x-first settlement fix
 No whole-country towns here - that tooling is untouched.

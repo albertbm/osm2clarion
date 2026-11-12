@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Add one icon point to the building-scale map (HOUSE001) at a given coordinate.
 
 Factory HOUSE001 files carry icon points in layer 10 as `0001 0003 COUNT` then

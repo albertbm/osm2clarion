@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Road set for clean-room step 2: the drivable path between two named streets.
 
     gen_roads_path.py iceland-latest.osm.pbf turns_iceland.json ROADS_OUT TURNS_OUT [--reach METRES]
