@@ -16,7 +16,7 @@ Each is one of:
 
     build_gen_lev.py --config PATH --unit NAME --slug NAME BUILD_DIR [--base IMG] [--what TEXT]
                      [--coast PATH] [--reuse] [--number N]
-                     [--map-from CARD]
+                     [--map-from CARD | --restamp-from CARD]
                      [--roads [--also NAME,NAME] [--to NAME,NAME [--by time]] | --area NAME[,NAME...] [--coarse-graph]]
                      [--write lev|tiles,addr] [--addr-only NAME,NAME]
                      [--landuse lon0,lat0,lon1,lat1 [--landuse-kinds forest,water,...] [--buildings LAYER:CLASS]
@@ -38,6 +38,11 @@ they are: nothing is generated, restamped or recompressed, so the DATA VERSION s
 card's, and the ICODE files that number its towns go with them. The target keeps its own app and
 settings and gets a refreshed index. This is "build once, write per unit"; BUILD_DIR is only a
 place for the config.
+
+--restamp-from CARD does the same with this unit's DATA VERSION: every stamp in those files is
+rewritten (packed files are unpacked, stamped and repacked) and the icode step runs on this
+unit's ICODE input. That is all that differs between the units' full builds, so one full build
+gives the others' cards.
 
 --roads adds the road steps: gen_roads_path.py picks the ways (--also adds whole streets,
 --to a route to each named street and the street itself, --by how that route is weighed),
@@ -91,7 +96,7 @@ def _config_path():
     return path
 
 
-from card_pack import ed_read, mmain, wrap  # noqa: E402
+from card_pack import ed_read, mmain, restamped, wrap  # noqa: E402
 from drstr_add import add as drstr_add, children, dir_records, remove as drstr_remove  # noqa: E402
 from clarion_tile import walk  # noqa: E402
 from drstr_sizes import set_sizes  # noqa: E402
@@ -251,6 +256,22 @@ def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=
                  outputs={'HOUSE001/' + n: ('file', B + '/house/' + n) for n in names})]
 
 
+def icode_step(B, icode_base):
+    """The two ICODE files, from the unit's own ICODE input and the address register."""
+    addr = os.path.join(B, 'addr')
+    i1, i2 = os.path.join(B, 'in', 'REFER001_ICODE001.DAT'), os.path.join(B, 'in', 'REFER002_ICODE001.DAT')
+    return dict(name='icode', cwd=REPO,
+                cmd=['python3', HERE + '/addr/build_icode_clean.py', i1, i2, addr],
+                # the town rows come from the address register
+                inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
+                                                               (icode_base, 'REFER002/ICODE001.DAT', i2)],
+                tools=[HERE + '/addr/build_icode_clean.py', HERE + '/addr/addr_csv.py'],
+                note='reads the input ICODE files for their volume table (languages and frame kinds); '
+                     'REFER001 also copies their 18 POI genre frames byte for byte',
+                outputs={'REFER001/ICODE001.DAT': ('file', addr + '/REFER001_ICODE001.DAT'),
+                         'REFER002/ICODE001.DAT': ('file', addr + '/REFER002_ICODE001.DAT')})
+
+
 def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=None, landuse=None, kinds=None,
           buildings=None, house=False, coarse_graph=False, city_buffer=HOUSE_CITY_BUFFER,
           landuse_buffer=HOUSE_LANDUSE_BUFFER):
@@ -263,7 +284,6 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
                                                         if kinds else []) + (['--buildings'] if buildings else []),
                     inputs=[PBF], tools=[t + '/extract_landuse.py'], products=[lu], outputs={})] if landuse else []
     addr = os.path.join(B, 'addr')
-    i1, i2 = os.path.join(B, 'in', 'REFER001_ICODE001.DAT'), os.path.join(B, 'in', 'REFER002_ICODE001.DAT')
     tiles_out = {'MAPAL001/%s.DAT' % c: ('file', B + '/tiles/%s.DAT' % c) for c in CELLS}
     shapes = [B + '/rd/%s.shapes.json' % c for c in CELLS] if roads else []
     l2_tiles = [B + '/rd/%s.DAT' % c for c in CELLS] if area and coarse_graph else []
@@ -292,16 +312,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
              # place, so a correct rerun must re-stamp rd's outputs too, not just its own
              mutates=(['rd'] if area and coarse_graph else []),
              outputs={'MAPAL001/LEV3456R.DAT': ('file', B + '/LEV3456R.DAT')}),
-        dict(name='icode', cwd=REPO,
-             cmd=['python3', HERE + '/addr/build_icode_clean.py', i1, i2, addr],
-             # the town rows come from the address register
-             inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
-                                                            (icode_base, 'REFER002/ICODE001.DAT', i2)],
-             tools=[HERE + '/addr/build_icode_clean.py', HERE + '/addr/addr_csv.py'],
-             note='reads the input ICODE files for their volume table (languages and frame kinds); '
-                  'REFER001 also copies their 18 POI genre frames byte for byte',
-             outputs={'REFER001/ICODE001.DAT': ('file', addr + '/REFER001_ICODE001.DAT'),
-                      'REFER002/ICODE001.DAT': ('file', addr + '/REFER002_ICODE001.DAT')}),
+        icode_step(B, icode_base),
         dict(name='addr', cwd=REPO,
              cmd=['python3', HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
                  + (['--area', area] if area else []) + (['--only', ADDR_ONLY] if area and ADDR_ONLY else [])
@@ -660,6 +671,48 @@ def map_from(unit, slug, src, base, number, what, B):
     print('copied %d files from %s' % (len(paths), src))
 
 
+def restamp_from(unit, slug, src, base, number, what, B):
+    """Build once, stamp per unit: the finished card `src`'s map, address and POI files on this
+    unit's base with this unit's DATA VERSION, and the ICODE files built from this unit's input."""
+    import tile_header
+    src = os.path.abspath(os.path.expanduser(src))
+    t0 = time.time()
+    files = card_files(src)
+    old = tile_header.fields(files['MAPAL001/LEV3456R.DAT'][:0x1000])[0]['data_version']
+    exp, bare = restamped({p: b for p, b in files.items() if p.split('/')[0] in SCOPE}, old, VERSION)
+    S = [icode_step(B, UNITS[unit]['icode'])]
+    run_steps(S, B, False)
+    exp.update(expected(S))
+    n, img, base = new_card(unit, slug, base, number)
+    ed = Editor(img)
+    drs = ed_read(ed, '', 'DRSTR001.DAT')
+    for d in SCOPE:
+        drs = purge(ed, drs, d, set(exp))
+    ed.write('', 'DRSTR001.DAT', drs)
+    ed.close()
+    assemble(img, exp, list(GROUPS))
+    got = card_files(img)
+    bad = [p for p in exp if got.get(p) != exp[p][0]]
+    if bad:
+        raise SystemExit('written files differ from what was meant: ' + ', '.join(bad))
+    bad = drstr_check(got['DRSTR001.DAT'], got)
+    if bad:
+        raise SystemExit('index rows off: ' + '; '.join(bad))
+    m = dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), unit=unit, base=base, number=n, slug=slug,
+             restamp_from=src, data_version=dict(source=old, card=VERSION),
+             tools=dict(osm2clarion=git_rev(OSM_ROOT)),
+             steps=[dict(name=s['name'], command=command(s), ran=s.get('ran')) for s in S],
+             files=[dict(path=p, size=len(exp[p][0]), sha256=sha(exp[p][0]),
+                         status='generated' if exp[p][1] else 'restamped' if p not in bare else 'copied')
+                    for p in sorted(exp)])
+    with open(os.path.splitext(img)[0] + '.manifest.json', 'w') as f:
+        json.dump(m, f, indent=1, ensure_ascii=False)
+    cards_line(n, unit, slug, what, base)
+    print('%d files from %s, DATA VERSION %s -> %s, %d without a stamp: %s'
+          % (len(exp), src, old, VERSION, len(bare), ', '.join(bare) or 'none'))
+    print('re-stamp took %.0f s' % (time.time() - t0))
+
+
 def main(argv):
     if '--help' in argv or '-h' in argv:
         print(__doc__)
@@ -675,12 +728,15 @@ def main(argv):
     if opt('--map-from'):
         return map_from(unit, slug, opt('--map-from'), opt('--base'), int(opt('--number', 0)),
                         opt('--what', slug), B)
-    icode_base = UNITS[unit]['icode']
-    coast = opt('--coast', os.path.expanduser(CONFIG['data']['coast']))
-    also, to, by = opt('--also'), opt('--to'), opt('--by')
     global VERSION
     VERSION = UNITS[unit]['version']
     os.environ['CLARION_DATA_VERSION'] = VERSION      # read by tools/addr/iceland_card.py
+    if opt('--restamp-from'):
+        return restamp_from(unit, slug, opt('--restamp-from'), opt('--base'), int(opt('--number', 0)),
+                            opt('--what', slug), B)
+    icode_base = UNITS[unit]['icode']
+    coast = opt('--coast', os.path.expanduser(CONFIG['data']['coast']))
+    also, to, by = opt('--also'), opt('--to'), opt('--by')
     groups = opt('--write', 'lev').split(',')
     assert set(groups) <= set(GROUPS), groups
     area = opt('--area')

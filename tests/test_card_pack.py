@@ -51,5 +51,29 @@ class TestMmain(unittest.TestCase):
         self.assertEqual(struct.unpack_from('>4h', out, BOUNDS), EUROPE)
 
 
+class TestRestamp(unittest.TestCase):
+    def test_stamps_change_and_nothing_else(self):
+        old, new = card_pack.stamp_text('17/09/01/01'), card_pack.stamp_text('14/11/17/01')
+        tile = b'\1' * 0xfd + old + b'\2' * 300
+        packed = (b'head' + old) * 30000          # spans two 64 KiB blocks
+        c, i = card_pack.wrap(packed)
+        files = {'MAPAL001/T.DAT': tile, 'REFER001/A.DAT.cmp': c, 'REFER001/A.DAT.ind': i,
+                 'REFER001/B.DAT': b'no stamp', 'REFER001/ICODE001.DAT': old}
+        exp, bare = card_pack.restamped(files, '17/09/01/01', '14/11/17/01')
+        self.assertEqual(exp['MAPAL001/T.DAT'][0], tile.replace(old, new))
+        cmp_, ind = exp['REFER001/A.DAT.cmp'][0], exp['REFER001/A.DAT.ind'][0]
+        self.assertEqual(card_pack.unwrap(cmp_, ind), packed.replace(old, new))
+        self.assertEqual(exp['REFER001/A.DAT.cmp'][2], len(packed))
+        self.assertEqual(bare, ['REFER001/B.DAT'])
+        self.assertEqual(exp['REFER001/B.DAT'][0], b'no stamp')
+        self.assertNotIn('REFER001/ICODE001.DAT', exp)
+
+    def test_same_version_keeps_the_packed_bytes(self):
+        old = card_pack.stamp_text('17/09/01/01')
+        c, i = card_pack.wrap(old)
+        exp, _ = card_pack.restamped({'R/A.DAT.cmp': c, 'R/A.DAT.ind': i}, '17/09/01/01', '17/09/01/01')
+        self.assertEqual((exp['R/A.DAT.cmp'][0], exp['R/A.DAT.ind'][0]), (c, i))
+
+
 if __name__ == '__main__':
     unittest.main()

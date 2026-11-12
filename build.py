@@ -3,7 +3,8 @@
 """Build a card from a profile.
 
     ./build.py --profile NAME --base CARD --out OUT.img [--work DIR] [--osm PBF] [--area NAME,...]
-               [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR] [--map-from CARD] [--only STEP | --from STEP] [--list]
+               [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR]
+               [--map-from CARD | --restamp-from CARD] [--only STEP | --from STEP] [--list]
 
 Everything specific to a region, a unit or a data source is in profiles/NAME.toml. [build] mode
 picks the chain:
@@ -326,6 +327,14 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if not os.path.exists(out):
             raise SystemExit('the build wrote another card than %s' % out)
 
+    def restamp_step():
+        prep()
+        run(py, tool('build_gen_lev.py'), '--config', conf, '--unit', unit, '--slug', slug, work,
+            '--number', str(number), '--base', base, '--restamp-from', args['restamp-from'],
+            '--what', args.get('what') or slug, env=env)
+        if not os.path.exists(out):
+            raise SystemExit('the build wrote another card than %s' % out)
+
     def check():
         run('shasum', '-a', '256', out)
         checker = tool('card_check.py')
@@ -334,6 +343,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     if args.get('map-from'):
         return [('prep', prep), ('map', map_step), ('check', check)]
+    if args.get('restamp-from'):
+        return [('prep', prep), ('restamp', restamp_step), ('consent', consent), ('check', check)]
     return [('prep', prep), ('cards', cards_step), ('poi', poi), ('icons', icons), ('addr', addr),
             ('consent', consent), ('check', check)]
 
@@ -343,7 +354,7 @@ def main():
     P = clarion_profile.take_arg(argv)
     args = {}
     flags = ('--base', '--out', '--work', '--osm', '--area', '--local', '--what', '--prev', '--stage',
-             '--write', '--map-from', '--from', '--only')
+             '--write', '--map-from', '--restamp-from', '--from', '--only')
     for flag in flags:
         if flag in argv:
             i = argv.index(flag)
@@ -377,6 +388,7 @@ def main():
             elif args.get('local'):
                 raise SystemExit('no such local file: %s' % lp)
         plan = generate_steps(P, prof, base, out, work, args.get('area'), args.get('osm'), local, args)
+    names = [n for n, _ in plan]    # --map-from and --restamp-from run a shorter chain
     if 'only' in args:
         plan = [(n, f) for n, f in plan if n == args['only']] or sys.exit(
             'no step %r (have: %s)' % (args['only'], ', '.join(names)))

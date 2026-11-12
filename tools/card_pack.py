@@ -28,6 +28,46 @@ def wrap(data):
     return c, ind
 
 
+def unwrap(cmp_, ind):
+    """The plain bytes of a .cmp/.ind pair."""
+    n, _, blocks, _ = struct.unpack_from('<IIII', ind)
+    offs = list(struct.unpack_from('<%dI' % blocks, ind, 16)) + [len(cmp_)]
+    out = b''.join(zlib.decompress(cmp_[offs[i]:offs[i + 1]]) for i in range(blocks))
+    assert len(out) == n, (len(out), n)
+    return out
+
+
+def stamp_text(version):
+    return ('DATA VERSION ' + version).encode('utf-16-be')
+
+
+def restamped(files, old, new):
+    """{card path: (bytes, None, index size)} of a card's files (path -> bytes) with every
+    `old` DATA VERSION stamp written as `new`, packed files unpacked and repacked; and the paths
+    that carried no stamp. ICODE is left out: each unit builds its own."""
+    a, b = stamp_text(old), stamp_text(new)
+    exp, bare = {}, []
+    for p, data in sorted(files.items()):
+        if p.endswith(('.ind', '/ICODE001.DAT')):
+            continue
+        packed = p.endswith('.cmp')
+        plain = unwrap(data, files[p[:-4] + '.ind']) if packed else data
+        if a not in plain:
+            bare.append(p)
+        if a == b or a not in plain:
+            exp[p] = (data, None, len(plain))
+            if packed:
+                exp[p[:-4] + '.ind'] = (files[p[:-4] + '.ind'], None, len(plain))
+            continue
+        plain = plain.replace(a, b)
+        if packed:
+            c, i = wrap(plain)
+            exp[p], exp[p[:-4] + '.ind'] = (c, None, len(plain)), (i, None, len(plain))
+        else:
+            exp[p] = (plain, None, len(plain))
+    return exp, bare
+
+
 def mmain(m, headers):
     """MMAIN001.DAT's level table holds, per section and level, the sum of the level-table
     counts of every map file - exact on the stock .066 card for sections 1, 2 and 4. So the
