@@ -366,7 +366,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
                           **{'REFER001/%s.ind' % n: ('ind', addr + '/' + (n if n != 'COORD001.DAT' else 'REFER001_COORD001.DAT'))
                              for n in PACKED},
                           **{'REFER002/COORD001.DAT': ('file', addr + '/REFER002_COORD001.DAT')}),
-             note='.cmp/.ind made by build_clean2.wrap (zlib level 6 per 64 KiB block)'),
+             note='.cmp/.ind made by card_pack.wrap (zlib level 6 per 64 KiB block)'),
     ]
     return out
 
@@ -555,11 +555,11 @@ def manifest(img, S, B, exp):
         elif path == 'DRSTR001.DAT':
             bad = index_bad
             row.update(status='edited', step='assemble', command=recipe + ' (set_sizes)',
-                       note="the base card's index of every folder; sizes rewritten by this build and "
-                            "build_gen_card/build_clean2 before it. Scoped rows checked against the card: "
+                       note="the base card's index of every folder; sizes rewritten by this build."
+                            " Scoped rows checked against the card: "
                             + ('all match' if not bad else '; '.join(bad)))
         elif path == 'MMAIN001.DAT':
-            row.update(status='edited', step='assemble', command=recipe + ' (build_clean2.mmain)',
+            row.update(status='edited', step='assemble', command=recipe + ' (card_pack.mmain_card)',
                        note="the base card's master header; level counts summed from every MAPAL001 "
                             "header, db box copied from those headers, NAVTEQ string kept")
         else:
