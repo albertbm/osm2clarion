@@ -240,6 +240,15 @@ def append_post_step(manifest_path, name, args, image_path):
         json.dump(m, f, indent=1, ensure_ascii=False)
 
 
+def set_fields(manifest_path, **fields):
+    """Write top-level fields into an existing manifest."""
+    with open(manifest_path) as f:
+        m = json.load(f)
+    m.update(fields)
+    with open(manifest_path, 'w') as f:
+        json.dump(m, f, indent=1, ensure_ascii=False)
+
+
 def repo_manifest_state(repo):
     head = git_head(repo)
     if head is None:

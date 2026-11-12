@@ -52,12 +52,28 @@ def tool(name):
     return os.path.join(TOOLS, name)
 
 
+def pins():
+    """{library: version} pinned in pyproject.toml."""
+    import tomllib
+    with open(os.path.join(HERE, 'pyproject.toml'), 'rb') as f:
+        deps = tomllib.load(f)['project']['dependencies']
+    return dict(d.split('==') for d in deps if '==' in d)
+
+
 def need_deps():
-    """The steps run under this interpreter, so it must have the pinned libraries."""
-    try:
-        import osmium, shapely  # noqa: F401
-    except ImportError as e:
-        raise SystemExit('%s: run this as `uv run build.py ...`, which installs the versions in uv.lock' % e)
+    """The steps run under this interpreter, so it must have the pinned library versions."""
+    from importlib import metadata
+    off = []
+    for name, want in sorted(pins().items()):
+        try:
+            have = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            have = None
+        if have != want:
+            off.append('%s %s (pinned %s)' % (name, have or 'missing', want))
+    if off:
+        raise SystemExit('this interpreter has %s; run this as `uv run build.py ...`, which installs '
+                         'the versions in uv.lock' % ', '.join(off))
 
 
 def expand(path):
@@ -268,17 +284,6 @@ def area_steps(P, prof, base, out, work, area, osm):
             ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step), ('check', check)]
 
 
-def interpreter(name):
-    """A path as given, or a bare name like python3 looked up on PATH."""
-    path = expand(name)
-    if os.sep in path:
-        return os.path.abspath(path)
-    found = shutil.which(path)
-    if not found:
-        raise SystemExit('poi_python %r is not on PATH' % name)
-    return found
-
-
 def consent_ok(code, output):
     """The consent tool exits 1 and says "already patched" for a card that carries the patch;
     anything else but 0 is a failure."""
@@ -289,6 +294,9 @@ def make_config(P, local, cells, base, osm, work):
     """The JSON config the generator tools read, from the profile and the local file."""
     raw = merge(P.raw, local)
     B = raw.get('build', {})
+    if 'poi_python' in B:
+        raise SystemExit('[build] poi_python is gone: every step runs under the interpreter running '
+                         'build.py; remove it from the profile or the local file')
     root = os.path.dirname(os.path.dirname(P.path))
 
     def path(p):
@@ -315,7 +323,7 @@ def make_config(P, local, cells, base, osm, work):
         areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in need('areas').items()},
         dealer=raw.get('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
         camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=need('card_naming'),
-        cards_log=need('build', 'cards_log'), poicap=need('poicap'), poi_python=B.get('poi_python', sys.executable),
+        cards_log=need('build', 'cards_log'), poicap=need('poicap'),
         roads_poc=need('roads_poc'), addr=need('addr'), allow_leftovers=B.get('allow_leftovers', []),
         profile=P.path)
     return cfg
@@ -340,7 +348,6 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     stage = args.get('stage') or os.path.join(work, 'stage')
     version = cfg['units'][unit]['version']
     conf = os.path.join(work, 'config', P.name + '.json')
-    poi_py = interpreter(cfg['poi_python'])
     env = dict(os.environ, O2C_CONFIG=conf, CARDS_DIR=cards, OSM2CLARION=HERE,
                SOURCE_DATE_EPOCH=os.environ.get('SOURCE_DATE_EPOCH', '946684800'))
     py = sys.executable
@@ -386,8 +393,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         shutil.move(part, s1)    # the stage dir may be on another volume than the card
 
     def poicap(src, dst, workdir, *extra):
-        run(poi_py, tool('build_poicap.py'), '--config', conf, '--area', area_arg, *extra,
-            '--osm2clarion', HERE, '--python', poi_py, '--base', src, '--out', dst,
+        run(py, tool('build_poicap.py'), '--config', conf, '--area', area_arg, *extra,
+            '--osm2clarion', HERE, '--base', src, '--out', dst,
             '--workdir', fresh(workdir), env=env_v)
 
     def icons():
@@ -432,6 +439,8 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     def check():
         prep()      # card_verify reads the register through the config
+        import buildstamp
+        buildstamp.set_fields(mpart, deps=buildstamp.deps())
         run(tool('cardcopy.py'), part)
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)

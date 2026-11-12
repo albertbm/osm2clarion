@@ -88,7 +88,6 @@ cards_log = "CARDS.md"
 sec4_cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
 road_tiles = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
 allow_leftovers = []      # card paths no step makes that may stay; any other leftover fails the build
-# poi_python = "PATH"   # the POI and address steps' interpreter; default the one running build.py
 
 [card_naming]
 prefix = "IS"

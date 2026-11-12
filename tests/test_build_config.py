@@ -28,19 +28,23 @@ def config(local=None):
 
 
 class TestInterpreters(unittest.TestCase):
-    def test_a_bare_name_is_found_on_path(self):
-        self.assertTrue(os.path.isabs(build.interpreter('python3')))
-
-    def test_a_path_is_kept(self):
-        self.assertEqual(build.interpreter('/x/venv/bin/python3'), '/x/venv/bin/python3')
-
-    def test_an_unknown_name_is_refused(self):
-        with self.assertRaises(SystemExit):
-            build.interpreter('no-such-python-here')
-
     def test_plain_steps_use_this_interpreter(self):
         text = (ROOT / 'tools' / 'build_gen_lev.py').read_text(encoding='utf-8')
         self.assertNotIn("['python3'", text)
+
+    def test_poi_python_is_refused(self):
+        with self.assertRaises(SystemExit):
+            config({'build': {'poi_python': '/x/python3'}})
+
+    def test_a_library_off_its_pin_is_refused(self):
+        from unittest import mock
+        with mock.patch.object(build, 'pins', return_value={'shapely': '0.0.1'}):
+            with self.assertRaises(SystemExit) as e:
+                build.need_deps()
+        self.assertIn('shapely', str(e.exception))
+
+    def test_this_environment_has_the_pins(self):
+        build.need_deps()
 
 
 class TestConfig(unittest.TestCase):

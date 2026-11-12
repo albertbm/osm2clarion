@@ -472,7 +472,6 @@ def parser():
                    metavar='PATH', help='build config (default: $O2C_CONFIG)')
     p.add_argument('--osm2clarion', default=os.path.dirname(CARD_TOOLS),
                    metavar='DIR', help='osm2clarion checkout (default: this checkout)')
-    p.add_argument('--python', metavar='PATH', help='Python interpreter with osmium (default: this interpreter)')
     p.add_argument('--base', required=True, metavar='IMG', help='read-only source card')
     p.add_argument('--out', required=True, metavar='IMG', help='output card image')
     p.add_argument('--pbf', metavar='FILE', help='OpenStreetMap PBF input (default: config data.pbf)')
@@ -521,17 +520,13 @@ def configure(args, p):
         p.error('--house-ranges needs --shapes')
     if args.all_streets and not args.house_ranges:
         p.error('--all-streets needs --house-ranges')
-    VENV_PY = os.path.abspath(os.path.expanduser(args.python)) if args.python else sys.executable
-    if not os.path.isfile(VENV_PY) or not os.access(VENV_PY, os.X_OK):
-        p.error('--python is not an executable file: %s' % VENV_PY)
-    missing_modules = []
+    # the POI and address tools run under this interpreter, the one with the pinned libraries
+    VENV_PY = sys.executable
     for module in ('osmium', 'shapely'):
-        probe = subprocess.run([VENV_PY, '-c', 'import ' + module], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        if probe.returncode:
-            missing_modules.append(module)
-    if missing_modules:
-        p.error('%s cannot import %s; pass --python PATH for a suitable interpreter'
-                % (VENV_PY, ' and '.join(missing_modules)))
+        try:
+            __import__(module)
+        except ImportError:
+            p.error('%s cannot import %s; run it as `uv run`' % (VENV_PY, module))
     BASE_IMG = os.path.abspath(os.path.expanduser(args.base))
     OUT_IMG = os.path.abspath(os.path.expanduser(args.out))
     PBF = os.path.abspath(os.path.expanduser(args.pbf))
@@ -559,10 +554,4 @@ def configure(args, p):
 if __name__ == '__main__':
     arg_parser = parser()
     options = arg_parser.parse_args()
-    if options.python:
-        selected = os.path.abspath(os.path.expanduser(options.python))
-        if not os.path.isfile(selected) or not os.access(selected, os.X_OK):
-            arg_parser.error('--python is not an executable file: %s' % selected)
-        if selected != os.path.abspath(sys.executable):
-            os.execv(selected, [selected, os.path.abspath(__file__)] + sys.argv[1:])
     main(configure(options, arg_parser), options)

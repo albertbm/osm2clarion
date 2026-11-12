@@ -19,11 +19,6 @@ postcodes = "/path/to/postnumeraskra.csv"
 # icode = "/path/to/another-ZE1-card.img"
 # consent_cmd = "/path/to/tool {img}"
 
-# Optional. The interpreter for the POI and address steps; the one running build.py when
-# left out.
-# [build]
-# poi_python = "/path/to/python3"
-
 # Optional. One place of your own, such as your dealer, with a POI icon and a POINT record.
 # street, town and house must match the address register as the card spells them, in
 # capitals with accents. tile_l1 and tile_l2 are the icon's parcel positions (level, y0,
