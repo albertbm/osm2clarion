@@ -35,8 +35,9 @@ this slug on another unit (twins share a number), or the number --number gives. 
 .partial suffix and leaves out the log line; build.py renames them once its check step passes.
 
 --map-from CARD writes the map, address and POI files of a finished card onto this unit's base, as
-they are: nothing is generated, restamped or recompressed, so the DATA VERSION stays the source
-card's, and the ICODE files that number its towns go with them. The target keeps its own app and
+they are: nothing is generated, restamped or recompressed, so the source must carry this unit's
+DATA VERSION (a card for another version is refused; --restamp-from makes that one), and the ICODE
+files that number its towns go with them. The target keeps its own app and
 settings and gets a refreshed index. This is "build once, write per unit"; BUILD_DIR is only a
 place for the config.
 
@@ -508,8 +509,8 @@ def copy_map(img, src):
     """Write the map, address and POI files of the finished card `src` onto the fresh card `img`
     as they are, ICODE included since ADDRE's town indices point into it: nothing is regenerated
     or restamped, and the target's app and settings stay its own. Files the target has in those
-    folders and `src` lacks are deleted, the index and CMP.LST are refreshed for the target, and
-    MMAIN is the source's. Returns the paths copied."""
+    folders and `src` lacks are deleted, and the index, CMP.LST and MMAIN are made for the target
+    the way assemble makes them. Returns the paths copied."""
     files = {p: b for p, b in card_files(src).items() if p.split('/')[0] in SCOPE}
     exp = {}
     for p, b in files.items():
@@ -521,10 +522,7 @@ def copy_map(img, src):
         drs = purge(ed, drs, d, set(files))
     ed.write('', 'DRSTR001.DAT', drs)
     ed.close()
-    assemble(img, exp, list(GROUPS))
-    ed = Editor(img)
-    ed.write('', 'MMAIN001.DAT', card_files(src)['MMAIN001.DAT'])
-    ed.close()
+    assemble(img, exp, list(GROUPS))      # MMAIN from the copied headers, as a full build makes it
     return sorted(files)
 
 
@@ -663,9 +661,23 @@ def cards_line(n, unit, slug, what, base):
         cards_log.add(CARDS + '/' + CARDS_LOG, n, unit, slug, what, base, CARDS)
 
 
+def data_version(files):
+    import tile_header
+    return tile_header.fields(files['MAPAL001/LEV3456R.DAT'][:0x1000])[0]['data_version']
+
+
+def same_version(files, version, src):
+    """Refuse a source card stamped for another unit: --map-from copies stamps as they are."""
+    have = data_version(files)
+    if have != version:
+        raise SystemExit('%s carries DATA VERSION %s, this unit needs %s; use --restamp-from'
+                         % (src, have, version))
+
+
 def map_from(unit, slug, src, base, number, what, B):
     """Build once, write per unit: a card of `unit` carrying the map files of the finished card `src`."""
     src = os.path.abspath(os.path.expanduser(src))
+    same_version(card_files(src), VERSION, src)
     n, img, base = new_card(unit, slug, base, number)
     paths = copy_map(img, src)
     got, want = card_files(img), card_files(src)
@@ -687,11 +699,10 @@ def map_from(unit, slug, src, base, number, what, B):
 def restamp_from(unit, slug, src, base, number, what, B):
     """Build once, stamp per unit: the finished card `src`'s map, address and POI files on this
     unit's base with this unit's DATA VERSION, and the ICODE files built from this unit's input."""
-    import tile_header
     src = os.path.abspath(os.path.expanduser(src))
     t0 = time.time()
     files = card_files(src)
-    old = tile_header.fields(files['MAPAL001/LEV3456R.DAT'][:0x1000])[0]['data_version']
+    old = data_version(files)
     exp, bare = restamped({p: b for p, b in files.items() if p.split('/')[0] in SCOPE}, old, VERSION)
     S = [icode_step(B, UNITS[unit]['icode'])]
     run_steps(S, B, False)
@@ -740,12 +751,12 @@ def main(argv):
     PARTIAL = '--partial' in argv
     B = os.path.abspath([a for i, a in enumerate(argv)
                          if not a.startswith('--') and (i == 0 or not argv[i - 1].startswith('--'))][0])
-    if opt('--map-from'):
-        return map_from(unit, slug, opt('--map-from'), opt('--base'), int(opt('--number', 0)),
-                        opt('--what', slug), B)
     global VERSION
     VERSION = UNITS[unit]['version']
     os.environ['CLARION_DATA_VERSION'] = VERSION      # read by tools/addr/iceland_card.py
+    if opt('--map-from'):
+        return map_from(unit, slug, opt('--map-from'), opt('--base'), int(opt('--number', 0)),
+                        opt('--what', slug), B)
     if opt('--restamp-from'):
         return restamp_from(unit, slug, opt('--restamp-from'), opt('--base'), int(opt('--number', 0)),
                             opt('--what', slug), B)

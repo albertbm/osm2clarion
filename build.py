@@ -26,7 +26,7 @@ removes a .partial left by an earlier run and says so; a finished OUT is never o
 machine. Each step prints the command it runs, so a step can be repeated by hand. --list names
 the steps, --only runs one and --from resumes at one.
 """
-import glob, json, os, re, shutil, subprocess, sys
+import glob, json, os, re, shlex, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.join(HERE, 'tools')
@@ -207,6 +207,12 @@ def area_steps(P, prof, base, out, work, area, osm):
             ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step)]
 
 
+def consent_ok(code, output):
+    """nnt exits 1 and says so for a card that carries the patch already; anything else
+    but 0 is a failure."""
+    return code == 0 or (code == 1 and 'already patched' in output)
+
+
 def make_config(P, local, cells, base, osm, work):
     """The JSON config the generator tools read, from the profile and the local file."""
     raw = merge(P.raw, local)
@@ -320,12 +326,11 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         cmd = cfg['units'][unit].get('consent_cmd')
         if not cmd:
             return
-        cmd = expand(cmd).replace('{img}', part)
+        cmd = expand(cmd).replace('{img}', shlex.quote(part))
         print('\n$', cmd, flush=True)
         r = subprocess.run(cmd, shell=True, env=env_v, capture_output=True, text=True)
         print(r.stdout + r.stderr, end='')
-        # a base that carries the patch already is fine; nnt exits 1 for it
-        if r.returncode and 'already patched' not in r.stdout + r.stderr:
+        if not consent_ok(r.returncode, r.stdout + r.stderr):
             raise SystemExit('consent step failed (exit %d)' % r.returncode)
         stamp('me0_consent', cfg['units'][unit]['consent_cmd'], part)
 
@@ -374,7 +379,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
                 print('removed a stale file from an earlier run:', p)
 
     if args.get('map-from'):
-        return [('prep', prep), ('map', map_step), ('check', check)], clear_stale
+        return [('prep', prep), ('map', map_step), ('consent', consent), ('check', check)], clear_stale
     if args.get('restamp-from'):
         return [('prep', prep), ('restamp', restamp_step), ('consent', consent), ('check', check)], clear_stale
     return [('prep', prep), ('cards', cards_step), ('poi', poi), ('icons', icons), ('addr', addr),
