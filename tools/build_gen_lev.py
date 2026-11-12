@@ -105,6 +105,7 @@ from drstr_sizes import set_sizes  # noqa: E402
 from fatedit import Editor  # noqa: E402
 import fatread  # noqa: E402
 import buildstamp  # noqa: E402
+import cardcopy  # noqa: E402
 import cards_log  # noqa: E402
 from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
@@ -639,8 +640,7 @@ def new_card(unit, slug, base=None, number=None):
     for p in (final, img):
         if os.path.exists(p):
             raise SystemExit('%s already exists' % p)
-    subprocess.run(['cp', '-c', base, img], check=True)
-    os.chmod(img, 0o644)       # the base is read-only and cp keeps its mode
+    cardcopy.clone(base, img)
     print('card %s from %s' % (img, base))
     return n, img, base
 

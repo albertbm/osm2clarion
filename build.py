@@ -31,6 +31,7 @@ import glob, json, os, re, shlex, shutil, subprocess, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.join(HERE, 'tools')
 sys.path.insert(0, TOOLS)
+import cardcopy
 import clarion_profile
 
 GENERATE_STEPS = ['prep', 'cards', 'poi', 'icons', 'addr', 'consent', 'check']
@@ -197,9 +198,7 @@ def area_steps(P, prof, base, out, work, area, osm):
             raise SystemExit('--base must be a card image')
         # a fixed write time, so two runs stamp the image alike; set SOURCE_DATE_EPOCH to override
         os.environ.setdefault('SOURCE_DATE_EPOCH', '946684800')
-        if subprocess.run(['cp', '-c', base, out], stderr=subprocess.DEVNULL).returncode:
-            shutil.copyfile(base, out)
-        os.chmod(out, 0o644)
+        cardcopy.clone(base, out)
         ts = tiles()
         run(tool('fatwrite.py'), out, '--write',
             *['MAPAL001:%s=%s' % (os.path.basename(t), t) for t in ts],
@@ -374,7 +373,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     def check():
         prep()      # card_verify reads the register through the config
-        run('shasum', '-a', '256', part)
+        run(tool('cardcopy.py'), part)
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
         groups = (args.get('write') or B['write']).split(',')

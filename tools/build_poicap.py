@@ -23,6 +23,8 @@ import sys
 import time
 import zlib
 
+import cardcopy  # tools/ is this script's own directory
+
 CARD_TOOLS = os.path.dirname(os.path.abspath(__file__))
 BASE_IMG = OUT_IMG = PBF = None
 O2C = O2C_ROOT = VENV_PY = FAT_TIME = CONFIG = None
@@ -328,8 +330,7 @@ def build_house_ranges(workdir, args):
     """Card 037/038: the base card untouched except ADDRE001, rebuilt with per-link
     house-number ranges. Everything else stays whatever the base card already carries."""
     run = lambda *a: subprocess.run(a, check=True)
-    run('cp', '-c', BASE_IMG, OUT_IMG)
-    os.chmod(OUT_IMG, 0o644)  # bases are read-only and cp -c keeps the mode
+    cardcopy.clone(BASE_IMG, OUT_IMG)
 
     addr_dir = os.path.join(workdir, 'addr')
     os.makedirs(addr_dir, exist_ok=True)
@@ -389,8 +390,7 @@ def main(workdir, args=None):
     if args is not None and args.house_ranges:
         return build_house_ranges(workdir, args)
 
-    run('cp', '-c', BASE_IMG, OUT_IMG)
-    os.chmod(OUT_IMG, 0o644)  # bases are read-only and cp -c keeps the mode
+    cardcopy.clone(BASE_IMG, OUT_IMG)
 
     point_cmp = os.path.join(workdir, 'POINT001.DAT.cmp')
     point_ind = os.path.join(workdir, 'POINT001.DAT.ind')
