@@ -36,6 +36,7 @@ from buildstamp import sha  # noqa: E402
 from card_pack import mmain_card, stamp_text, unwrap  # noqa: E402
 from card_scope import card_files, cmp_lst, drstr_check  # noqa: E402
 
+UNREGISTERED = 0.01     # the share of named records whose street the register may lack
 STAMP = re.compile(re.escape(stamp_text('')) + b'((?:\x00[0-9/]){11})')
 
 
@@ -143,11 +144,22 @@ def check_towns(plain, pairs):
         else:
             st['not in register'] += 1
     st['mismatch'] = sum(bad.values())
-    notes = ['%d named records at row %s' % (n, k) for k, n in bad.most_common(10)]
     missing = sorted({t for _, t in pairs} - set(rows))
+    return result('towns', *towns_verdict(st, bad, missing))
+
+
+def towns_verdict(st, bad, missing):
+    """(passed, counts, notes) of the towns check from its counts."""
+    notes = ['%d named records at row %s' % (n, k) for k, n in bad.most_common(10)]
     if missing:
         notes.append('register towns with no ICODE row: ' + ', '.join(missing[:10]))
-    return result('towns', not bad and not missing and st['named'], st, notes)
+    # an empty or stale register puts every record here and leaves nothing to compare
+    if not st['match']:
+        notes.append('no named record matches the register')
+    if st['not in register'] > UNREGISTERED * st['named']:
+        notes.append('%d of %d named records have a street not in the register'
+                     % (st['not in register'], st['named']))
+    return not notes and st['named'] > 0, st, notes
 
 
 def check_inventory(files, manifest, allow):

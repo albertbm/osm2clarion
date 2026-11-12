@@ -50,5 +50,23 @@ class TestInventory(unittest.TestCase):
         self.assertTrue(card_verify.check_inventory(files, self.m, ['REFER001/*'])['passed'])
 
 
+class TestTowns(unittest.TestCase):
+    def verdict(self, **counts):
+        import collections
+        return card_verify.towns_verdict(collections.Counter(**counts), collections.Counter(), [])
+
+    def test_all_matching_passes(self):
+        self.assertTrue(self.verdict(named=100, match=100)[0])
+
+    def test_no_match_fails(self):
+        ok, _, notes = self.verdict(named=100, **{'not in register': 100})
+        self.assertFalse(ok)
+        self.assertIn('no named record matches the register', notes)
+
+    def test_many_records_off_the_register_fail(self):
+        self.assertFalse(self.verdict(named=100, match=90, **{'not in register': 10})[0])
+        self.assertTrue(self.verdict(named=1000, match=999, **{'not in register': 1})[0])
+
+
 if __name__ == '__main__':
     unittest.main()
