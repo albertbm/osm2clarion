@@ -6,7 +6,7 @@
 Section 4 (type 0x93) is the per-parcel route guidance index. Factory tiles carry it at
 level 1 only: one directory of kind 0x1046 per mesh, slot = parcel row, pair index = parcel
 column, at most one record per parcel. Measured on B68R058R.DAT (Tromso) and B50R060R.DAT;
-see REPORT-section4-build.md section 1. The record layout is SECTION4-draft.md: a header,
+The record layout: a header,
 a chain of sub-records, then a text block. A parcel without signposts gets the factory's
 56-byte form, one empty sub-record carrying only the country.
 

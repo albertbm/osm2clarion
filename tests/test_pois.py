@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Facility icons and POINT search records against POI-draft.md: the position words, the
+"""Facility icons and POINT search records: the position words, the
 mixed 8/10-byte layer-25 group, the multi-parcel nearby tree, the extractor's tag rules and
 the poi_point merge.
 
@@ -71,7 +71,7 @@ def km(a, b):
 
 
 class TestPositionWords(unittest.TestCase):
-    """POI-draft.md 2.1-2.3: the two words after the parcel code are 0x800 | x, then y."""
+    """The two words after the parcel code are 0x800 | x, then y."""
 
     def test_data_record_writes_x_first(self):
         r = point_io.data_record((17, 2, 2, 3, 10), 5, 1564, 5, 3524, lat=0xa53c, lon=0xd11c, x=457, y=1773)
@@ -122,7 +122,7 @@ class TestPositionWords(unittest.TestCase):
 
 
 class TestNearbyTree(unittest.TestCase):
-    """POI-draft.md 2.4: the slot-15 frame with many parcels per category."""
+    """The slot-15 frame with many parcels per category."""
 
     def items(self):
         return [(10, 11, 0xffff, 0xb01e, 0xc31c, 0x800 | 1000, 500, 63, 'A'),
@@ -195,7 +195,7 @@ class TestNearbyTree(unittest.TestCase):
 
 
 class TestIconGroups(unittest.TestCase):
-    """POI-draft.md 3: layer-25 points of 8 and 10 bytes in one sub-group, and the side section."""
+    """Layer-25 points of 8 and 10 bytes in one sub-group, and the side section."""
 
     def check_icons(self, plain, npoints, nicons):
         rec = clarion_bg.parse_record(plain)
@@ -487,7 +487,7 @@ class TestFactoryNearestLink(unittest.TestCase):
             refs, _foot = poi_point.nearest_link_refs(plain, bg, f['x'], f['y'], lat)
             segment_hits += refs == f['refs']
             vertex_hits += vertex_refs(f['x'], f['y']) == f['refs']
-        # REPORT-poifix.md: 2,607/2,636 (98.9%) over the whole tile this way, 1,371/2,636
+        # measured: 2,607/2,636 (98.9%) over the whole tile this way, 1,371/2,636
         # (52%) by nearest vertex; a few ties between two overlapping links (opposite
         # carriageways sharing both nodes) still pick the wrong direction tag either way.
         self.assertGreaterEqual(segment_hits / len(fac), 0.9, 'matches most of this parcel\'s facilities')
@@ -495,7 +495,7 @@ class TestFactoryNearestLink(unittest.TestCase):
 
     def test_snaps_near_the_factory_position(self):
         """The factory's own facilities sit close to their referenced link already
-        (REPORT-poifix.md: median 0, 0-2 m); the foot point nearest_link_refs returns
+        (median 0, 0-2 m on the factory data); the foot point nearest_link_refs returns
         should land close to the recorded position for most of them."""
         d = factory_point()
         plain = factory_fa_record(1, self.CODE)
@@ -520,11 +520,11 @@ class TestFactoryNearestLink(unittest.TestCase):
 
 class TestLadderConvention(unittest.TestCase):
     """merge()'s ladder() reads x before y; --settlements-yfirst undoes a POINT file whose
-    settlements were written the other way (card 030, PATCH-point-xy.md)."""
+    settlements were written the other way (card 030)."""
 
     FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
     # the 8 capital-area towns, positions read off card 030's own POINT001 the way
-    # PATCH-point-xy says they were written (swapped); real municipality centroids, not
+    # as they were written (swapped); real municipality centroids, not
     # geographic centres, which is why GRINDAVÍK round-trips through here too
     TOWNS = [
         ('REYKJAVÍK', (0, 0, 0), (64.133311, -21.851959)),
@@ -539,7 +539,7 @@ class TestLadderConvention(unittest.TestCase):
 
     def base_file_yfirst(self):
         """A POINT file with the capital's settlements written with position words swapped,
-        as leaf-is-map's build_point.py / build_addr_area0.py wrote before PATCH-point-xy."""
+        as the address build wrote them up to card 030."""
         kw, cr = 2, 14
         names, hits = [], {}
         for i, (name, lv, (lat, lon)) in enumerate(self.TOWNS):
@@ -581,7 +581,7 @@ class TestLadderByContainment(unittest.TestCase):
     """merge()'s ladder() with --municipalities: point-in-polygon against OSM admin
     boundaries, mapped to the POINT settlement row of the same name - note 3's fix for
     nearest-settlement, which the factory data disagrees with 39% of the time
-    (REPORT-poifix.md). Needs shapely; skips without it, same as the extractor tests."""
+    Needs shapely; skips without it, same as the extractor tests."""
 
     FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
     TOWNS = [('REYKJAVÍK', (0, 0, 0), 64.1466, -21.9426),
@@ -691,7 +691,7 @@ class TestPlaceholderRefsFail(unittest.TestCase):
 
 
 class TestSubCategory(unittest.TestCase):
-    """Slot 279, the SUB-CATEGORY table: POI-draft.md's missing frame, decoded off POINT018."""
+    """Slot 279, the SUB-CATEGORY table: the frame decoded off POINT018."""
 
     def test_entry_layout(self):
         e = point_io.subcategory_entry(1, 17, 2, 403, 0x697400, 0x18, 0xc, 0x714800, 5)
@@ -796,7 +796,7 @@ class TestDedupe(unittest.TestCase):
 
 
 class TestAddPoint(unittest.TestCase):
-    """clarion_bg.add_point: the dealer and camera points of leaf-is-map join a record's icons."""
+    """clarion_bg.add_point: the dealer and camera points join a record's icons."""
 
     def record(self):
         pts = [(100, 200, 2000), (1500, 300, 3272), (7, 2047, 907)]
@@ -900,7 +900,7 @@ class TestPoiCheckTolerance(unittest.TestCase):
 
     def test_correctly_snapped_pair_matches(self):
         """A restaurant icon at the OSM position and its facility 20 m east, snapped onto a
-        street link - a plausible distance per measure_factory.py (median 22 m, max 25.5 m
+        street link - a plausible distance on the factory data (median 22 m, max 25.5 m
         on the factory pair). Must match with no 'no facility' or 'wrong code' problem."""
         lat, lon = 64.1340, -21.9260
         la, lo, y, x = addre_io.parcel_point(lat, lon)
@@ -987,7 +987,7 @@ class TestPoiCheckFactoryTolerance(unittest.TestCase):
                 poi_check.check_record(plain, 1, icons, [], 'FACTORY')
         match_problems = []
         poi_check.match_icons(icons, want[1], 1, stats, match_problems)
-        # measure_factory.py against this same pair: 878 icons have a same-code facility
+        # measured on this same pair: 878 icons have a same-code facility
         # within 100 m, median 21.96 m, p90 23.93 m, p99 25.13 m, max 25.51 m - all inside
         # TOLERANCE_M (30 m), so the snap itself should cost the one-to-one assignment no
         # more than a handful of matches

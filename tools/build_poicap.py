@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the capital-area POI card: the base map untouched, plus every real OSM POI in
 the selected area (icon + POINT search facility), plus the x-first settlement fix
-(PATCH-point-xy.md). No whole-country towns here - that tooling is untouched.
+No whole-country towns here - that tooling is untouched.
 
 --house-ranges mode swaps in per-link house-number ranges instead (--all-streets for
 every selected-area street).

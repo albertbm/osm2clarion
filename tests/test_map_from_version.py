@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """--map-from refuses a source stamped for another unit and runs the consent step; the consent
-step accepts only success or nnt's already-patched exit."""
+step accepts only success or the consent tool's already-patched exit."""
 import os
 import sys
 import tempfile

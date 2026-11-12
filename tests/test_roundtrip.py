@@ -1084,7 +1084,7 @@ class TestRoadShapes(unittest.TestCase):
 
     def test_identical_node_keys(self):
         """Node 1 is shared between two shapes (the end of one, the start of the other):
-        SECTION4-draft.md section 7's identical-node chain must link each occurrence to the
+        The identical-node chain must link each occurrence to the
         other's x word (not to its key slot), and a solo node (0 and 2) must read 0xffff."""
         chains = self.chains(chain=False)   # [(1,0,1,[]])], [(2,1,2,[])]: node 1 is shared
         plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, chains,
@@ -2336,7 +2336,7 @@ class AddreRecords(unittest.TestCase):
 
 
 class AddreParcelWords(unittest.TestCase):
-    """A name record's lat and lon words are a level-1 parcel code (REPORT-kanren)."""
+    """A name record's lat and lon words are a level-1 parcel code."""
 
     def test_known_codes(self):
         from addre_io import parcel_words

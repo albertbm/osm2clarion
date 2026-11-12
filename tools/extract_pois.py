@@ -3,7 +3,7 @@
 """Facilities of an OSM extract as JSON, for bg_tiles.py --pois and poi_point.py.
 
 Four genres of the unit's search list, with the ICODE codes the factory card uses
-(POI-draft.md in leaf-is-map): restaurant 6 with a cuisine sub-code, hotel 5 with a chain
+: restaurant 6 with a cuisine sub-code, hotel 5 with a chain
 sub-code, hospital 11 and rest area 30 without one. A way or relation takes its centroid.
 Needs osmium and shapely.
 

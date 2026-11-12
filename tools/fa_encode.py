@@ -93,7 +93,7 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
 
     gs (level 1 only) maps a node occurrence to its guidance word G: occurrence n is the
     start node of link n, occurrence len(chain) the chain's last node. The occurrence's y
-    gets bit 0x1000 and G follows its key word (SECTION4-draft.md section 7)."""
+    gets bit 0x1000 and G follows its key word."""
     if cls is None: cls = 8 if level == 1 else 7
     if styles is None or level != 1: styles = [style_word(None)] * len(chain)
     if dirs is None: dirs = [0] * len(chain)
@@ -158,8 +158,8 @@ def key_slots(chain, styles=None, gs=None):
     key slot is where a ring pointer gets WRITTEN (one per link header, the link's start
     node, plus one for the chain's last node, landing on the shape's trailer word); the
     x-word offset is what a pointer TO this occurrence must read (the card points at a
-    node's coordinate pair, not at another node's key slot -- SECTION4-draft.md section 7's
-    worked example, key 02bc -> w722, lands on w722's x word). len(chain)+1 entries, in the
+    node's coordinate pair, not at another node's key slot: in one factory record key 02bc
+    -> w722 lands on w722's x word). len(chain)+1 entries, in the
     order the firmware would read them off the card. A G word, when gs has one for the
     occurrence, sits at key slot + 1."""
     fresh = restyled(styles) if styles else [n == 0 for n in range(len(chain))]
@@ -301,7 +301,7 @@ STRING_HDR = {0: 7, 2: 8, 4: 9}   # words from the length word to the first poin
 
 def link_strings(plain):
     """Every link string of a level-1 0x00fa record with its node records, in the factory's
-    grammar (SECTION4-draft.md section 7): [dict(at, typ, layer, pts, tail)], pts =
+    grammar: [dict(at, typ, layer, pts, tail)], pts =
     [(x-word offset, x, y, x flags, y flags, node)], node = dict(style, key, G, seq) on the
     first point and on every point whose y has bit 0x0800, and dict(key, G) for the last
     point, whose key is the tail word and whose G follows it when its y has bit 0x1000.
@@ -336,7 +336,7 @@ def link_strings(plain):
     return out
 
 def parse_record(plain, level=1):
-    """Shapes of a 0x00fa record, parsed with the factory's own grammar (REPORT-kanren).
+    """Shapes of a 0x00fa record, parsed with the factory's own grammar.
     Returns (code, unit start, [shape dicts])."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
     assert w[2] == 0x00fa, hex(w[2])

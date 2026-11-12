@@ -3,7 +3,7 @@
 """Where every drawn road shape sits inside the level-1 0x00fa records of a tile.
 
 An address record names a point by its word offset from the record's geometry unit
-(REPORT-kanren in leaf-is-map); rd_build.py --shape-index writes the sidecar this checks
+; rd_build.py --shape-index writes the sidecar this checks
 tiles against. Link ids restart at 1 per class, so (cls, id) names a link within a record."""
 import json, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

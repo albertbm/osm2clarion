@@ -234,7 +234,7 @@ def check_expansion(L1, L2):
 
 def check_l2_triple_w4(L1, L2):
     """L2 part-B link triples: w4 is a real entry of the L1 child the triple names
-    (checkw4.py). Factory is 100%."""
+    Factory is 100%."""
     st = collections.Counter()
     bad = []
     for pc, (a, b) in L2.items():
@@ -265,7 +265,7 @@ def check_l2_triple_w4(L1, L2):
 def check_edges(L1, L2, lev4, lev5):
     """Edge entries: travel-time value zero at L2/L4/L5 (not required at L1), exactly one
     real link per edge node, and the part-B edge triple's w2/w4 name the mirrored block
-    (edgedeg.py L1/L2 mirroring + verify065.py L4/L5 w2/w4; census.py for the time field)."""
+    (L1/L2 mirroring, L4/L5 w2/w4, and the time field)."""
     st = collections.Counter()
     bad = []
 
@@ -355,14 +355,14 @@ def check_edges(L1, L2, lev4, lev5):
 
 
 def L2nodes(L2):
-    """L2's (a) parts keyed the same way edgedeg.py/mirror_l1l2 want: {pc: parsed record}."""
+    """L2's (a) parts keyed the same way mirror_l1l2 wants: {pc: parsed record}."""
     return {pc: a for pc, (a, b) in L2.items()}
 
 
 def check_no_junction_on_parcel_line(L1, L2):
     """No junction (a node with more than one real link) sits on a parcel boundary - it
     would need an edge entry there and the factory never gives a border node more than
-    one real link (edgedeg.py; the generic form of the card-068 'junctions quantized onto
+    one real link (the generic form of the card-068 'junctions quantized onto
     a parcel line' bug, without Iceland-specific coordinates)."""
     st = collections.Counter()
     bad = []
@@ -408,7 +408,7 @@ def check_l1_link_direction(L1, L2):
     """L1 link direction: an entry on a chain a successfully-expanded L2 link walks
     through carries w4 & 0x6 != 0; an off-chain side link at the same node has it clear;
     classes 8, 9 and 12 (level-1-only roads, never carried at level 2) never carry it.
-    (vanish/w4chain.py, w4corr.py - correlation measured, not a factory-coded rule, so
+    (correlation measured, not a factory-coded rule, so
     the threshold here is a ratio, not exact)."""
     chain_set = chain_clear = side_set = side_clear = 0
     for pc2, k, f, status, l1len, l2len, path, cls in expand_l2_links(L1, L2):
@@ -516,7 +516,7 @@ def check_length_time_units(L1, L2):
     """Length/time words use a doubling multiplier (1,2,4,32 m; 1,2,4,64 x0.1s -
     rd_encode.LENGTH_UNITS/TIME_UNITS, travel-time-encoding memory note), and an L2
     word's value should read back close to the summed L1 path under that table.
-    (LEV L4/L5 vs straight-line distance, l45unit.py's check, needs each record's own
+    (LEV L4/L5 vs straight-line distance, needs each record's own
     parcel geometry and is not ported here - this covers the L2-vs-L1 half only.)"""
     ratios = []
     for pc2, k, f, status, l1len, l2len, path, cls in expand_l2_links(L1, L2):
@@ -534,7 +534,7 @@ def check_length_time_units(L1, L2):
 
 def check_coarse_graph_present(L2, lev4, lev5):
     """LEV3456R.DAT carries L4 and L5 routing records once the tile's roads span more
-    than one L2 parcel (components.py/verify065.py: a graph should exist wherever there
+    than one L2 parcel (a graph should exist wherever there
     is more than one L2 window of road data to connect)."""
     l2_windows = len(L2nodes(L2))
     st = collections.Counter(l2_windows=l2_windows, l4_records=len(lev4), l5_records=len(lev5))

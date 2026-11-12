@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Write a list of cameras (extract_cameras.py's cameras.json) into already-built section-1
-tiles' level-1 and level-2 background records. Generalizes camera_poc.py/camera2_poc.py's
-one hard-coded pair: any number of cameras, several per parcel allowed.
+tiles' level-1 and level-2 background records. Any number of cameras, several per parcel.
 
     camera_write.py CAMERAS.json TILES_DIR OUT_DIR [--levels 1,2]
 
 Each camera needs lat, lon and speed_limit_kmh (the record's speed field is mandatory;
 filling in a missing one, from the nearest road's own limit or otherwise, is the caller's
 job - this script does not guess). direction_bearing_deg may be null: the record then
-carries the factory's own undirected code, 64 ("both ways", REPORT-speed-cameras.md),
+carries the factory's own undirected code, 64 ("both ways"),
 instead of a guessed heading. cam_id defaults to the camera's 1-based position in the list.
 
 TILES_DIR holds the built B*.DAT section-1 tiles (MAPAL001 naming); every file holding at
@@ -76,7 +75,7 @@ def write_record(sl, r, new_plain):
 
 
 def direction_byte(bearing_deg):
-    """64ths of a turn (REPORT-speed-cameras.md, samples 0..64); no bearing writes the
+    """64ths of a turn (samples 0..64); no bearing writes the
     factory's own undirected code, 64 ('both ways'), rather than a guess."""
     if bearing_deg is None:
         return 64

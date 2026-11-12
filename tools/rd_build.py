@@ -122,7 +122,7 @@ def build_graphs(ways, cell, level=1, chain=True):
                 if not on_line:
                     # only a cut point sits on the parcel line; a vertex or junction that merely
                     # rounds onto it stays one unit inside, or it merges with the cut node and that
-                    # gets two real links, which the factory never has (coarse064/edgedeg.txt)
+                    # gets two real links, which the factory never has
                     key = (min(2046, max(1, key[0])), min(2046, max(1, key[1])))
                 if not q or q[-1][0] != key: q.append((key, p))
             if len(q) < 2: continue
@@ -131,7 +131,7 @@ def build_graphs(ways, cell, level=1, chain=True):
             P['touch_pts'][q[0][0]].append(q[0][1]); P['touch_pts'][q[-1][0]].append(q[-1][1])
             for key, p in q[1:-1]: P['touch'][key] += 1; P['touch_pts'][key].append(p)
     # two ways crossing the parcel line within one unit of each other get one key, which would
-    # make a border node with two real links (the factory has none: coarse064/edgedeg.txt). Give
+    # make a border node with two real links (the factory has none). Give
     # the second and later crossing points the nearest free keys along the line. Both parcels
     # rank the union of their points at the key and of their used keys on the line, so the
     # twins still mirror even when one side dropped a run.

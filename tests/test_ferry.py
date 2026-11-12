@@ -55,7 +55,7 @@ class FerryEncoding(unittest.TestCase):
     def test_ferry_speed_reproduces_factory_ratio(self):
         self.assertEqual(rd_encode.speed_of('ferry'), 151.2)
         a, b = rd_encode.cost_words(13300, rd_encode.speed_of('ferry'))
-        self.assertEqual(a & 0xfff, 3167)                      # round(13300 / 4.2), ferry/RESULT.md's worked example
+        self.assertEqual(a & 0xfff, 3167)                      # round(13300 / 4.2)
 
     def test_l2_classes_always_includes_ferry(self):
         import clarion_profile

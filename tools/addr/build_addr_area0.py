@@ -1,10 +1,10 @@
-"""Area 0's address files, authored from Staðfangaskrá with no donor bytes: a proof of concept.
+"""Area 0's address files, written from Staðfangaskrá with no bytes taken from a factory card.
 
-One town, REYKJAVÍK, three streets with their house numbers and their postcodes, 113 and
-110. Every byte comes from Iceland's data, from a decoded field, from the road tiles'
-shape index, or from a format constant in osm2clarion's frames.py / refer_header.py.
+Every byte comes from the register, from a decoded field, from the road tiles' shape index,
+or from a format constant in frames.py / refer_header.py. The build runs it with --area;
+without it, it writes a test card of one town and the streets in [addr] poc_streets:
 
-    ADDRE001.DAT   street search: three streets, ladder (0, 0, 0), each pointing at one link
+    ADDRE001.DAT   street search: the test streets, ladder (0, 0, 0), each pointing at one link
                    of its own drawn shape in the level-1 road records
     ZCODE001.DAT   postcode search: every street's postcode -> (0, 0, 0)
     POINT001.DAT   the FACILITY frame with one settlement, REYKJAVÍK, and the ADM frame
@@ -15,7 +15,7 @@ shape index, or from a format constant in osm2clarion's frames.py / refer_header
 
 A street record's lat/lon words are the parcel code of the 0x00fa record holding the
 chosen link, and its two references the word offsets of the link's end points from that
-record's geometry unit (REPORT-kanren.md). The shape index comes from rd_build.py
+record's geometry unit. The shape index comes from rd_build.py
 --shape-index. The ladder is (country 0, REYKJAVÍK 0, its settlement 0), which is where
 build_icode_clean.py puts the town. Display names keep their accents; search keys are
 folded to ASCII, Þ to TH and Ð to D.
@@ -35,7 +35,7 @@ per town and the ADM frame a municipality row and a settlement row per town.
 
 --only keeps the named streets in ADDRE; ZCODE and POINT keep every town and postcode. In the emulator
 the HMI froze at street selection or OK for any record whose street record sits past the
-first 64 KiB of ADDRE001 (19 Oct 2026, REPORT-capital.md), so the cards carry a short list.
+first 64 KiB of ADDRE001 (measured 19 Oct 2026), so the cards carry a short list.
 """
 import argparse
 import collections

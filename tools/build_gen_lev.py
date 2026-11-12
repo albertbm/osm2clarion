@@ -64,13 +64,13 @@ box, and step 1 draws it into the tiles under the roads. --landuse capital names
 box; --landuse area uses the union selected by --area.
 --landuse-kinds narrows the kinds.
 --buildings LAYER:CLASS adds OSM building footprints in that section-1 layer and class (a trial:
-no EUR class for buildings is known, see REPORT-buildings.md).
+no EUR class for buildings is known).
 --house writes the landuse box as HOUSE001 files, the level-0 map the unit draws at its
 building-scale zoom: merged building blocks, green areas, water and the sea, and buffered road
-polygons (house_encode.py, REPORT-building-scale.md); per-file counts land in house/stats.json.
+polygons (house_encode.py); per-file counts land in house/stats.json.
 Only cells inside a populated area are written (a place node buffered --house-city-buffer
 metres, default 400, or a residential/commercial/industrial/retail landuse polygon buffered
---house-landuse-buffer metres, default 100; housearea/PLAN.md). Off by default.
+--house-landuse-buffer metres, default 100). Off by default.
 """
 import fnmatch
 import hashlib
@@ -111,7 +111,6 @@ from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
 _CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
 CONFIG = json.load(open(_CONFIG_FILE))
-REPO = os.path.dirname(os.path.dirname(_CONFIG_FILE))   # the country repo: <repo>/config/NAME.json
 CARDS = os.environ.get('CARDS_DIR', os.path.expanduser('~/cards'))  # override for scratch test builds
 CELLS = CONFIG['cells']
 VERSION = next(iter(CONFIG['units'].values()))['version']
@@ -206,11 +205,11 @@ def road_steps(B, also, to=None, by=None, area=None):
             cmds.append([sys.executable, t + '/sec4_write.py', dest, R + '/%s.DAT' % c, '--country', '352'])
             cmds.append([sys.executable, t + '/shape_index.py', 'verify', R + '/%s.shapes.json' % c, R + '/%s.DAT' % c])
     return [
-        dict(name='roads', cwd=REPO, cmds=[sel + (['--also', also] if also else []) + (['--to', to] if to else [])
+        dict(name='roads', cwd=OSM_ROOT, cmds=[sel + (['--also', also] if also else []) + (['--to', to] if to else [])
                                            + (['--by', by] if by else [])],
              inputs=[PBF, turns_all], tools=[seltool],
              products=[roads, turns], outputs={}),
-        dict(name='rd', cwd=REPO, cmds=cmds,
+        dict(name='rd', cwd=OSM_ROOT, cmds=cmds,
              inputs=[roads, turns, PROFILE] + [B + '/tiles/%s.DAT' % c for c in CELLS],
              tools=[t + '/rd_build.py', t + '/rd_encode.py', t + '/fa_encode.py', t + '/shape_index.py',
                     t + '/clarion_tile.py', t + '/clarion_bg.py', t + '/sec4_write.py'],
@@ -219,13 +218,13 @@ def road_steps(B, also, to=None, by=None, area=None):
     ]
 
 
-HOUSE_CITY_BUFFER, HOUSE_LANDUSE_BUFFER = 400, 100   # metres; housearea/PLAN.md
+HOUSE_CITY_BUFFER, HOUSE_LANDUSE_BUFFER = 400, 100   # metres
 
 
 def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=HOUSE_LANDUSE_BUFFER):
     """Building-scale (HOUSE001) only where OSM says someone lives: a place node (city,
     town, village, hamlet) buffered city_buffer metres, or a residential/commercial/
-    industrial/retail landuse polygon buffered landuse_buffer metres (housearea/PLAN.md)."""
+    industrial/retail landuse polygon buffered landuse_buffer metres."""
     assert landuse, '--house needs --landuse for its box'
     from house_encode import file_name
     t = OSM
@@ -299,7 +298,7 @@ def icode_step(B, icode_base):
     """The two ICODE files, from the unit's own ICODE input and the address register."""
     addr = os.path.join(B, 'addr')
     i1, i2 = os.path.join(B, 'in', 'REFER001_ICODE001.DAT'), os.path.join(B, 'in', 'REFER002_ICODE001.DAT')
-    return dict(name='icode', cwd=REPO,
+    return dict(name='icode', cwd=OSM_ROOT,
                 cmd=[sys.executable, HERE + '/addr/build_icode_clean.py', i1, i2, addr],
                 # the town rows come from the address register
                 inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
@@ -352,7 +351,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
              mutates=(['rd'] if area and coarse_graph else []),
              outputs={'MAPAL001/LEV3456R.DAT': ('file', B + '/LEV3456R.DAT')}),
         icode_step(B, icode_base),
-        dict(name='addr', cwd=REPO,
+        dict(name='addr', cwd=OSM_ROOT,
              cmd=[sys.executable, HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
                  + (['--area', area] if area else []) + (['--only', ADDR_ONLY] if area and ADDR_ONLY else [])
                  + ['--addresses', ADDRESSES, '--postcodes', POSTCODES],
@@ -372,14 +371,10 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
 
 
 def tool_groups(tools):
-    """Split a step's tool files by which git worktree they live under, so a stamp's
-    diff check stays scoped to the files that step actually runs, not the whole repo."""
-    groups = []
-    for repo in (OSM_ROOT, REPO):
-        files = [p for p in tools if p.startswith(repo + os.sep)]
-        if files:
-            groups.append((repo, files))
-    return groups
+    """The step's tool files in this checkout, so a stamp's diff check stays scoped to the
+    files that step runs, not the whole repo."""
+    files = [p for p in tools if p.startswith(OSM_ROOT + os.sep)]
+    return [(OSM_ROOT, files)] if files else []
 
 
 def prep(s):
@@ -529,12 +524,11 @@ def copy_map(img, src):
 def manifest(img, S, B, exp):
     files = card_files(img)
     recipe = os.path.abspath(__file__)
-    tools_rev = dict(osm2clarion=git_rev(OSM_ROOT), leaf_is_map=git_rev(REPO))
+    tools_rev = dict(osm2clarion=git_rev(OSM_ROOT))
     diff_dest = os.path.splitext(final_name(img))[0] + '.o2c.diff'
     o2c_dirty, o2c_diff_sha = buildstamp.save_diff_if_dirty(OSM_ROOT, diff_dest)
     osm2clarion = dict(head=buildstamp.git_head(OSM_ROOT), dirty=o2c_dirty, diff_sha256=o2c_diff_sha,
                         diff_file=os.path.basename(diff_dest) if o2c_dirty else None)
-    leaf = buildstamp.repo_manifest_state(REPO)
     index_bad = drstr_check(files['DRSTR001.DAT'], files)
     rows = []
     for path in sorted(files):
@@ -570,7 +564,7 @@ def manifest(img, S, B, exp):
     steps_out = [dict(name=s['name'], command=command(s), ran=s.get('ran'),
                        stamp=buildstamp.load_stamp(buildstamp.stamp_path(B, s['name']))) for s in S]
     return dict(card=final_name(img), built=time.strftime('%Y-%m-%d %H:%M:%S'), tools=tools_rev,
-                osm2clarion=osm2clarion, leaf=leaf,
+                osm2clarion=osm2clarion,
                 steps=steps_out, files=rows, missing_on_card=missing, index_problems=index_bad)
 
 

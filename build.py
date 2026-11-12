@@ -280,8 +280,8 @@ def interpreter(name):
 
 
 def consent_ok(code, output):
-    """nnt exits 1 and says so for a card that carries the patch already; anything else
-    but 0 is a failure."""
+    """The consent tool exits 1 and says "already patched" for a card that carries the patch;
+    anything else but 0 is a failure."""
     return code == 0 or (code == 1 and 'already patched' in output)
 
 

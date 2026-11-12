@@ -19,10 +19,9 @@ Each facility's ladder comes from --municipalities, an OSM extract of admin_leve
 boundaries (load_municipalities): the municipality polygon containing the facility, mapped
 to the POINT settlement row of the same name (ladder_leaf). Without --municipalities the
 old nearest-settlement ladder stands instead, for callers with no OSM extract on hand - it
-picks the wrong town 39% of the time on the factory data (REPORT-poifix.md) and is kept
+picks the wrong town 39% of the time on the factory data and is kept
 only for that case. --settlements-yfirst reads the existing settlement positions swapped,
-for a POINT file whose settlements were written y first (card 030 and earlier, leaf-is-map
-addr/build_point.py / build_addr_area0.py before PATCH-point-xy). The position words are
+for a POINT file whose settlements were written y first (card 030 and earlier). The position words are
 its own level-1 parcel (x first, our own convention).
 
 Refs are the start/end nodes of the street link nearest the facility in its own parcel's
@@ -146,10 +145,10 @@ def nearest_link_refs(plain, bg, x, y, lat):
     """Refs and foot point of the street link nearest (x, y) in one level-1 0x00fa
     record: the link minimising point-to-segment distance (metres, isotropic at this
     latitude via parcel_metres) over its own polyline, not the nearest vertex over every
-    shape - REPORT-poifix.md: 2,607/2,636 POINT018 facilities land on the factory's own
+    shape: 2,607/2,636 POINT018 facilities land on the factory's own
     referenced link this way, against 1,371/2,636 for nearest-vertex. Refs are that
     link's own start and end node (a node it shares with the previous link, rather than
-    one it owns, stands in for a start node of its own) - REPORT-kanren.md's K and I,
+    one it owns, stands in for a start node of its own) - the K and I words,
     tagged 2/3 ascending or 4/5 descending."""
     _code, g, shapes = shape_index.shapes_of(plain, bg)
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
@@ -272,12 +271,12 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     """Bytes of the POINT file d with the facilities of pois added. road_tiles, paths to
     our own built level-1 tiles, gives every facility real refs (facility_refs) and snaps
     its search position to the foot of the chosen link (the factory's own facilities sit
-    0-2 m from their referenced link, median 0, REPORT-poifix.md; the map icon keeps the
+    0-2 m from their referenced link, median 0; the map icon keeps the
     OSM position, written elsewhere). Without road_tiles, or where a facility's own parcel
     has no road record, the old placeholder ref is kept and this raises unless
     --allow-placeholder-refs lets it through. settlements_yfirst reads the existing
     settlement records' position words swapped for the area ladder, for a POINT file
-    written before PATCH-point-xy (card 030 and 032/033's bug: the ladder picked
+    written y first (card 030 and 032/033's bug: the ladder picked
     MOSFELLSBÆR for a hospital at (64.1410, -21.7590), 0.0444 against REYKJAVÍK's 0.0452, because the
     settlements decoded mirrored).
 

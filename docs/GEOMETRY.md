@@ -131,7 +131,7 @@ point:  u16 type, u16 ffff, u16 x, u16 y
 `0000 0000 ffff 0000 (0x2000 | code) 0000`, so idx runs 0, 6, 12. Type `0x00ff` with such
 an entry is a facility icon; `code` is the facility's detailed code (hotel chain 3500-3686,
 cuisine 901-938, petrol brand 400-488, hospital 2000, rest area 3272), the same point at
-level 1 and level 2 (`clarion_bg.icon_layer`, `icon_side`; POI-draft.md in leaf-is-map).
+level 1 and level 2 (`clarion_bg.icon_layer`, `icon_side`).
 
 Polygons repeat the first vertex last. Long straight edges are walked in +/-127 steps. A
 parcel that is all sea holds one rectangle `(0,0)->(0,2047)->(2047,2047)->(2047,0)`. A parcel
@@ -256,7 +256,7 @@ follows a start point or a link end: `0x2000` a style word, `0x1000` a guidance 
 the key, `0x0800` the record itself (`[style] key [G] id`). The last point's node record is
 the trailer: its key, then G when its y carries `0x1000`. G is the link-word index of the
 node's sub-record in the parcel's section-4 record; `rd_build.py --signposts` writes it and
-`sec4_check.py` walks both ways (SECTION4-draft.md in leaf-is-map has the measurements). Counted over every level-1 shape of the
+`sec4_check.py` walks both ways. Counted over every level-1 shape of the
 Tromso tile `B68R058R.DAT`, 7,520 shapes, `0x0800` is set on 7,520 start, 7,373 first-of-link
 and 15,797 inner points, and clear on 5,818 link ends and 7,520 last points, with no
 exceptions. The German tile `B48R060R.DAT`, 1,344,744 shapes, agrees to within 0.1%, and

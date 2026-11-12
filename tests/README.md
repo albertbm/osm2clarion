@@ -48,7 +48,7 @@ OSM2CLARION_QY7_TILE=B68R048R.DAT python3 -m unittest tests.test_format
 
 ## test_signposts.py
 
-Section 4 signposts: `sec4_write.encode` against the record layout in SECTION4-draft.md, the
+Section 4 signposts: `sec4_write.encode` against the measured record layout, the
 G words `fa_encode.shape_words` puts in a node record, a synthetic parcel with a ramp built
 the way `rd_build.py --signposts` builds it and checked by `sec4_check.py`, and the
 country-only record staying the 56-byte form. Three cases decode factory records and write

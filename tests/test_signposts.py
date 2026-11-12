@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Section 4 signposts: the record writer against SECTION4-draft.md, the G words in the
+"""Section 4 signposts: the record writer against the measured layout, the G words in the
 road-shape record, and the offsets that tie the two together.
 
     python3 -m unittest tests.test_signposts -v
@@ -23,7 +23,7 @@ def words(b):
 
 
 class TestRecordLayout(unittest.TestCase):
-    """SECTION4-draft.md sections 1, 2 and 6."""
+    """The header, the country record and the signpost record."""
 
     def test_country_only_record_is_the_factory_56_byte_form(self):
         plain, comp = sec4_write.record(2304, 13326, 352)

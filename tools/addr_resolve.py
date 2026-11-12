@@ -4,7 +4,7 @@
 
 A name record's (lat, lon) words are the parcel code of a level-1 0x00fa drawn-shape
 record; each reference group (tag, flag, v) points at the x word `unit + v` of a point on
-the street's shape (REPORT-kanren in leaf-is-map). For each record this reads the card's
+the street's shape. For each record this reads the card's
 own tile, finds that record, and checks every group:
 
     lands      word unit + v is a point x word of a shape

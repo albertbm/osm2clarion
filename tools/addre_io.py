@@ -253,7 +253,7 @@ def assemble(prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
              maxkey_hint=None, namewidth_hint=None):
     """prefix: bytes 0..0x1100 from a donor; patched in place. Returns (file, blocks).
 
-    Fills every definition-frame field that has a known formula (REPORT-addre-fields.md,
+    Fills every definition-frame field that has a known formula (
     verified exact on all seven factory ADDRE files). D and the name-width hint have
     none, so they pass through from `df` unless `maxkey_hint`/`namewidth_hint` override
     them - needed whenever `df` is a donor's, not this content's own, as for Iceland.
@@ -336,7 +336,7 @@ def house_item(lo, hi, side=SIDE_ODD):
 
 def parcel_point(lat, lon):
     """(LA, LO, y, x) for a position: the level-1 parcel code of the parcel holding it,
-    which is what a name record's lat and lon words carry (REPORT-kanren in leaf-is-map),
+    which is what a name record's lat and lon words carry,
     and the position inside that parcel in 11-bit units. The words are not a linear
     coordinate: Reykjavik (64.1466, -21.9426) is b01f c30d."""
     fy, fx = lat * 48, (lon + 924) * 32         # level-1 parcels: 1.25' rows, 1.875' columns
@@ -423,7 +423,7 @@ def street_record(flags, name_idx, levels, rel=0x7f7f, sid=0xffffffff):
 
 def range_record(flags, lo, hi, name_idx, levels, rel=0):
     """One 22-byte ADDRE house-number range row: lo/hi replace street_record's sid,
-    flags 0000/8000 for a range's first/continuation row (RESULT.md, row 46945-48)."""
+    flags 0000/8000 for a range's first/continuation row."""
     out = (struct.pack('>HHHHI', rel, flags, lo, hi, name_idx)
            + struct.pack('>%dH' % len(levels), *levels))
     assert len(out) <= SREC, levels

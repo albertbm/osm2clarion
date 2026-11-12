@@ -2,12 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Refresh DRSTR001.DAT size fields after a file on the card changed size.
 
-A POI tool (dealer_poc.py, nissan_mark.py, nissan_house.py, camera2_poc.py) only writes
-its output next to the input file; nothing on the card is touched until a separate step
-writes it in, and that step has been forgetting to refresh DRSTR. That is how one build
-ended up with stale MAPAL001/B60R080R.DAT and REFER001/POINT001.DAT sizes while a sibling
-build of the same recipe did not (fixed by hand). Call this as the last step of any such
-write.
+The unit reads each file's size from this index, not from the FAT, so any step that writes
+a file of another size onto the card calls this afterwards.
 
 For a plain file actually present on the card under DIR/NAME, the real FAT size is used.
 For a packed entry (POINT001.DAT and friends, stored on the card as NAME.cmp + NAME.ind),

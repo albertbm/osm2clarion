@@ -1,7 +1,7 @@
 """Write REFER001/ICODE001.DAT and REFER002/ICODE001.DAT from scratch: one country, Iceland.
 
-Iceland-specific, so it stays in leaf-is-map; the row and chain layout comes from
-osm2clarion's icode_io.
+The row and chain layout comes from icode_io. The country name, the tier labels and the
+ISO code are Iceland's.
 
 Each file is an authored container header, a one-entry ISO table at 0x1000 (ordinal 0,
 ISO 352, three tier labels), the volume table at 0x5c00 where the slot table points, and
