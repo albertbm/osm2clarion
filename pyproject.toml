@@ -1,0 +1,15 @@
+[project]
+name = "osm2clarion"
+version = "0.1.0"
+description = "Map cards for Clarion QY7 and QY8 navigation units, built from OpenStreetMap"
+license = "GPL-3.0-or-later"
+requires-python = ">=3.12"
+# exact versions: a newer shapely can move a simplified point and change the card's bytes
+dependencies = [
+    "osmium==4.3.2",
+    "shapely==2.2.0",
+    "numpy==2.5.4",
+]
+
+[tool.uv]
+package = false

@@ -122,6 +122,19 @@ def import_closure(scripts, search=(), code=()):
     return sorted(seen)
 
 
+def deps():
+    """Python and the library versions the steps run with; another shapely can move a point."""
+    import platform
+    from importlib import metadata
+    out = dict(python=platform.python_version())
+    for name in ('shapely', 'osmium', 'numpy'):
+        try:
+            out[name] = metadata.version(name)
+        except metadata.PackageNotFoundError:
+            out[name] = None
+    return out
+
+
 def input_state(step):
     return dict(inputs=file_sha_map(sorted(step.get('inputs', []))),
                 args=sha(json.dumps(step.get('args'), sort_keys=True).encode()),

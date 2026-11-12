@@ -50,8 +50,12 @@ def tool(name):
     return os.path.join(TOOLS, name)
 
 
-# the OSM readers need pyosmium, which the interpreter running build.py may not have
-OSM_PY = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python']
+def need_deps():
+    """The steps run under this interpreter, so it must have the pinned libraries."""
+    try:
+        import osmium, shapely  # noqa: F401
+    except ImportError as e:
+        raise SystemExit('%s: run this as `uv run build.py ...`, which installs the versions in uv.lock' % e)
 
 
 def expand(path):
@@ -151,8 +155,8 @@ def area_steps(P, prof, base, out, work, area, osm):
 
     def osm_step():
         pbf = need_osm()
-        run(*OSM_PY, tool('osm_turns.py'), pbf, turns_all)
-        run(*OSM_PY, tool('osm_roads.py'), pbf, roads, '--public', '--relations', ','.join(map(str, A['relations'])),
+        run(tool('osm_turns.py'), pbf, turns_all)
+        run(tool('osm_roads.py'), pbf, roads, '--public', '--relations', ','.join(map(str, A['relations'])),
             '--turns', turns_all, turns, '--ramp-names')
 
     def strip():
@@ -247,7 +251,7 @@ def make_config(P, local, cells, base, osm, work):
         areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in raw['areas'].items()},
         dealer=raw['dealer'], road_tiles=B['road_tiles'], data=data,
         camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=raw['card_naming'],
-        cards_log=B['cards_log'], poicap=raw['poicap'], poi_python=B.get('poi_python', 'python3'),
+        cards_log=B['cards_log'], poicap=raw['poicap'], poi_python=B.get('poi_python', sys.executable),
         roads_poc=raw['roads_poc'], addr=raw['addr'], allow_leftovers=B.get('allow_leftovers', []),
         profile=P.path)
     return cfg
@@ -418,6 +422,7 @@ def main():
         return
     if argv or 'base' not in args or 'out' not in args:
         raise SystemExit(__doc__)
+    need_deps()
     base, out = os.path.abspath(expand(args['base'])), os.path.abspath(expand(args['out']))
     work = os.path.abspath(expand(args.get('work') or os.path.join('build', os.path.basename(out)[:-4])))
     os.makedirs(work, exist_ok=True)

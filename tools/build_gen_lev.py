@@ -188,11 +188,11 @@ def road_steps(B, also, to=None, by=None, area=None):
     roads, turns = B + '/roads/roads.json', B + '/roads/turns.json'
     if area:
         relations, sec4, _ = area_values(area)
-        sel = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py', PBF, roads,
+        sel = [sys.executable, t + '/osm_roads.py', PBF, roads,
                '--public', '--relations', ','.join(map(str, relations)), '--turns', turns_all, turns, '--ramp-names']
         seltool = t + '/osm_roads.py'
     else:
-        sel = ['uv', 'run', '--with', 'osmium', 'python', HERE + '/gen_roads_path.py', PBF, turns_all, roads, turns]
+        sel = [sys.executable, HERE + '/gen_roads_path.py', PBF, turns_all, roads, turns]
         seltool = HERE + '/gen_roads_path.py'
     sec4 = sec4 if area else SEC4_CELLS
     cmds = []
@@ -233,11 +233,11 @@ def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=
     names = [file_name(*c) for c in cells]
     bj, rj = B + '/house/landuse.json', B + '/house/roads.json'
     return [dict(name='house', cwd=OSM_ROOT,
-                 cmds=[['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
+                 cmds=[[sys.executable, t + '/extract_landuse.py',
                         PBF, bj, '--bbox', landuse, '--buildings'],
-                       ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py',
+                       [sys.executable, t + '/osm_roads.py',
                         PBF, rj, '--box', landuse],
-                       ['uv', 'run', '--with', 'shapely', 'python', t + '/house_encode.py', bj,
+                       [sys.executable, t + '/house_encode.py', bj,
                         B + '/house', '--template', B + '/tiles/B60R080R.DAT', '--bbox', landuse, '--roads', rj,
                         '--coast', coast, '--dense', str(HOUSE_DENSE), '--stats', B + '/house/stats.json',
                         '--cells', cellsj]],
@@ -269,11 +269,10 @@ def osm_steps(B, landuse=None, house=False, city_buffer=HOUSE_CITY_BUFFER, landu
     with the extract as input, so a new extract or box remakes it."""
     t = OSM
     o = osm_paths(B)
-    osm_py = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python']
-    out = [dict(name='turns', cwd=OSM_ROOT, cmds=[osm_py + [t + '/osm_turns.py', PBF, tmp_name(o['turns'])],
+    out = [dict(name='turns', cwd=OSM_ROOT, cmds=[[sys.executable, t + '/osm_turns.py', PBF, tmp_name(o['turns'])],
                                                   replace_cmd(tmp_name(o['turns']), o['turns'])],
                 inputs=[PBF], products=[o['turns']], outputs={}),
-           dict(name='coast', cwd=OSM_ROOT, cmds=[osm_py + [t + '/extract_coast.py', PBF, tmp_name(o['coast'])],
+           dict(name='coast', cwd=OSM_ROOT, cmds=[[sys.executable, t + '/extract_coast.py', PBF, tmp_name(o['coast'])],
                                                   replace_cmd(tmp_name(o['coast']), o['coast'])],
                 inputs=[PBF], products=[o['coast']], outputs={})]
     if house:
@@ -286,10 +285,10 @@ def osm_steps(B, landuse=None, house=False, city_buffer=HOUSE_CITY_BUFFER, landu
                 'json.dump([list(c) for c in sorted(populated_cells(%r, cells, %r, %r))], open(%r, "w"))'
                 % (t, all_cells, pj, city_buffer, landuse_buffer, tmp_name(cj)))
         out.append(dict(name='populated', cwd=OSM_ROOT,
-                        cmds=[osm_py + [t + '/extract_landuse.py', PBF, tmp_name(pj), '--bbox', landuse, '--populated',
+                        cmds=[[sys.executable, t + '/extract_landuse.py', PBF, tmp_name(pj), '--bbox', landuse, '--populated',
                                         '--kinds', 'populated_landuse,place'],
                               replace_cmd(tmp_name(pj), pj),
-                              ['uv', 'run', '--with', 'shapely', 'python', '-c', code],
+                              [sys.executable, '-c', code],
                               replace_cmd(tmp_name(cj), cj)],
                         inputs=[PBF], tools=[t + '/house_encode.py'], products=[pj, cj], outputs={}))
     return out
@@ -315,11 +314,10 @@ def icode_step(B, icode_base):
 def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=None, landuse=None, kinds=None,
           buildings=None, house=False, coarse_graph=False, city_buffer=HOUSE_CITY_BUFFER,
           landuse_buffer=HOUSE_LANDUSE_BUFFER):
-    uv = ['uv', 'run', '--with', 'shapely', 'python']
     t = OSM
     lu = B + '/landuse/landuse.json'
     lu_step = [dict(name='landuse', cwd=OSM_ROOT,
-                    cmd=['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
+                    cmd=[sys.executable, t + '/extract_landuse.py',
                          PBF, lu, '--bbox', landuse] + (['--kinds', kinds + (',building' if buildings else '')]
                                                         if kinds else []) + (['--buildings'] if buildings else []),
                     inputs=[PBF], tools=[t + '/extract_landuse.py'], products=[lu], outputs={})] if landuse else []
@@ -329,7 +327,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
     l2_tiles = [B + '/rd/%s.DAT' % c for c in CELLS] if area and coarse_graph else []
     out = lu_step + [
         dict(name='tiles', cwd=OSM_ROOT,
-             cmd=uv + [t + '/bg_tiles.py', '--profile', PROFILE, '--coastline', coast,
+             cmd=[sys.executable, t + '/bg_tiles.py', '--profile', PROFILE, '--coastline', coast,
                        '--data-version', VERSION] + (['--landuse', lu] if landuse else [])
                  + (['--area-class', 'building=' + buildings] if buildings else []) + [B + '/tiles'],
              inputs=[coast, PROFILE] + ([lu] if landuse else []),
@@ -340,7 +338,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
     ] + (road_steps(B, also, to, by, area) if roads else []) + \
         (house_step(B, landuse, coast, city_buffer, landuse_buffer) if house else []) + [
         dict(name='lev', cwd=OSM_ROOT,
-             cmd=uv + [t + '/lev_build.py', '--profile', PROFILE, '--coastline', coast]
+             cmd=[sys.executable, t + '/lev_build.py', '--profile', PROFILE, '--coastline', coast]
                  + (['--roads', B + '/roads/roads.json'] + [x for p in l2_tiles for x in ('--l2-tile', p)] if area else [])
                  + ['--data-version', VERSION, B + '/LEV3456R.DAT'],
              inputs=[coast, PROFILE] + ([B + '/roads/roads.json'] if area else []) + l2_tiles,
@@ -393,7 +391,8 @@ def prep(s):
     s['tools'] = sorted(set(s.get('tools', [])) |
                         set(buildstamp.import_closure(scripts, (HERE, os.path.join(HERE, 'addr')), code)))
     s['args'] = dict(cmds=cmds, extract=[[img, path] for img, path, _ in s.get('extract', [])],
-                     config={k: CONFIG.get(k) for k in s.get('config', ())}, version=VERSION)
+                     config={k: CONFIG.get(k) for k in s.get('config', ())}, version=VERSION,
+                     deps=buildstamp.deps())
     s['output_files'] = sorted({p for _, p in s['outputs'].values()} | set(s.get('products', [])))
     s['tool_groups'] = tool_groups(s.get('tools', []))
     return s
