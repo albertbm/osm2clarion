@@ -148,6 +148,36 @@ relations = [9177051, 9176913, 8817618, 8813115, 56208, 55966]
 cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
 bbox = [-21.4387848, 63.3995405, -14.496599, 64.8676]   # lon_min, lat_min, lon_max, lat_max
 
+[areas.vesturland_rest]
+# The rest of Vesturland: Borgarbyggd, Eyja- og Miklaholtshreppur, Sveitarfelagid Stykkisholmur, Snaefellsbaer, Grundarfjardarbaer, Dalabyggd
+relations = [8826397, 56200, 8405089, 56197, 56198, 56196]
+cells = ["B60R078R", "B60R080R"]
+bbox = [-24.0482947, 64.4077975, -19.7932, 65.506198]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.vestfirdir]
+# Vestfirdir: Bolungarvikurkaupstadur, Isafjardarbaer, Sudavikurhreppur, Vesturbyggd, Reykholahreppur, Strandabyggd, Kaldrananeshreppur, Arneshreppur
+relations = [56180, 56181, 56184, 17699888, 56188, 56191, 56190, 56189]
+cells = ["B60R080R"]
+bbox = [-24.5320463, 65.3469028, -21.2755126, 66.4694971]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.nordurland_vestra]
+# Nordurland vestra: Hunathing vestra, Hunabyggd, Sveitarfelagid Skagastrond, Skagafjordur
+relations = [56115, 17899474, 56105, 56103]
+cells = ["B60R078R", "B60R080R"]
+bbox = [-21.4841405, 64.7653006, -18.2893979, 66.1592733]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.nordurland_eystra]
+# Nordurland eystra, Grimsey with Akureyrarbaer: Akureyrarbaer, Fjallabyggd, Dalvikurbyggd, Horgarsveit, Eyjafjardarsveit, Svalbardsstrandarhreppur, Grytubakkahreppur, Thingeyjarsveit, Tjorneshreppur, Nordurthing, Langanesbyggd
+relations = [56086, 55967, 55969, 56084, 56092, 56090, 56091, 56165, 56153, 56160, 56146]
+cells = ["B60R078R"]
+bbox = [-19.0443107, 64.4093, -14.529885, 66.5662439]   # lon_min, lat_min, lon_max, lat_max
+
+[areas.austurland]
+# Austurland: Mulathing, Fjardabyggd, Fljotsdalshreppur, Vopnafjardarhreppur
+relations = [11759435, 56135, 56120, 56147]
+cells = ["B60R078R"]
+bbox = [-16.7971, 64.4222, -13.4948065, 65.9659481]   # lon_min, lat_min, lon_max, lat_max
+
 [data]
 # Relative paths are read from the repository root.
 pbf = "build/iceland-latest.osm.pbf"
@@ -191,6 +221,11 @@ sudurnes = ["Reykjanesbær", "Suðurnesjabær", "Grindavíkurbær", "Sveitarfél
 arborg = ["Sveitarfélagið Ölfus", "Hveragerðisbær", "Sveitarfélagið Árborg"]
 sudurland = []
 sudurland_rest = []
+vesturland_rest = []
+vestfirdir = []
+nordurland_vestra = []
+nordurland_eystra = []
+austurland = []
 
 [poicap.settlements]
 "REYKJAVÍK" = { la = "0xb01e", lo = "0xc31c", x = 1511, y = 829 }
@@ -253,3 +288,46 @@ poc_box = [63.4, -24.53, 66.65, -13.41]
 8720 = "Skeiða- og Gnúpverjahreppur"
 8509 = "Skaftárhreppur"
 8401 = "Sveitarfélagið Hornafjörður"
+
+[addr.area_municipalities.vesturland_rest]
+3609 = "Borgarbyggð"
+3713 = "Eyja- og Miklaholtshreppur"
+3716 = "Sveitarfélagið Stykkishólmur"
+3714 = "Snæfellsbær"
+3709 = "Grundarfjarðarbær"
+3811 = "Dalabyggð"
+
+[addr.area_municipalities.vestfirdir]
+4100 = "Bolungarvíkurkaupstaður"
+4200 = "Ísafjarðarbær"
+4803 = "Súðavíkurhreppur"
+4604 = "Vesturbyggð"
+4502 = "Reykhólahreppur"
+4911 = "Strandabyggð"
+4902 = "Kaldrananeshreppur"
+4901 = "Árneshreppur"
+
+[addr.area_municipalities.nordurland_vestra]
+5508 = "Húnaþing vestra"
+5613 = "Húnabyggð"
+5609 = "Sveitarfélagið Skagaströnd"
+5716 = "Skagafjörður"
+
+[addr.area_municipalities.nordurland_eystra]
+6000 = "Akureyrarbær"
+6250 = "Fjallabyggð"
+6400 = "Dalvíkurbyggð"
+6515 = "Hörgársveit"
+6513 = "Eyjafjarðarsveit"
+6601 = "Svalbarðsstrandarhreppur"
+6602 = "Grýtubakkahreppur"
+6613 = "Þingeyjarsveit"
+6611 = "Tjörneshreppur"
+6100 = "Norðurþing"
+6710 = "Langanesbyggð"
+
+[addr.area_municipalities.austurland]
+7400 = "Múlaþing"
+7300 = "Fjarðabyggð"
+7505 = "Fljótsdalshreppur"
+7502 = "Vopnafjarðarhreppur"
