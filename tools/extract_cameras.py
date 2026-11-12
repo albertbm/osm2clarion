@@ -3,8 +3,9 @@
 """Speed and red-light cameras from OSM tags, as GeoJSON-free cameras.json for
 camera_write.py: highway=speed_camera nodes and enforcement=* relations, merged - a
 relation's own device node is the same physical camera as a standalone tagged node, not a
-second one. Direction comes from the node's own `direction` tag in degrees, or failing
-that from the relation's from-node -> device-node vector; neither gives a guess.
+second one, and relations sharing one device give one camera. Direction comes from the
+node's own `direction` tag in degrees, or failing that from the relation's from-node ->
+device-node vector; neither gives a guess.
 
     extract_cameras.py PBF OUT.json [--bbox lon0,lat0,lon1,lat1 ...]
 
@@ -53,6 +54,7 @@ def main(argv):
 
     device_of_relation = {}   # relation id -> device node id
     cams = []
+    on_device = {}            # device node id -> its camera, for relations sharing one device
     for rid, tags, members in relations:
         by_role = {}
         for ref, role in members:
@@ -67,12 +69,21 @@ def main(argv):
             continue
         dirn = None
         frm = next((f for f in by_role.get('from', []) if f in nodes), None)
-        if frm is not None:
+        # a from-node on the device itself gives no heading
+        if frm is not None and nodes[frm][:2] != (lon, lat):
             flon, flat = nodes[frm][:2]
             dirn = bearing(flon, flat, lon, lat)
-        cams.append(dict(id='rel%d' % rid, lat=lat, lon=lon, type=tags.get('enforcement'),
+        if device in on_device:
+            # one camera enforcing several relations; differing headings mean both ways
+            cam = on_device[device]
+            if cam['direction_bearing_deg'] != dirn:
+                cam['direction_bearing_deg'] = None
+            cam['osm_source'].setdefault('also_relations', []).append(rid)
+            continue
+        on_device[device] = dict(id='rel%d' % rid, lat=lat, lon=lon, type=tags.get('enforcement'),
                           direction_bearing_deg=dirn, speed_limit_kmh=_kmh(tags.get('maxspeed') or dtags.get('maxspeed')),
-                          osm_source=dict(relation=rid, device_node=device, from_node=frm, tags=tags)))
+                          osm_source=dict(relation=rid, device_node=device, from_node=frm, tags=tags))
+        cams.append(on_device[device])
 
     used_devices = set(device_of_relation.values())
     for nid, (lon, lat, tags) in nodes.items():
@@ -83,7 +94,8 @@ def main(argv):
                           direction_bearing_deg=dirn, speed_limit_kmh=_kmh(tags.get('maxspeed')),
                           osm_source=dict(node=nid, tags=tags)))
 
-    json.dump(cams, open(dest, 'w'), indent=1, ensure_ascii=False)
+    with open(dest, 'w') as f:
+        json.dump(cams, f, indent=1, ensure_ascii=False)
     print('cameras', len(cams), 'with direction', sum(1 for c in cams if c['direction_bearing_deg'] is not None),
           'with speed limit', sum(1 for c in cams if c['speed_limit_kmh'] is not None))
 
