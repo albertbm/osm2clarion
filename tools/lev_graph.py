@@ -121,6 +121,16 @@ def marker(level, row, col):
     return 0x2100 + 0x2000 * ((k + rd_build.FMT.marker_shift) % 5)
 
 
+def encodable(length_m, kmh):
+    """Whether one link's length and travel time fit their words; a sparse network can
+    otherwise merge a chain past the longest one (131 km)."""
+    try:
+        rd_encode.cost_words(length_m, kmh)
+    except ValueError:
+        return False
+    return True
+
+
 def collapse(per):
     """Collapse compatible degree-two child nodes without crossing a target-parcel boundary."""
     owners = collections.defaultdict(set)
@@ -149,6 +159,7 @@ def collapse(per):
                 if not fwd and not back: continue
                 length = a['length'] + b['length']
                 speed = length / (a['length'] / a['speed'] + b['length'] / b['speed'])
+                if not encodable(length, speed): continue
                 merged = dict(a=x, b=y, length=length, cls=a['cls'], speed=speed,
                               direction=0 if fwd and back else 1 if fwd else -1,
                               w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'],

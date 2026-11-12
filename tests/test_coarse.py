@@ -186,5 +186,16 @@ class TestAreaRoads(unittest.TestCase):
         self.assertEqual(osm_roads.clip([(11, 0), (12, 0)], inside, cross), [])
 
 
+class TestCollapse(unittest.TestCase):
+    def test_merge_stops_at_the_longest_length_word(self):
+        import lev_graph
+        def link(a, b):
+            return dict(a=a, b=b, length=60000.0, cls=1, speed=90.0, direction=0, parcel=(0, 0),
+                        child=(0, 0), next_a=b, next_b=a, pa=(0, 0), pb=(0, 0))
+        per = {(0, 0): [link(1, 2), link(2, 3), link(3, 4)]}
+        lev_graph.collapse(per)
+        self.assertEqual(sorted(l['length'] for l in per[(0, 0)]), [60000.0, 120000.0])
+
+
 if __name__ == '__main__':
     unittest.main()
