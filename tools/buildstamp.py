@@ -10,10 +10,10 @@ A step is a dict with:
     inputs          list of file paths read
     args            any JSON-serialisable value (flags, parameters) that changes
                      the step's output if it changes
-    tool_groups     [(repo_path_or_None, [tool_file, ...]), ...] - repo_path is a
-                     git worktree; its HEAD and a diff scoped to those files are
-                     part of the stamp, so an uncommitted edit to a tool this step
-                     doesn't use does not invalidate it
+    tool_groups     [(repo_path_or_None, [tool_file, ...]), ...] - the tool files'
+                     contents are part of the stamp, not the repo's HEAD, so a commit
+                     or an uncommitted edit to a tool this step does not run leaves
+                     it alone (import_closure gives the files a script runs)
     output_files    every file the step writes, including ones it writes as a
                      side effect of running later steps' inputs through it
     mutates         names of earlier steps in the same build whose output_files
@@ -85,12 +85,41 @@ def repo_state(repo, paths=None):
 
 
 def tool_state(tool_groups):
-    out = []
-    for repo, files in tool_groups:
-        files = sorted(files)
-        out.append(dict(repo=repo, state=repo_state(repo, files) if repo else None,
-                         files=file_sha_map(files)))
-    return out
+    return file_sha_map(sorted({f for _, files in tool_groups for f in files}))
+
+
+def import_closure(scripts, search=(), code=()):
+    """Every .py file the scripts (and inline -c code) import, found next to the importing file
+    or in the search dirs, followed through the files found; the scripts included. Modules
+    that are not files there (the standard library, installed packages) are left out."""
+    import ast
+    seen, todo = set(), [os.path.abspath(p) for p in scripts]
+
+    def names(tree):
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Import):
+                yield from (a.name.split('.')[0] for a in n.names)
+            elif isinstance(n, ast.ImportFrom) and n.module and not n.level:
+                yield n.module.split('.')[0]
+
+    def resolve(name, here):
+        for d in (here,) + tuple(search):
+            p = os.path.join(d, name + '.py')
+            if os.path.isfile(p):
+                return os.path.abspath(p)
+        return None
+
+    for c in code:
+        todo += [p for p in (resolve(n, search[0] if search else '.') for n in names(ast.parse(c))) if p]
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.add(p)
+        with open(p, encoding='utf-8') as f:
+            tree = ast.parse(f.read(), p)
+        todo += [q for q in (resolve(n, os.path.dirname(p)) for n in names(tree)) if q and q not in seen]
+    return sorted(seen)
 
 
 def input_state(step):

@@ -231,7 +231,8 @@ def make_config(P, local, cells, base, osm, work):
         dealer=raw['dealer'], road_tiles=B['road_tiles'], data=data,
         camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=raw['card_naming'],
         cards_log=B['cards_log'], poicap=raw['poicap'], poi_python=B.get('poi_python', 'python3'),
-        roads_poc=raw['roads_poc'], addr=raw['addr'], allow_leftovers=B.get('allow_leftovers', []))
+        roads_poc=raw['roads_poc'], addr=raw['addr'], allow_leftovers=B.get('allow_leftovers', []),
+        profile=P.path)
     return cfg
 
 

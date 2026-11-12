@@ -130,6 +130,7 @@ AREAS = {name: dict(relations=a['relations'], cells=a['cells'], bbox=tuple(a['bb
 HOUSE_DENSE = 900
 ADDR_ONLY = None      # --addr-only: the streets ADDRE keeps (build_addr_area0.py --only)
 PBF = os.path.expanduser(CONFIG['data']['pbf'])
+PROFILE = CONFIG['profile']           # the profile file build.py read, which the format tools read too
 ADDRESSES = os.path.expanduser(CONFIG['data']['addresses'])
 POSTCODES = os.path.expanduser(CONFIG['data']['postcodes'])
 
@@ -196,7 +197,7 @@ def road_steps(B, also, to=None, by=None, area=None):
     cmds = []
     for c in CELLS:
         dest = R + '/%s.DAT' % c if c not in sec4 else R + '/%s.nosec4.DAT' % c
-        cmds.append(['python3', t + '/rd_build.py', '--profile', OSM_ROOT + '/profiles/iceland.toml', '--simplify', '2',
+        cmds.append(['python3', t + '/rd_build.py', '--profile', PROFILE, '--simplify', '2',
                      '--l2-graph', '--upper-names', '--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
                      '--shape-index', R + '/%s.shapes.json' % c])
         if c in sec4:
@@ -208,7 +209,7 @@ def road_steps(B, also, to=None, by=None, area=None):
              inputs=[PBF, turns_all], tools=[seltool],
              products=[roads, turns], outputs={}),
         dict(name='rd', cwd=REPO, cmds=cmds,
-             inputs=[roads, turns, OSM_ROOT + '/profiles/iceland.toml'] + [B + '/tiles/%s.DAT' % c for c in CELLS],
+             inputs=[roads, turns, PROFILE] + [B + '/tiles/%s.DAT' % c for c in CELLS],
              tools=[t + '/rd_build.py', t + '/rd_encode.py', t + '/fa_encode.py', t + '/shape_index.py',
                     t + '/clarion_tile.py', t + '/clarion_bg.py', t + '/sec4_write.py'],
              products=[R + '/%s.shapes.json' % c for c in CELLS],
@@ -303,6 +304,7 @@ def icode_step(B, icode_base):
                 inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
                                                                (icode_base, 'REFER002/ICODE001.DAT', i2)],
                 tools=[HERE + '/addr/build_icode_clean.py', HERE + '/addr/addr_csv.py'],
+                config=['addr'],
                 note='reads the input ICODE files for their volume table (languages and frame kinds); '
                      'REFER001 also copies their 18 POI genre frames byte for byte',
                 outputs={'REFER001/ICODE001.DAT': ('file', addr + '/REFER001_ICODE001.DAT'),
@@ -326,10 +328,10 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
     l2_tiles = [B + '/rd/%s.DAT' % c for c in CELLS] if area and coarse_graph else []
     out = lu_step + [
         dict(name='tiles', cwd=OSM_ROOT,
-             cmd=uv + [t + '/bg_tiles.py', '--profile', 'iceland', '--coastline', coast,
+             cmd=uv + [t + '/bg_tiles.py', '--profile', PROFILE, '--coastline', coast,
                        '--data-version', VERSION] + (['--landuse', lu] if landuse else [])
                  + (['--area-class', 'building=' + buildings] if buildings else []) + [B + '/tiles'],
-             inputs=[coast, OSM_ROOT + '/profiles/iceland.toml'] + ([lu] if landuse else []),
+             inputs=[coast, PROFILE] + ([lu] if landuse else []),
              tools=[t + '/bg_tiles.py', t + '/bg_encode.py', t + '/clarion_bg.py', t + '/tile_header.py',
                     t + '/clarion_tile.py'],
              products=[p for _, p in tiles_out.values()] if roads else [],
@@ -337,10 +339,10 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
     ] + (road_steps(B, also, to, by, area) if roads else []) + \
         (house_step(B, landuse, coast, city_buffer, landuse_buffer) if house else []) + [
         dict(name='lev', cwd=OSM_ROOT,
-             cmd=uv + [t + '/lev_build.py', '--profile', 'iceland', '--coastline', coast]
+             cmd=uv + [t + '/lev_build.py', '--profile', PROFILE, '--coastline', coast]
                  + (['--roads', B + '/roads/roads.json'] + [x for p in l2_tiles for x in ('--l2-tile', p)] if area else [])
                  + ['--data-version', VERSION, B + '/LEV3456R.DAT'],
-             inputs=[coast, OSM_ROOT + '/profiles/iceland.toml'] + ([B + '/roads/roads.json'] if area else []) + l2_tiles,
+             inputs=[coast, PROFILE] + ([B + '/roads/roads.json'] if area else []) + l2_tiles,
              tools=[t + '/lev_build.py', t + '/lev_file.py', t + '/bg_tiles.py', t + '/bg_encode.py',
                     t + '/clarion_bg.py', t + '/tile_header.py'] + ([t + '/lev_roads.py', t + '/lev_coarse.py', t + '/fa_encode.py',
                                                                       t + '/rd_build.py', t + '/rd_encode.py', t + '/clarion_rd.py',
@@ -354,7 +356,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
              cmd=['python3', HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
                  + (['--area', area] if area else []) + (['--only', ADDR_ONLY] if area and ADDR_ONLY else [])
                  + ['--addresses', ADDRESSES, '--postcodes', POSTCODES],
-             inputs=[ADDRESSES, POSTCODES] + shapes,
+             inputs=[ADDRESSES, POSTCODES] + shapes, config=['addr'],
              tools=[HERE + '/addr/build_addr_area0.py', HERE + '/addr/addr_csv.py', t + '/addre_io.py']
                    + [HERE + '/addr/build_icode_clean.py'] + [
                     t + '/zcode_io.py', t + '/point_io.py', t + '/frames.py', t + '/refer_header.py',
@@ -381,8 +383,16 @@ def tool_groups(tools):
 
 
 def prep(s):
-    """Fill in the fields buildstamp needs from this project's own step shape."""
-    s['args'] = s.get('cmds') or [s.get('cmd')]
+    """Fill in the fields buildstamp needs from this project's own step shape. The tools are
+    every file the step's scripts import; the args are its commands, the card files it reads,
+    the config tables its tools read through $O2C_CONFIG and the DATA VERSION."""
+    cmds = s.get('cmds') or [s.get('cmd')]
+    scripts = [a for c in cmds for a in c if a.endswith('.py') and os.path.isfile(a)]
+    code = [c[c.index('-c') + 1] for c in cmds if '-c' in c]
+    s['tools'] = sorted(set(s.get('tools', [])) |
+                        set(buildstamp.import_closure(scripts, (HERE, os.path.join(HERE, 'addr')), code)))
+    s['args'] = dict(cmds=cmds, extract=[[img, path] for img, path, _ in s.get('extract', [])],
+                     config={k: CONFIG.get(k) for k in s.get('config', ())}, version=VERSION)
     s['output_files'] = sorted({p for _, p in s['outputs'].values()} | set(s.get('products', [])))
     s['tool_groups'] = tool_groups(s.get('tools', []))
     return s
@@ -394,12 +404,11 @@ def run_steps(S, B, reuse, force=False):
     os.makedirs(os.path.join(B, 'in'), exist_ok=True)
     for s in S:
         prep(s)
-
-    def run_cmds(s):
-        # extraction is cheap and read-only; always do it so a step's inputs can be
-        # hashed even before its first real run (e.g. the icode step's card-extracted files)
+        # before the stamps are compared, so a step reads this card's files, not the last one's
         for img, path, dest in s.get('extract', []):
             extract(img, path, dest)
+
+    def run_cmds(s):
         for p in s['output_files']:
             os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(os.path.join(B, 'logs', s['name'] + '.log'), 'w') as log:
