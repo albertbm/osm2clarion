@@ -120,6 +120,37 @@ class TestChain(unittest.TestCase):
         self.assertEqual(build.chain_problems(dict(post_steps=[]), self.sha, False), [])
 
 
+class TestFinish(TestChain):
+    def log(self):
+        p = os.path.join(os.path.dirname(os.path.dirname(self.out)), 'CARDS.md')
+        with open(p) as f:
+            return [l for l in f.read().split('\n') if l.startswith('| 200')]
+
+    def test_a_half_done_rename_is_finished(self):
+        with open(self.out[:-4] + '.manifest.json', 'w') as f:
+            json.dump({}, f)
+        self.check()
+        self.assertTrue(os.path.exists(self.out))
+        self.assertFalse(os.path.exists(self.out + '.partial'))
+        self.assertEqual(len(self.log()), 1)
+
+    def test_a_missing_row_is_added_once(self):
+        os.replace(self.out + '.partial', self.out)
+        with open(self.out[:-4] + '.manifest.json', 'w') as f:
+            json.dump({}, f)
+        self.check()
+        self.check()
+        self.assertEqual(len(self.log()), 1)
+
+    def test_an_existing_card_is_never_replaced(self):
+        with open(self.out, 'wb') as f:
+            f.write(b'done')
+        with self.assertRaises(SystemExit):
+            self.check()
+        with open(self.out, 'rb') as f:
+            self.assertEqual(f.read(), b'done')
+
+
 class TestCardsLog(unittest.TestCase):
     def test_missing_log_gets_a_header_and_twins_share_a_row(self):
         with tempfile.TemporaryDirectory() as d:

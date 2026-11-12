@@ -463,7 +463,32 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if not os.path.exists(part):
             raise SystemExit('the build wrote another card than %s' % part)
 
+    def finish():
+        """Rename and log a checked card; each part is safe to repeat after a kill."""
+        if os.path.exists(mpart):
+            os.replace(mpart, manifest)
+        if os.path.exists(part):
+            os.replace(part, out)
+        print('checked; card renamed to', out)
+        import cards_log
+        cards_log.add(os.path.join(cards, cfg['cards_log']), number, unit, slug, args.get('what') or slug,
+                      base, cards)
+        with open(manifest) as f:
+            m = json.load(f)
+        src = args.get('map-from') or args.get('restamp-from')
+        print('cameras=%s dealer=%s consent=%s' % (m.get('cameras', 'as on ' + str(src)),
+                                                   m.get('dealer', 'as on ' + str(src)), m.get('consent')))
+
     def check():
+        if os.path.exists(part) and os.path.exists(out):
+            raise SystemExit('both %s and %s exist; a finished card is never replaced' % (part, out))
+        # the manifest is renamed only once the check has passed, so a run killed after that
+        # left only the card's rename or the log row to do
+        if not os.path.exists(mpart) and os.path.exists(manifest) and (os.path.exists(part) or os.path.exists(out)):
+            print('the check passed on an earlier run; finishing its rename and log row')
+            return finish()
+        if not os.path.exists(part):
+            raise SystemExit('no card in progress (%s); run from the start' % part)
         prep()      # card_verify reads the register through the config
         buildstamp.set_fields(mpart, deps=buildstamp.deps())
         card_sha = cardcopy.sha256(part)
@@ -482,20 +507,13 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         towns = ['--towns'] if args.get('map-from') or args.get('restamp-from') or 'addr' in groups else []
         run(py, tool('card_verify.py'), '--card', part, '--version', version, *towns, '--manifest', mpart,
             '--allow-new', *cfg['allow_leftovers'], env=env)
-        os.replace(mpart, manifest)
-        os.replace(part, out)
-        print('checked; card renamed to', out)
-        import cards_log
-        cards_log.add(os.path.join(cards, cfg['cards_log']), number, unit, slug, args.get('what') or slug,
-                      base, cards)
-        src = args.get('map-from') or args.get('restamp-from')
-        print('cameras=%s dealer=%s consent=%s' % (m.get('cameras', 'as on ' + str(src)),
-                                                   m.get('dealer', 'as on ' + str(src)), m.get('consent')))
+        finish()
 
     def clear_stale(plan_names):
         """A run that makes the card refuses a finished one and removes a half-made one."""
         if not {'cards', 'map', 'restamp'} & set(plan_names):
-            if not any(os.path.exists(p) for p in (part, s1, s2)):
+            # a checked card with its rename or log row left undone is finished by the check step
+            if not any(os.path.exists(p) for p in (part, s1, s2)) and not ('check' in plan_names and os.path.exists(out)):
                 raise SystemExit('no card in progress (%s); run from the start' % part)
             return
         if os.path.exists(out):
