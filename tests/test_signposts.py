@@ -217,6 +217,17 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertTrue(all(S['ok'] for S in shapes))
         self.assertEqual([S['links'] for S in shapes], [[1, 2], [3]])
 
+    def test_pin_crossings_and_forced_nodes(self):
+        # a way over the level-2 parcel line at lon -22.0: the crossing becomes a point of the way
+        w = dict(id=1, hw='primary', nodes=[[-22.001, 64.01], [-21.999, 64.0105]])
+        pinned = rd_build.pin_crossings([w])
+        self.assertEqual(len(pinned), 1)
+        self.assertEqual(len(w['nodes']), 3)
+        self.assertAlmostEqual(w['nodes'][1][0], -22.0, places=9)
+        self.assertEqual([len(run) for _, run in rd_build.cut(w['nodes'], 2)], [2, 2], 'not cut a second time')
+        self.assertEqual(rd_build.pin_crossings([w]), pinned, 'a second pass adds nothing')
+        self.assertEqual(len(w['nodes']), 3)
+
     def test_link_groups_break_where_the_upper_link_changes(self):
         link = lambda a, b: (a, b, 10.0, 1, None, 'primary', None, None, [], 0, 0, None)
         L = [link(0, 1), link(1, 2), link(2, 3)]

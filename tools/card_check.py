@@ -573,60 +573,117 @@ def check_coarse_graph_present(L2, lev4, lev5):
     return result('coarse_graph_present', ok, st)
 
 
-def upper_shapes(SH1):
-    """{(level-2 parcel, class, level-2 link id): [(start, end)]} of the level-1 shapes whose
-    header names the link, in level-1 units from the level-2 parcel's corner. A point on a
-    parcel's far edge is the next parcel's 0."""
+def upper_shapes(SH1, code=0x2000, span=4, origin=(0, 0)):
+    """{(parcel above, class, link id): [(start, end)]} of the level-1 shapes whose header names
+    the link with this level code, in level-1 units counted from parcel (0, 0). span is the
+    upper parcel's side in level-1 parcels and origin the level-1 parcel its grid starts at.
+    A point on a parcel's far edge is the next parcel's 0."""
     out = collections.defaultdict(list)
-    def at(pc, x, y): return (pc[1] % 4) * 2048 + (x + (x == 2047)), (pc[0] % 4) * 2048 + (y + (y == 2047))
+    for pc, w, shapes in road_shapes(SH1):
+        above = (pc[0] - origin[0]) // span, (pc[1] - origin[1]) // span
+        for S in shapes:
+            q = S['at'] + 6 + (w[S['at'] + 3] & 3)
+            ids = [u & 0x1fff for u in w[q:q + (w[S['at']] >> 13)] if u & 0xe000 == code]
+            if ids and S['ends']:
+                out[above + (S['cls'], ids[0])].append((l1_units(pc, *S['ends'][0][0]), l1_units(pc, *S['ends'][-1][1])))
+    return out
+
+
+def road_shapes(SH1):
+    """(parcel, record words, shapes) of each level-1 road-shape record. One whose layer table
+    gives a shape of no length is of another form and is left out: 31 of 14,367 on factory
+    B50R068R, none of ours."""
     for pc, pl in SH1.items():
         try:
             shapes = fa_encode.parse_record(pl, 1)[2]
         except Exception:
             continue
-        w = struct.unpack('>%dH' % (len(pl) // 2), pl)
-        for S in shapes:
-            q = S['at'] + 6 + (w[S['at'] + 3] & 3)
-            ids = [u & 0x1fff for u in w[q:q + (w[S['at']] >> 13)] if u & 0xe000 == 0x2000]
-            if ids and S['ends']:
-                out[(pc[0] // 4, pc[1] // 4), S['cls'], ids[0]].append((at(pc, *S['ends'][0][0]), at(pc, *S['ends'][-1][1])))
-    return out
+        if all(S['length'] for S in shapes):
+            yield pc, struct.unpack('>%dH' % (len(pl) // 2), pl), shapes
 
 
-def check_upper_link_shapes(L2, SH1, tol=8):
+def l1_units(pc, x, y):
+    return pc[1] * 2048 + x + (x == 2047), pc[0] * 2048 + y + (y == 2047)
+
+
+def blocks_of(b):
+    return {x['upper'] & 0x3fff: x for x in b['nodes']} if b else {}
+
+
+def l1_node(L1, pc2, block):
+    """Where the level-1 node under a level-2 node sits (l1_units), or None when its record
+    is not loaded."""
+    pc1 = l1_parcel(pc2, block['parcel']) if block else None
+    if pc1 not in L1 or block['child'] >= len(L1[pc1]['nodes']):
+        return None
+    m = L1[pc1]['nodes'][block['child']]
+    return l1_units(pc1, m['x'], m['y'])
+
+
+def walk_shapes(shapes, first):
+    """Follow the shapes naming one upper link from the level-1 node under its first node,
+    the way the unit does: the shape that starts where the last one ended (Navi.exe 0x34d2b8)."""
+    left = list(shapes)
+    pos = first
+    if not any(s == pos for s, e in left):
+        return 'backwards' if any(e == pos for s, e in left) else 'no shape at the first node'
+    while True:
+        nxt = next((g for g in left if g[0] == pos), None)
+        if nxt is None:
+            break
+        left.remove(nxt)
+        pos = nxt[1]
+    if not left:
+        return 'walked'
+    return 'backwards' if any(e == pos for s, e in left) else 'walk stops short'
+
+
+def first_ends(a):
+    """[(class, link id, node index)] of the first node of each link of one graph record."""
+    return [(e['cls'] & 0xf, e['id'] & 0x1fff, k) for k, nd in enumerate(a['nodes']) for e in nd['entries']
+            if not e['cls'] & 0x8000 and not e['id'] & 0x2000]
+
+
+def check_upper_link_shapes(L1, L2, SH1):
     """The level-1 shapes naming a level-2 link run the way the link runs: the unit takes
     the shape that starts where the last one ended (Navi.exe 0x34d2b8), so one drawn
     backwards ends its walk. Factory B50R068R: none backwards on 46,835 links."""
     named = upper_shapes(SH1)
     st = collections.Counter()
-    def near(p, q): return abs(p[0] - q[0]) <= tol and abs(p[1] - q[1]) <= tol
     for pc2, (a, b) in L2.items():
-        first = {}
-        for nd in a['nodes']:
-            for e in nd['entries']:
-                if not e['cls'] & 0x8000 and not e['id'] & 0x2000:
-                    first[e['cls'] & 0xf, e['id'] & 0x1fff] = (4 * (nd['x'] + (nd['x'] == 2047)), 4 * (nd['y'] + (nd['y'] == 2047)))
-        for (cls, lid), node in first.items():
-            left = list(named.get((pc2, cls, lid), ()))
-            if not left:
-                continue
-            st['links named'] += 1
-            pos = next((s for s, e in left if near(s, node)), None)
-            if pos is None:
-                st['backwards' if any(near(e, node) for s, e in left) else 'no shape at the first node'] += 1
-                continue
-            while True:
-                nxt = next((g for g in left if g[0] == pos), None)
-                if nxt is None:
-                    break
-                left.remove(nxt)
-                pos = nxt[1]
-            if not left:
-                st['walked'] += 1
-            else:
-                st['backwards' if any(e == pos for s, e in left) else 'walk stops short'] += 1
+        blocks = blocks_of(b)
+        for cls, lid, k in first_ends(a):
+            node = l1_node(L1, pc2, blocks.get(k))
+            if (pc2[0], pc2[1], cls, lid) in named and node:
+                st['links named'] += 1
+                st[walk_shapes(named[pc2[0], pc2[1], cls, lid], node)] += 1
     return result('upper_link_shapes', st['backwards'] == 0, st,
                   ['level-2 links with a level-1 shape drawn backwards: %d (want 0)' % st['backwards']])
+
+
+def check_l2_nodes_on_l1(L1, L2, tol=8):
+    """Every level-2 node sits on the level-1 node its block names, and that node carries
+    0x2000: a level-2 link is whole level-1 links. Factory B50R068R: 41,875 of 41,875 within
+    8 level-1 units, all flagged."""
+    st = collections.Counter()
+    for pc2, (a, b) in L2.items():
+        blocks = {x['upper'] & 0x3fff: x for x in b['nodes']}
+        for k, n in enumerate(a['nodes']):
+            x = blocks.get(k)
+            pc1 = l1_parcel(pc2, x['parcel']) if x else None
+            if pc1 not in L1 or x['child'] >= len(L1[pc1]['nodes']):
+                continue
+            m = L1[pc1]['nodes'][x['child']]
+            st['nodes'] += 1
+            off = max(abs(m['x'] - 4 * n['x'] + 2048 * (pc1[1] - 4 * pc2[1])),
+                      abs(m['y'] - 4 * n['y'] + 2048 * (pc1[0] - 4 * pc2[0])))
+            if off > tol:
+                st['inside a level-1 link'] += 1
+            elif not m['nflags'] & 0x2000:
+                st['level-1 node not flagged'] += 1
+    bad = st['inside a level-1 link'] + st['level-1 node not flagged']
+    return result('l2_nodes_on_l1', bad <= 0.0005 * st['nodes'], st,
+                  ['level-2 nodes off their level-1 node or on an unflagged one: %d (factory 0, pass at 0.05%%)' % bad])
 
 
 def run_all(L1, L2, SH1, lev4, lev5):
@@ -639,7 +696,8 @@ def run_all(L1, L2, SH1, lev4, lev5):
     out.append(check_l1_link_direction(L1, L2))
     out.append(check_l2_nflags(L2))
     out.append(check_roundabouts(L1, L2, SH1))
-    out.append(check_upper_link_shapes(L2, SH1))
+    out.append(check_upper_link_shapes(L1, L2, SH1))
+    out.append(check_l2_nodes_on_l1(L1, L2))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     return out

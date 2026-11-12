@@ -53,7 +53,8 @@ def cut(pts, level=1):
             lat = math.floor(min(a[1], b[1]) / PH) * PH + k * PH
             if lat >= max(a[1], b[1]): break
             crossings.append((lat - a[1]) / (b[1] - a[1]) if b[1] != a[1] else None)
-        for t in sorted(c for c in crossings if c is not None and 0 < c < 1):
+        # a crossing at a point the line already has (pin_crossings) is not cut again
+        for t in sorted(c for c in crossings if c is not None and ON_POINT < c < 1 - ON_POINT):
             seg.append((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))
         seg.append(b)
         for p, q in zip(seg, seg[1:]):
@@ -64,6 +65,25 @@ def cut(pts, level=1):
             run.append(q)
     if run: out.append((cur, run))
     return out
+
+ON_POINT = 1e-9
+
+def pin_crossings(ways):
+    """Give each way the points where it crosses a level-2 parcel line, as level 1 cuts them, and
+    return those points. Level 2 simplifies harder, so it would cut the line a little off the
+    level-1 node; kept through its simplify, the two levels share the node. Factory B50R068R:
+    41,875 of 41,875 level-2 nodes sit on a level-1 node."""
+    def above(pc): return (pc[0] * 32 + pc[2]) // 4, (pc[1] * 32 + pc[3]) // 4
+    pinned = set()
+    for w in ways:
+        runs = cut(w['nodes'], 1)
+        if len(runs) < 2: continue
+        nodes = list(runs[0][1])
+        for (prev, _), (pc, run) in zip(runs, runs[1:]):
+            if above(prev) != above(pc): pinned.add(tuple(run[0]))
+            nodes += run[1:]
+        w['nodes'] = nodes
+    return pinned
 
 def quant(p, pc, level=1):
     lon0, lat0, w, h = parcel_geo(level, *pc)
@@ -102,8 +122,9 @@ def off_parcel_lines(ways):
     for w in ways: w['nodes'] = [moved.get(tuple(q), q) for q in w['nodes']]
     return moved
 
-def build_graphs(ways, cell, level=1, chain=True):
-    """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)]."""
+def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
+    """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)].
+    force: points that become nodes wherever a way passes them (level 1: the level-2 nodes)."""
     yb, xb = tile_cell(cell)
     def inside(pc): return yb <= pc[0] < yb + 8 and xb <= pc[1] < xb + 8
     parcels = {}
@@ -216,7 +237,7 @@ def build_graphs(ways, cell, level=1, chain=True):
         for rid, (q, wy) in enumerate(P['runs']):
             start = 0
             for i in range(1, len(q)):
-                if chain and touch[q[i][0]] < 2 and i - start <= MAX_INNER: continue
+                if chain and touch[q[i][0]] < 2 and i - start <= MAX_INNER and tuple(q[i][1]) not in force: continue
                 seg = q[start:i + 1]; start = i
                 # split a run that closes on itself, so no link joins a node to itself
                 parts =[seg[:len(seg) // 2 + 1], seg[len(seg) // 2:]] if seg[0][0] == seg[-1][0] and len(seg) > 2 else [seg]
@@ -631,7 +652,7 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to):
     return max(nbrs, key=lambda n: cosine(n[1]))[0]
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
-                   l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None):
+                   l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None, l2_keys=frozenset()):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
     encode_parcels.unpaired = []
@@ -659,7 +680,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                 twin_child = tpair[1] if tpair else None
             if twin is not None: edges[idx[key]] = (SIDES[nd['edge']], twin, twin_child)
         # a level-1 node also present at level 2 carries 0x2000, unrelated to the parcel-edge twin above
-        l2_flags = [tuple(P['nodes'][k]['geo']) in l2_geo for k in keys] if l2_geo is not None else None
+        l2_flags = [tuple(P['nodes'][k]['geo']) in l2_geo or (pc, k) in l2_keys for k in keys] if l2_geo is not None else None
         l1_pair = None
         if level == 2 and l1_index is not None:
             l1_pair = []
@@ -675,7 +696,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                         # no L1 node near: the block must still name a real L1 node, since the
                         # descent dereferences whatever it names; take the nearest at any distance
                         pair = l1_nearest(P['nodes'][key]['geo'], None, pc, l1_index, limit=1e9)
-                    else: encode_parcels.l1_mismatch += 1
+                    else:
+                        encode_parcels.l1_mismatch += 1
+                        pair = l1_nearest(P['nodes'][key]['geo'], None, pc, l1_index, limit=1e9)
                 l1_pair.append(pair)
         l1_next = None
         if l1_pair is not None and l1_adj is not None:
@@ -884,10 +907,11 @@ def main():
     for r in turns:
         if tuple(r['via']) in moved: r['via'] = moved[tuple(r['via'])]
     ways2 = [dict(w) for w in ways if w['hw'] in l2]
+    pinned = pin_crossings(ways2)
     tol2 = P.l2_simplify_metres if P.l2_simplify_metres is not None else tol
     if tol2:
         shared = collections.Counter(tuple(p) for w in ways2 for p in w['nodes'])
-        junctions = {p for p, n in shared.items() if n > 1}
+        junctions = {p for p, n in shared.items() if n > 1} | pinned
         for w in ways2: w['nodes'] = simplify(w['nodes'], tol2, junctions)
     d = open(src, 'rb').read(); t = clarion_tile.read_tile(d)
     sec1 = [s for s in t['sections'] if s['id'] == 1][0]; sec2 = [s for s in t['sections'] if s['id'] == 2][0]
@@ -903,10 +927,13 @@ def main():
     # level 2 is needed before level 1 is encoded, so a level-1 node at the same point can carry 0x2000
     l2_parcels = build_graphs(ways2, cell, 2, not no_chain)
     l2_geo = {tuple(nd['geo']) for P in l2_parcels.values() for nd in P['nodes'].values()}
+    # the same nodes by level-1 key, for one that shares its key with a nearer point of the line
+    l2_keys = {(pc, tuple(min(2046, max(1, v)) for v in quant(g, pc))) for g in l2_geo for pc in [parcel_of(*g)]}
     boxes = {}; l1_index = None; l1_adj = None
     for level, subset in ((1, ways), (2, ways2)):
         chain = not no_chain
-        parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain)
+        # every level-2 node is a level-1 node too: a level-2 link is whole level-1 links
+        parcels = l2_parcels if level == 2 else build_graphs(subset, cell, level, chain, force=l2_geo)
         if level == 1:
             # the level-1 node an L2 node pairs with, by exact geo match: (parcel, index in that record)
             l1_index = {}; l1_adj = {}
@@ -935,7 +962,7 @@ def main():
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
                               l1_index=(l1_index if level == 2 else None), signs=signs,
                               l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None),
-                              upper=upper)
+                              upper=upper, l2_keys=(l2_keys if level == 1 else frozenset()))
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)

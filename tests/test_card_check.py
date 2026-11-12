@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 11)
+        self.assertEqual(len(checks), 12)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -134,6 +134,36 @@ class TestTiles(unittest.TestCase):
         except Exception:
             return      # a tile too broken to scan raises, which fails the step as well
         self.assertEqual(card_check.check_tiles(['X'], {}, errors)['passed'], False)
+
+
+class TestUpperLinks(unittest.TestCase):
+    def test_walk_takes_the_shape_that_starts_where_the_last_ended(self):
+        a, b, c = (0, 0), (5, 0), (9, 0)
+        self.assertEqual(card_check.walk_shapes([(b, c), (a, b)], a), 'walked')
+        self.assertEqual(card_check.walk_shapes([(a, b), (c, b)], a), 'backwards')
+        self.assertEqual(card_check.walk_shapes([(b, a)], a), 'backwards')
+        self.assertEqual(card_check.walk_shapes([(a, b), (c, c)], a), 'walk stops short')
+        self.assertEqual(card_check.walk_shapes([(b, c)], a), 'no shape at the first node')
+
+    def l2(self, x=100, y=200):
+        block = dict(upper=0, parcel=0, child=0, entries=[])
+        return {(0, 0): (dict(nodes=[node(x=x, y=y)]), dict(nodes=[block]))}
+
+    def test_a_level_2_node_sits_on_a_flagged_level_1_node(self):
+        L1 = {(0, 0): dict(nodes=[node(x=401, y=799, nflags=0x2000)])}
+        self.assertTrue(card_check.check_l2_nodes_on_l1(L1, self.l2())['passed'])
+
+    def test_a_level_2_node_inside_a_level_1_link_fails(self):
+        L1 = {(0, 0): dict(nodes=[node(x=440, y=800, nflags=0x2000)])}
+        r = card_check.check_l2_nodes_on_l1(L1, self.l2())
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['inside a level-1 link'], 1)
+
+    def test_an_unflagged_level_1_node_fails(self):
+        L1 = {(0, 0): dict(nodes=[node(x=400, y=800)])}
+        r = card_check.check_l2_nodes_on_l1(L1, self.l2())
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['level-1 node not flagged'], 1)
 
 
 class TestResultShape(unittest.TestCase):
