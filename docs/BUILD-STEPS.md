@@ -19,6 +19,10 @@ step prints its command, so any of them can be run again by hand.
 With `--map-from` or `--restamp-from` the chain is `prep`, `map` or `restamp`, `consent`,
 `check`.
 
+Known limit: the check proves a card's structure, not where each file came from. A well-formed
+tile or ADDRE of another build of the same unit, written after the `cards` step, would pass;
+today only the emptied stage dirs keep one out.
+
 ## Area mode (Finland)
 
 | step | what it does |
