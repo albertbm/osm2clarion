@@ -35,8 +35,9 @@ this slug on another unit (twins share a number), or the number --number gives. 
 
 --map-from CARD writes the map, address and POI files of a finished card onto this unit's base, as
 they are: nothing is generated, restamped or recompressed, so the DATA VERSION stays the source
-card's. The target keeps its own app, settings and ICODE files and gets a refreshed index. This is
-"build once, write per unit"; BUILD_DIR is only a place for the config.
+card's, and the ICODE files that number its towns go with them. The target keeps its own app and
+settings and gets a refreshed index. This is "build once, write per unit"; BUILD_DIR is only a
+place for the config.
 
 --roads adds the road steps: gen_roads_path.py picks the ways (--also adds whole streets,
 --to a route to each named street and the street itself, --by how that route is weighed),
@@ -386,15 +387,15 @@ def cmp_lst(img):
 
 GROUPS = dict(lev=lambda p: p == 'MAPAL001/LEV3456R.DAT',
               tiles=lambda p: p.startswith('MAPAL001/B'),
-              addr=lambda p: p.startswith(('REFER001/', 'REFER002/')) and 'ICODE' not in p,
+              addr=lambda p: p.startswith(('REFER001/', 'REFER002/')),
               house=lambda p: p.startswith('HOUSE001/'))
 
 
 def purge(ed, drs, d, keep):
     """Delete the files in folder d that `keep` (a set of card paths) lacks, and their index rows.
-    ICODE files and the dot entries stay. Returns the index."""
+    The dot entries stay. Returns the index."""
     gone = [g.name for g in ed.load(d)[1] if '%s/%s' % (d, g.name) not in keep
-            and 'ICODE' not in g.name and not g.name.startswith('.')]
+            and not g.name.startswith('.')]
     for n in gone:
         ed.delete(d, n)
         print('deleted %s/%s' % (d, n))
@@ -464,11 +465,11 @@ def cmp_lst_ed(ed):
 
 def copy_map(img, src):
     """Write the map, address and POI files of the finished card `src` onto the fresh card `img`
-    as they are: nothing is regenerated or restamped, and the target's app, settings and ICODE
-    files stay its own. Files the target has in those folders and `src` lacks are deleted, the
-    index and CMP.LST are refreshed for the target, and MMAIN is the source's. Returns the
-    paths copied."""
-    files = {p: b for p, b in card_files(src).items() if p.split('/')[0] in SCOPE and 'ICODE' not in p}
+    as they are, ICODE included since ADDRE's town indices point into it: nothing is regenerated
+    or restamped, and the target's app and settings stay its own. Files the target has in those
+    folders and `src` lacks are deleted, the index and CMP.LST are refreshed for the target, and
+    MMAIN is the source's. Returns the paths copied."""
+    files = {p: b for p, b in card_files(src).items() if p.split('/')[0] in SCOPE}
     exp = {}
     for p, b in files.items():
         n = struct.unpack_from('<I', files[p[:-4] + '.ind'])[0] if p.endswith('.cmp') else len(b)
