@@ -130,7 +130,6 @@ AREAS = {name: dict(relations=a['relations'], cells=a['cells'], bbox=tuple(a['bb
 HOUSE_DENSE = 900
 ADDR_ONLY = None      # --addr-only: the streets ADDRE keeps (build_addr_area0.py --only)
 PBF = os.path.expanduser(CONFIG['data']['pbf'])
-TURNS = os.path.expanduser(CONFIG['data']['turns'])
 ADDRESSES = os.path.expanduser(CONFIG['data']['addresses'])
 POSTCODES = os.path.expanduser(CONFIG['data']['postcodes'])
 
@@ -183,14 +182,15 @@ def extract(img, path, dest):
 def road_steps(B, also, to=None, by=None, area=None):
     """Ways, then rd_build into step 1's tiles, then section 4: the card's tiles."""
     t = OSM; R = os.path.join(B, 'rd')
+    turns_all = osm_paths(B)['turns']
     roads, turns = B + '/roads/roads.json', B + '/roads/turns.json'
     if area:
         relations, sec4, _ = area_values(area)
         sel = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/osm_roads.py', PBF, roads,
-               '--public', '--relations', ','.join(map(str, relations)), '--turns', TURNS, turns, '--ramp-names']
+               '--public', '--relations', ','.join(map(str, relations)), '--turns', turns_all, turns, '--ramp-names']
         seltool = t + '/osm_roads.py'
     else:
-        sel = ['uv', 'run', '--with', 'osmium', 'python', HERE + '/gen_roads_path.py', PBF, TURNS, roads, turns]
+        sel = ['uv', 'run', '--with', 'osmium', 'python', HERE + '/gen_roads_path.py', PBF, turns_all, roads, turns]
         seltool = HERE + '/gen_roads_path.py'
     sec4 = sec4 if area else SEC4_CELLS
     cmds = []
@@ -205,7 +205,7 @@ def road_steps(B, also, to=None, by=None, area=None):
     return [
         dict(name='roads', cwd=REPO, cmds=[sel + (['--also', also] if also else []) + (['--to', to] if to else [])
                                            + (['--by', by] if by else [])],
-             inputs=[PBF, TURNS], tools=[seltool],
+             inputs=[PBF, turns_all], tools=[seltool],
              products=[roads, turns], outputs={}),
         dict(name='rd', cwd=REPO, cmds=cmds,
              inputs=[roads, turns, OSM_ROOT + '/profiles/iceland.toml'] + [B + '/tiles/%s.DAT' % c for c in CELLS],
@@ -224,21 +224,9 @@ def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=
     town, village, hamlet) buffered city_buffer metres, or a residential/commercial/
     industrial/retail landuse polygon buffered landuse_buffer metres (housearea/PLAN.md)."""
     assert landuse, '--house needs --landuse for its box'
-    from house_encode import box_cells, file_name
+    from house_encode import file_name
     t = OSM
-    all_cells = box_cells(*map(float, landuse.split(',')))
-    pj = B + '/house/populated.json'
-    if not os.path.exists(pj):
-        os.makedirs(os.path.dirname(pj), exist_ok=True)
-        subprocess.run(['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python', t + '/extract_landuse.py',
-                         PBF, pj, '--bbox', landuse, '--populated', '--kinds', 'populated_landuse,place'],
-                        check=True)
-    cellsj = B + '/house/cells.json'
-    subprocess.run(['uv', 'run', '--with', 'shapely', 'python', '-c',
-                     'import json, sys; sys.path.insert(0, %r); from house_encode import populated_cells; '
-                     'cells = [tuple(c) for c in %r]; '
-                     'json.dump([list(c) for c in sorted(populated_cells(%r, cells, %r, %r))], open(%r, "w"))'
-                     % (t, [list(c) for c in all_cells], pj, city_buffer, landuse_buffer, cellsj)], check=True)
+    pj, cellsj = osm_paths(B)['populated'], osm_paths(B)['cells']
     cells = {tuple(c) for c in json.load(open(cellsj))}
     names = [file_name(*c) for c in cells]
     bj, rj = B + '/house/landuse.json', B + '/house/roads.json'
@@ -251,10 +239,58 @@ def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=
                         B + '/house', '--template', B + '/tiles/B60R080R.DAT', '--bbox', landuse, '--roads', rj,
                         '--coast', coast, '--dense', str(HOUSE_DENSE), '--stats', B + '/house/stats.json',
                         '--cells', cellsj]],
-                 inputs=[PBF, coast, pj], tools=[t + '/extract_landuse.py', t + '/osm_roads.py', t + '/house_encode.py',
+                 inputs=[PBF, coast, pj, cellsj], tools=[t + '/extract_landuse.py', t + '/osm_roads.py', t + '/house_encode.py',
                                       t + '/bg_encode.py'],
-                 products=[bj, rj, B + '/house/stats.json', pj, cellsj],
+                 products=[bj, rj, B + '/house/stats.json'],
                  outputs={'HOUSE001/' + n: ('file', B + '/house/' + n) for n in names})]
+
+
+def osm_paths(B):
+    o = os.path.join(B, 'osm')
+    return dict(turns=o + '/turns.json', coast=o + '/coast.json', populated=o + '/populated.json',
+                cells=o + '/house_cells.json')
+
+
+def replace_cmd(tmp, dest):
+    """A step command that moves a finished temp file to its name, so a killed run leaves none."""
+    return [sys.executable, '-c', 'import os, sys; os.replace(sys.argv[1], sys.argv[2])', tmp, dest]
+
+
+def tmp_name(p):
+    root, ext = os.path.splitext(p)
+    return root + '.tmp' + ext
+
+
+def osm_steps(B, landuse=None, house=False, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=HOUSE_LANDUSE_BUFFER):
+    """What the later steps read off the OSM extract besides their own reads: turn
+    restrictions, the coastline and, for --house, the populated cells. Each is a stamped step
+    with the extract as input, so a new extract or box remakes it."""
+    t = OSM
+    o = osm_paths(B)
+    osm_py = ['uv', 'run', '--with', 'osmium', '--with', 'shapely', 'python']
+    out = [dict(name='turns', cwd=OSM_ROOT, cmds=[osm_py + [t + '/osm_turns.py', PBF, tmp_name(o['turns'])],
+                                                  replace_cmd(tmp_name(o['turns']), o['turns'])],
+                inputs=[PBF], products=[o['turns']], outputs={}),
+           dict(name='coast', cwd=OSM_ROOT, cmds=[osm_py + [t + '/extract_coast.py', PBF, tmp_name(o['coast'])],
+                                                  replace_cmd(tmp_name(o['coast']), o['coast'])],
+                inputs=[PBF], products=[o['coast']], outputs={})]
+    if house:
+        assert landuse, '--house needs --landuse for its box'
+        from house_encode import box_cells
+        all_cells = [list(c) for c in box_cells(*map(float, landuse.split(',')))]
+        pj, cj = o['populated'], o['cells']
+        code = ('import json, sys; sys.path.insert(0, %r); from house_encode import populated_cells; '
+                'cells = [tuple(c) for c in %r]; '
+                'json.dump([list(c) for c in sorted(populated_cells(%r, cells, %r, %r))], open(%r, "w"))'
+                % (t, all_cells, pj, city_buffer, landuse_buffer, tmp_name(cj)))
+        out.append(dict(name='populated', cwd=OSM_ROOT,
+                        cmds=[osm_py + [t + '/extract_landuse.py', PBF, tmp_name(pj), '--bbox', landuse, '--populated',
+                                        '--kinds', 'populated_landuse,place'],
+                              replace_cmd(tmp_name(pj), pj),
+                              ['uv', 'run', '--with', 'shapely', 'python', '-c', code],
+                              replace_cmd(tmp_name(cj), cj)],
+                        inputs=[PBF], tools=[t + '/house_encode.py'], products=[pj, cj], outputs={}))
+    return out
 
 
 def icode_step(B, icode_base):
@@ -352,7 +388,8 @@ def prep(s):
     return s
 
 
-def run_steps(S, B, reuse):
+def run_steps(S, B, reuse, force=False):
+    """Run or reuse each step; True when any ran. force reruns them all."""
     os.makedirs(os.path.join(B, 'logs'), exist_ok=True)
     os.makedirs(os.path.join(B, 'in'), exist_ok=True)
     for s in S:
@@ -369,7 +406,8 @@ def run_steps(S, B, reuse):
             for cmd in s.get('cmds', [s.get('cmd')]):
                 subprocess.run(cmd, cwd=s['cwd'], stdout=log, stderr=subprocess.STDOUT, check=True)
 
-    buildstamp.run_steps(B, S, reuse, run_cmds)
+    buildstamp.run_steps(B, S, reuse, run_cmds, force=force)
+    return any(s['ran'] != 'reused' for s in S)
 
 
 def expected(S):
@@ -703,7 +741,7 @@ def main(argv):
         return restamp_from(unit, slug, opt('--restamp-from'), opt('--base'), int(opt('--number', 0)),
                             opt('--what', slug), B)
     icode_base = UNITS[unit]['icode']
-    coast = opt('--coast', os.path.expanduser(CONFIG['data']['coast']))
+    coast = opt('--coast')
     also, to, by = opt('--also'), opt('--to'), opt('--by')
     groups = opt('--write', 'lev').split(',')
     assert set(groups) <= set(GROUPS), groups
@@ -718,14 +756,19 @@ def main(argv):
     elif landuse == 'area':
         assert area, '--landuse area needs --area'
         landuse = box_text(area_values(area)[2])
-    S = steps(B, coast, icode_base, roads='--roads' in argv or bool(area), also=also, to=to, by=by, area=area,
-              landuse=landuse, kinds=opt('--landuse-kinds'), buildings=opt('--buildings'),
+    city_buffer = float(opt('--house-city-buffer', HOUSE_CITY_BUFFER))
+    landuse_buffer = float(opt('--house-landuse-buffer', HOUSE_LANDUSE_BUFFER))
+    reuse = '--reuse' in argv
+    pre = osm_steps(B, landuse, '--house' in argv, city_buffer, landuse_buffer)
+    ran = run_steps(pre, B, reuse)
+    S = steps(B, coast or osm_paths(B)['coast'], icode_base, roads='--roads' in argv or bool(area), also=also,
+              to=to, by=by, area=area, landuse=landuse, kinds=opt('--landuse-kinds'), buildings=opt('--buildings'),
               house='--house' in argv, coarse_graph='--coarse-graph' in argv,
-              city_buffer=float(opt('--house-city-buffer', HOUSE_CITY_BUFFER)),
-              landuse_buffer=float(opt('--house-landuse-buffer', HOUSE_LANDUSE_BUFFER)))
+              city_buffer=city_buffer, landuse_buffer=landuse_buffer)
     if '--house' in argv:
         groups.append('house')
-    run_steps(S, B, '--reuse' in argv)
+    run_steps(S, B, reuse, force=ran)
+    S = pre + S
     exp = expected(S)
     n, img, base = new_card(unit, slug, opt('--base'), int(opt('--number', 0)))
     assemble(img, exp, groups)

@@ -250,11 +250,10 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     # the card is built under .partial names and renamed only after the check step passes
     part, mpart = out + '.partial', manifest + '.partial'
     area_arg = areas or ','.join(cfg['areas'])
-    stage = args.get('stage') or os.path.join(cards, 'stage')
+    stage = args.get('stage') or os.path.join(work, 'stage')
     version = cfg['units'][unit]['version']
     conf = os.path.join(work, 'config', P.name + '.json')
     poi_py = expand(cfg['poi_python'])
-    pbf, turns, coast = cfg['data']['pbf'], cfg['data']['turns'], cfg['data']['coast']
     env = dict(os.environ, O2C_CONFIG=conf, CARDS_DIR=cards, OSM2CLARION=HERE,
                SOURCE_DATE_EPOCH=os.environ.get('SOURCE_DATE_EPOCH', '946684800'))
     py = sys.executable
@@ -269,10 +268,6 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         os.makedirs(os.path.dirname(conf), exist_ok=True)
         with open(conf, 'w', encoding='utf-8') as f:
             json.dump(cfg, f, ensure_ascii=False, indent=1)
-        if not os.path.exists(turns):
-            run(*OSM_PY, tool('osm_turns.py'), pbf, turns, env=env)
-        if not os.path.exists(coast):
-            run(*OSM_PY, tool('extract_coast.py'), pbf, coast, env=env)
 
     def cards_step():
         prep()
@@ -287,8 +282,17 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         if not os.path.exists(part):
             raise SystemExit('the build wrote another card than %s' % part)
 
+    def fresh(name):
+        """A stage dir emptied first, so nothing from an earlier build reaches this card."""
+        d = os.path.join(stage, name)
+        if os.path.isdir(d):
+            shutil.rmtree(d)
+        os.makedirs(d)
+        return d
+
     def poi():
         os.makedirs(stage, exist_ok=True)
+        fresh('poi-' + unit)
         run(py, tool('poi_apply.py'), '--config', conf, work, part, os.path.join(stage, 'poi-' + unit),
             env=env_v)
         stamp('poi_apply', '%s %s' % (work, out), part)
@@ -297,7 +301,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     def poicap(src, dst, workdir, *extra):
         run(poi_py, tool('build_poicap.py'), '--config', conf, '--area', area_arg, *extra,
             '--osm2clarion', HERE, '--python', poi_py, '--base', src, '--out', dst,
-            '--workdir', os.path.join(stage, workdir), env=env_v)
+            '--workdir', fresh(workdir), env=env_v)
 
     def icons():
         poicap(s1, s2, 'poicap-' + unit, '--allow-placeholder-refs')

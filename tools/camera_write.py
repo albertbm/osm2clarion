@@ -129,6 +129,14 @@ def write_cameras(cams, tiledir, outdir, levels=(1, 2)):
     return report, missing
 
 
+def sources(tiles, report, tiledir, outdir):
+    """{tile: file to use}: the written tile for those write_cameras' report says it touched,
+    the input tile for the rest, whatever else is in outdir."""
+    touched = {h['tile'] for hits in report.values() for h in hits}
+    return {name: os.path.join(outdir if '%s.DAT' % name in touched else tiledir, '%s.DAT' % name)
+            for name in tiles}
+
+
 def main(argv):
     cj, tiledir, outdir = argv[0], argv[1], argv[2]
     levels = tuple(int(x) for x in

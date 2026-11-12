@@ -163,12 +163,12 @@ def decide(build_dir, step, reuse, force):
     return False, 'reused', None, cur_in
 
 
-def run_steps(build_dir, step_list, reuse, run_cmds, on_line=print):
+def run_steps(build_dir, step_list, reuse, run_cmds, on_line=print, force=False):
     """Decide and, if needed, run each step in order. A rerun anywhere forces every
     later step to rerun too, since a step may read an earlier one's output file by
-    content without that showing in its own listed inputs."""
+    content without that showing in its own listed inputs. force starts the list forced,
+    for a list that follows one where a step ran."""
     by_name = {s['name']: s for s in step_list}
-    force = False
     for step in step_list:
         should_run, label, reason, cur_in = decide(build_dir, step, reuse, force)
         tag = label if reason is None else '%s: %s' % (label, reason)

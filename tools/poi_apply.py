@@ -60,6 +60,9 @@ def run(argv):
 
     B, img, out = a.build_dir, a.card, a.out_dir
     os.makedirs(out, exist_ok=True)
+    # a tile left in cam_out by an earlier build must not reach this card
+    for d in ('cam_in', 'cam_out', 'dealer_out'):
+        shutil.rmtree(os.path.join(out, d), ignore_errors=True)
 
     # 1: dealer/POI icon onto the road tile holding the dealer address
     rd_in = B + '/rd/%s.DAT' % dealer['road_tile']
@@ -80,9 +83,7 @@ def run(argv):
     report, missing = camera_write.write_cameras(cameras, cam_in, cam_out)
     assert not missing, 'camera(s) outside the built tiles: %r' % missing
     final_tiles = {}
-    for name in road_tiles:
-        touched = os.path.join(cam_out, '%s.DAT' % name)
-        src = touched if os.path.exists(touched) else os.path.join(cam_in, '%s.DAT' % name)
+    for name, src in camera_write.sources(road_tiles, report, cam_in, cam_out).items():
         final_tiles[name] = out + '/%s.final.DAT' % name
         shutil.copy(src, final_tiles[name])
     print('cameras placed:', {cid: len(hits) for cid, hits in report.items()})
