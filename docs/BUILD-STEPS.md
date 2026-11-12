@@ -10,7 +10,7 @@ step prints its command, so any of them can be run again by hand.
 |---|---|
 | `prep` | writes the JSON config the tools read (`--work`/config/NAME.json) from the profile and the local file |
 | `cards` | `build_gen_lev.py`: every map file, then a copy of the base card with them written on |
-| `poi` | `poi_apply.py`: the dealer icon, speed cameras, the building-scale icon and the dealer's POINT record |
+| `poi` | `poi_apply.py`: the speed cameras the `cards` step extracted, the dealer icon, the building-scale icon and the dealer's POINT record |
 | `icons` | `build_poicap.py`: POI icons and POINT search records from the OSM extract |
 | `addr` | `build_poicap.py --house-ranges ALL --all-streets`: the address database with house-number ranges |
 | `consent` | the unit's `consent_cmd` from the local file, if it has one; a unit with `consent = "required"` in the profile fails without one |
@@ -89,6 +89,17 @@ into the areas' road cells, all given section 4; coarse roads at levels 3 to 5 i
 LEV3456R.DAT; and every address of those municipalities out of the address CSV (config
 `data.addresses` and `data.postcodes`, `addr_csv.py`). `--addr-only NAME,NAME` keeps only those
 streets in ADDRE; towns and postcodes stay whole.
+
+Before the map steps, the turn restrictions, the coastline and the speed cameras are read off
+the OSM extract into BUILD_DIR/osm, each a stamped step written under a temp name and then
+moved, so a newer extract reruns them and the same one reuses them. The cameras step runs
+`extract_cameras.py` with the boxes of the areas `--area` names (all areas without it):
+`highway=speed_camera` nodes and `enforcement` relations, one camera per device node. No map
+step reads the cameras, so a rerun of that step reruns nothing else. `poi_apply.py` writes
+them onto the road tiles; a camera with no `maxspeed` takes the speed of the built road
+nearest it, its `maxspeed` or else the class default the road links carry, and the step's
+output counts the cameras that got a class default. `[build] cameras = false` in the profile
+or the local file leaves the step out and the card without cameras.
 
 `--roads` is the older path mode: `gen_roads_path.py` picks the ways between the profile's
 `[roads_poc]` streets (`--also` adds whole streets, `--to` a route to each named street, `--by`

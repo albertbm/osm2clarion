@@ -123,36 +123,32 @@ class TestCells(unittest.TestCase):
 
 
 class TestCameras(unittest.TestCase):
-    def test_no_file_means_no_cameras(self):
-        import camera_write
-        self.assertEqual(camera_write.load_cameras('/no/such/cameras.json', {}), [])
+    def test_cameras_are_on_unless_switched_off(self):
+        self.assertTrue(config()['cameras'])
+        self.assertFalse(config({'build': {'cameras': False}})['cameras'])
 
-    def test_a_missing_explicit_camera_file_fails(self):
-        import camera_write
-        with self.assertRaises(SystemExit):
-            camera_write.load_cameras('/no/such/cameras.json', {}, required=True)
-        self.assertTrue(config({'data': {'cameras': '/no/such/cameras.json'}})['cameras_required'])
-        self.assertFalse(config()['cameras_required'])
+    def test_the_old_camera_settings_are_refused(self):
+        for local in ({'data': {'cameras': '/x/cameras.json'}}, {'camera_speed_fallback': {'a': 60}},
+                      {'build': {'allow_missing_speed': True}}):
+            with self.assertRaises(SystemExit):
+                config(local)
 
-    def cams(self, **kw):
+    def test_a_camera_with_no_speed_takes_its_roads(self):
         import camera_write
-        cams = [dict(id='a', speed_limit_kmh=None), dict(id='b', speed_limit_kmh=None), dict(id='c', speed_limit_kmh=50)]
+        roads = [dict(id=1, hw='trunk', name='A', maxspeed='60', nodes=[[-21.0, 64.0], [-21.0, 64.01]]),
+                 dict(id=2, hw='residential', name='B', maxspeed=None, nodes=[[-20.9, 64.0], [-20.9, 64.01]])]
+        cams = [dict(id='a', lon=-21.0001, lat=64.005, speed_limit_kmh=None),
+                dict(id='b', lon=-20.9001, lat=64.005, speed_limit_kmh=None),
+                dict(id='c', lon=-20.9001, lat=64.005, speed_limit_kmh=90)]
         with tempfile.NamedTemporaryFile('w', suffix='.json', delete=False) as f:
             json.dump(cams, f)
         try:
-            return camera_write.load_cameras(f.name, {'a': 60}, **kw)
+            got, filled = camera_write.load_cameras(f.name, roads)
         finally:
             os.remove(f.name)
-
-    def test_a_camera_with_no_speed_fails(self):
-        with self.assertRaises(SystemExit) as e:
-            self.cams()
-        self.assertIn('camera b', str(e.exception))
-
-    def test_a_camera_with_no_speed_is_left_out_when_allowed(self):
-        got = self.cams(allow_missing_speed=True)
-        self.assertEqual([(c['id'], c['speed_limit_kmh']) for c in got], [('a', 60), ('c', 50)])
-        self.assertTrue(config({'build': {'allow_missing_speed': True}})['allow_missing_speed'])
+        self.assertEqual([c['speed_limit_kmh'] for c in got], [60, 30, 90])
+        self.assertEqual({k: (v['way'], v['source']) for k, v in filled.items()},
+                         {'a': (1, 'posted'), 'b': (2, 'class default')})
 
 
 if __name__ == '__main__':

@@ -83,6 +83,7 @@ landuse = "area"           # forest, parks and water from OSM, drawn under the r
 house = true               # building-scale map (HOUSE001)
 write = "lev,tiles,addr"   # what is written onto the card; the rest is only checked
 coarse_graph = true
+cameras = true             # speed cameras from the OSM extract; false leaves them off the card
 # every drivable public road of each area's relations is built; the areas are the [areas] tables
 cards_log = "CARDS.md"
 sec4_cells = ["B58R078R", "B58R080R", "B60R078R", "B60R080R"]
@@ -184,7 +185,6 @@ bbox = [-16.7971, 64.4222, -13.4948065, 65.9659481]   # lon_min, lat_min, lon_ma
 pbf = "build/iceland-latest.osm.pbf"
 addresses = "build/address/addresses.csv"
 postcodes = "build/address/postcodes.csv"
-cameras = "build/cameras.json"       # optional: no file, no camera icons
 
 # [dealer] is optional: one place of your own with a POI icon and a POINT record anchored on its
 # register address. See examples/iceland.local.toml.

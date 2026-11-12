@@ -319,6 +319,13 @@ def make_config(P, local, cells, base, osm, work):
     if 'poi_python' in B:
         raise SystemExit('[build] poi_python is gone: every step runs under the interpreter running '
                          'build.py; remove it from the profile or the local file')
+    gone = [k for k, there in (('[data] cameras', 'cameras' in raw.get('data', {})),
+                               ('[camera_speed_fallback]', 'camera_speed_fallback' in raw),
+                               ('[build] allow_missing_speed', 'allow_missing_speed' in B)) if there]
+    if gone:
+        raise SystemExit('%s: gone, the cards step extracts the cameras from the OSM extract and a camera '
+                         'with no speed takes its road\'s; remove it from the profile or the local file '
+                         '([build] cameras = false turns cameras off)' % ', '.join(gone))
     root = os.path.dirname(os.path.dirname(P.path))
 
     def path(p):
@@ -344,10 +351,8 @@ def make_config(P, local, cells, base, osm, work):
         units=units, cells=cells, sec4_cells=need('build', 'sec4_cells'),
         areas={n: dict(relations=a['relations'], cells=a['cells'], bbox=a['bbox']) for n, a in need('areas').items()},
         dealer=raw.get('dealer'), road_tiles=need('build', 'road_tiles'), data=data,
-        camera_speed_fallback=raw.get('camera_speed_fallback', {}),
-        # a camera file the local file names must exist; the profile's default may be missing
-        cameras_required=bool(local.get('data', {}).get('cameras')),
-        allow_missing_speed=bool(B.get('allow_missing_speed')), card_naming=need('card_naming'),
+        cameras=bool(B.get('cameras', True)), speed_unit=raw.get('roads', {}).get('speed_unit', 'km/h'),
+        card_naming=need('card_naming'),
         cards_log=need('build', 'cards_log'), poicap=need('poicap'),
         roads_poc=need('roads_poc'), addr=need('addr'), allow_leftovers=B.get('allow_leftovers', []),
         profile=P.path)

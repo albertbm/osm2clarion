@@ -19,7 +19,7 @@ instead of tiles.
 | Route guidance | Works with bugs: on long routes the close-up route line ends a few km ahead and the unit recalculates (see Limits) |
 | Roundabouts | Works |
 | Speed-limit signs | Works |
-| Speed cameras | Works. Needs a camera file from `tools/extract_cameras.py` |
+| Speed cameras | Works |
 | Address search and house numbers | Works |
 | House numbers drawn along streets | Works |
 | POI icons and search | Works with bugs: in a municipality with no town of its own, a POI can show a nearby town |

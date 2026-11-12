@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Turns, coast and populated cells are stamped steps written through a temp name, and the POI
-step takes a tile from camera_write only when its report says it touched it."""
+"""Turns, coast, populated cells and cameras are stamped steps written through a temp name, and
+the POI step takes a tile from camera_write only when its report says it touched it."""
 import os
 import sys
 import tempfile
@@ -17,7 +17,7 @@ TMP = None
 def setUpModule():
     global TMP
     TMP = tempfile.TemporaryDirectory()
-    TestOsmSteps.g = genlev.load(TMP.name)
+    TestOsmSteps.g = TestCameraStep.g = genlev.load(TMP.name)
 
 
 def tearDownModule():
@@ -44,6 +44,49 @@ class TestOsmSteps(unittest.TestCase):
         s = self.steps()
         self.assertEqual(sorted(s), ['coast', 'populated', 'turns'])
         self.assertIn('/B/osm/house_cells.json', s['populated']['products'])
+
+
+class TestCameraStep(unittest.TestCase):
+    """The cameras step reruns on a changed extract and is reused on the same one."""
+
+    def write_pbf(self, path, lon):
+        import osmium
+        if os.path.exists(path):
+            os.remove(path)
+        w = osmium.SimpleWriter(path)
+        w.add_node(osmium.osm.mutable.Node(id=1, location=(lon, 64.1), tags={'highway': 'speed_camera',
+                                                                            'maxspeed': '50'}))
+        w.close()
+
+    def run_step(self, B, box=(-22, 63, -13, 67)):
+        s = self.g.camera_step(B, [box])
+        self.g.run_steps([s], B, True)
+        with open(s['products'][0]) as f:
+            import json
+            return s['ran'], [round(c['lon'], 4) for c in json.load(f)]
+
+    def test_reruns_on_a_new_extract_only(self):
+        try:
+            import osmium  # noqa: F401
+        except ImportError:
+            self.skipTest('needs osmium')
+        with tempfile.TemporaryDirectory() as B:
+            pbf = os.path.join(B, 'x.osm.pbf')
+            old = self.g.PBF
+            self.g.PBF = pbf
+            try:
+                self.write_pbf(pbf, -21.9)
+                self.assertEqual(self.run_step(B)[1], [-21.9])
+                ran, lons = self.run_step(B)
+                self.assertEqual(ran, 'reused')
+                self.write_pbf(pbf, -21.8)
+                ran, lons = self.run_step(B)
+                self.assertNotEqual(ran, 'reused')
+                self.assertEqual(lons, [-21.8])
+                self.assertNotEqual(self.run_step(B, (-21.85, 63, -13, 67))[0], 'reused', 'a new box reruns')
+                self.assertFalse(os.path.exists(self.g.tmp_name(os.path.join(B, 'osm', 'cameras.json'))))
+            finally:
+                self.g.PBF = old
 
 
 class TestCameraSources(unittest.TestCase):

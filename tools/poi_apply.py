@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Apply the cameras and the optional [dealer] to a generated BUILD_DIR, write them onto
-CARD.img and refresh DRSTR: every camera in the config's camera file (camera_write.py) and,
+CARD.img and refresh DRSTR: every camera the cards step extracted (camera_write.py) and,
 for a dealer, a road-tile icon (poi_badge.py), a building-scale icon (house_badge.py) and a
 POINT record anchored on ADDRE (point_add.py).
 
@@ -72,9 +72,21 @@ def run(argv):
     for name in road_tiles:
         if not dealer or name != dealer['road_tile']:
             shutil.copy(B + '/rd/%s.DAT' % name, cam_in + '/%s.DAT' % name)
-    cameras = camera_write.load_cameras(os.path.expanduser(config['data'].get('cameras', '')),
-                                        config['camera_speed_fallback'], config.get('cameras_required', False),
-                                        config.get('allow_missing_speed', False))
+    cameras = []
+    if config.get('cameras', True):
+        cam_file = os.path.join(B, 'osm', 'cameras.json')
+        if not os.path.exists(cam_file):
+            raise SystemExit('no %s: the cards step extracts the cameras' % cam_file)
+        with open(os.path.join(B, 'roads', 'roads.json')) as f:
+            roads = json.load(f)
+        cameras, filled = camera_write.load_cameras(cam_file, roads, config.get('speed_unit', 'km/h'))
+        for cid, how in filled.items():
+            print('camera %s: %d km/h, %s speed of %s %s (way %d, %.1f m)' % (
+                cid, how['kmh'], how['source'], how['hw'], how['name'] or '(no name)', how['way'], how['metres']))
+        print('cameras: %d, %d with a speed from their road, %d of those the class default' % (
+            len(cameras), len(filled), sum(1 for h in filled.values() if h['source'] == 'class default')))
+    else:
+        print('[build] cameras = false: no camera icons')
     report, missing = camera_write.write_cameras(cameras, cam_in, cam_out)
     assert not missing, 'camera(s) outside the built tiles: %r' % missing
     final_tiles = {}

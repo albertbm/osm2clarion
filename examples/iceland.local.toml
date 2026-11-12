@@ -9,9 +9,6 @@ pbf = "/path/to/iceland-latest.osm.pbf"
 # Þjóðskrá Íslands, in CSV; see docs/ADDRESS-IMPORT.md.
 addresses = "/path/to/Stadfangaskra.csv"
 postcodes = "/path/to/postnumeraskra.csv"
-# Optional. Speed cameras from tools/extract_cameras.py. Leave it out for no camera icons;
-# a path set here must exist.
-# cameras = "/path/to/cameras.json"
 
 # Optional, per unit. icode is the card the ICODE files are read from; the base card when
 # left out. consent_cmd runs on the finished image, {img} standing for its path, for a unit
@@ -41,11 +38,6 @@ postcodes = "/path/to/postnumeraskra.csv"
 # icon = "0x806c"
 # tile_l1 = [1, 0, 0, 0, 0, 0, 0]
 # tile_l2 = [2, 0, 0, 0, 0, 0, 0]
-
-# Optional. A speed for each camera whose OSM node has none, by camera id. A camera with
-# neither fails the build, unless [build] allow_missing_speed = true leaves it off the card.
-# [camera_speed_fallback]
-# "C1-street-a" = 60
 
 # Optional, for the single-street test build only (build_addr_area0.py without --area):
 # street: postcode, street: house number to anchor on (0 for the centroid), and the streets

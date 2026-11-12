@@ -189,7 +189,7 @@ def house_step(B, landuse, coast, city_buffer=HOUSE_CITY_BUFFER, landuse_buffer=
 def osm_paths(B):
     o = os.path.join(B, 'osm')
     return dict(turns=o + '/turns.json', coast=o + '/coast.json', populated=o + '/populated.json',
-                cells=o + '/house_cells.json')
+                cells=o + '/house_cells.json', cameras=o + '/cameras.json')
 
 
 def replace_cmd(tmp, dest):
@@ -231,6 +231,17 @@ def osm_steps(B, landuse=None, house=False, city_buffer=HOUSE_CITY_BUFFER, landu
                               replace_cmd(tmp_name(cj), cj)],
                         inputs=[PBF], tools=[t + '/house_encode.py'], products=[pj, cj], outputs={}))
     return out
+
+
+def camera_step(B, boxes):
+    """The speed cameras in the build's area boxes, which the POI step writes onto the road
+    tiles. No later map step reads them, so a rerun here forces none of those."""
+    c = osm_paths(B)['cameras']
+    box_args = [a for b in boxes for a in ('--bbox', box_text(b))]
+    return dict(name='cameras', cwd=OSM_ROOT,
+                cmds=[[sys.executable, OSM + '/extract_cameras.py', PBF, tmp_name(c)] + box_args,
+                      replace_cmd(tmp_name(c), c)],
+                inputs=[PBF], products=[c], outputs={})
 
 
 def icode_step(B, icode_base):
@@ -713,6 +724,10 @@ def main(argv):
     reuse = '--reuse' in argv
     pre = osm_steps(B, landuse, '--house' in argv, city_buffer, landuse_buffer)
     ran = run_steps(pre, B, reuse)
+    if CONFIG.get('cameras', True):
+        names = area.split(',') if area else list(AREAS)
+        pre.append(camera_step(B, [AREAS[n]['bbox'] for n in names]))
+        run_steps(pre[-1:], B, reuse)
     S = steps(B, coast or osm_paths(B)['coast'], icode_base, roads='--roads' in argv or bool(area), also=also,
               to=to, by=by, area=area, landuse=landuse, kinds=opt('--landuse-kinds'), buildings=opt('--buildings'),
               house='--house' in argv, coarse_graph='--coarse-graph' in argv,

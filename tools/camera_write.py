@@ -5,10 +5,9 @@ tiles' level-1 and level-2 background records. Any number of cameras, several pe
 
     camera_write.py CAMERAS.json TILES_DIR OUT_DIR [--levels 1,2]
 
-Each camera needs lat, lon and speed_limit_kmh (the record's speed field is mandatory;
-filling in a missing one, from the nearest road's own limit or otherwise, is the caller's
-job - this script does not guess). direction_bearing_deg may be null: the record then
-carries the factory's own undirected code, 64 ("both ways"),
+Each camera needs lat, lon and speed_limit_kmh, as the record's speed field is mandatory;
+load_cameras fills a missing one from the road the camera sits on. direction_bearing_deg
+may be null: the record then carries the factory's own undirected code, 64 ("both ways"),
 instead of a guessed heading. cam_id defaults to the camera's 1-based position in the list.
 
 TILES_DIR holds the built B*.DAT section-1 tiles (MAPAL001 naming); every file holding at
@@ -16,6 +15,7 @@ least one camera is rewritten into OUT_DIR under the same name, everything else 
 """
 import glob
 import json
+import math
 import os
 import struct
 import sys
@@ -24,6 +24,8 @@ import zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_tile
 import clarion_bg as cb
+import fa_encode
+import rd_encode
 
 ZWBITS = 13  # 8 KiB window, matching bg_encode.py
 CAMERA = 0x0050
@@ -103,30 +105,53 @@ def place_one(t, cam, level, cam_id):
     return dict(row=row, col=col, x=x, y=y, direction=direction, idx=s['idx'])
 
 
-def load_cameras(path, speed_fallback, required=False, allow_missing_speed=False):
-    """cameras.json with every speed filled in. OSM rarely tags a speed on the camera node,
-    and the record needs one, so speed_fallback gives it per camera id. A camera with neither
-    fails unless allow_missing_speed, which leaves it out. No file means no cameras, unless
-    the path was set on purpose (required)."""
-    if not os.path.exists(path):
-        if required:
-            raise SystemExit('no camera file at %s, which the local file names' % path)
-        print('no camera file at %s: the card gets no camera icons (extract_cameras.py makes one)' % path)
-        return []
+def _metres(lon, lat, a, b):
+    """Distance from a point to segment a-b, flat-earth around the point."""
+    kx, ky = math.cos(math.radians(lat)) * 111320, 110540
+    ax, ay, bx, by = (a[0] - lon) * kx, (a[1] - lat) * ky, (b[0] - lon) * kx, (b[1] - lat) * ky
+    dx, dy = bx - ax, by - ay
+    n = dx * dx + dy * dy
+    t = 0 if n == 0 else max(0, min(1, -(ax * dx + ay * dy) / n))
+    return math.hypot(ax + t * dx, ay + t * dy)
+
+
+def nearest_road(roads, lon, lat):
+    """(way, metres) of the built road nearest a point, or (None, None) for no roads."""
+    best = (None, None)
+    for w in roads:
+        pts = w['nodes']
+        for a, b in zip(pts, pts[1:]):
+            d = _metres(lon, lat, a, b)
+            if best[1] is None or d < best[1]:
+                best = (w, d)
+    return best
+
+
+def load_cameras(path, roads, unit='km/h'):
+    """cameras.json with every speed filled in. OSM rarely tags a speed on the camera, so a
+    camera without one takes the speed of the built road it sits on, the same speed the road
+    links carry: the road's maxspeed, else its class default. Returns (cameras, {camera id:
+    how its speed was found}) for those filled in."""
     with open(path) as f:
         listed = json.load(f)
-    cams = []
+    filled, boxes = {}, None
     for c in listed:
-        if c['speed_limit_kmh'] is None:
-            if c['id'] not in speed_fallback:
-                if not allow_missing_speed:
-                    raise SystemExit('camera %s has no speed and no camera_speed_fallback entry '
-                                     '(or set [build] allow_missing_speed)' % c['id'])
-                print('camera %s has no speed and no camera_speed_fallback entry: left out' % c['id'])
-                continue
-            c['speed_limit_kmh'] = speed_fallback[c['id']]
-        cams.append(c)
-    return cams
+        if c['speed_limit_kmh'] is not None:
+            continue
+        if boxes is None:
+            boxes = [(min(p[0] for p in w['nodes']), min(p[1] for p in w['nodes']),
+                      max(p[0] for p in w['nodes']), max(p[1] for p in w['nodes'])) for w in roads]
+        # only ways whose box comes within about 1 km; all of them when none does
+        near = [w for w, (x0, y0, x1, y1) in zip(roads, boxes)
+                if x0 - 0.02 <= c['lon'] <= x1 + 0.02 and y0 - 0.01 <= c['lat'] <= y1 + 0.01] or roads
+        w, d = nearest_road(near, c['lon'], c['lat'])
+        if w is None:
+            raise SystemExit('camera %s has no speed and the build has no roads' % c['id'])
+        c['speed_limit_kmh'] = rd_encode.speed_of(w['hw'], w.get('maxspeed'), unit)
+        posted = fa_encode.parse_speed(w.get('maxspeed'), unit) is not None
+        filled[c['id']] = dict(way=w['id'], name=w.get('name'), hw=w['hw'], metres=round(d, 1),
+                               kmh=c['speed_limit_kmh'], source='posted' if posted else 'class default')
+    return listed, filled
 
 
 def write_cameras(cams, tiledir, outdir, levels=(1, 2)):
