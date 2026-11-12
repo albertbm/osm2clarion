@@ -15,10 +15,11 @@ picks the chain:
             CARDS/builds/<prefix>-<number>-<unit>-<slug>.img; the unit and slug are read from
             that name, and CARDS is the directory two levels up.
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
-            rebuilt from OSM. --base is the card image, only read.
+            rebuilt from OSM. --base is the card image, only read. The factory step clears
+            the work dir's copies of an earlier base; later steps refuse to run on them.
 
-The card is written as OUT.partial, with its manifest as MANIFEST.partial, and both are renamed
-and the cards log row written only once the check step passes. A run that starts the card again
+The card is written as OUT.partial (in generate mode with its manifest as MANIFEST.partial),
+and renamed, with the cards log row, only once the check step passes. A run that starts the card again
 removes a .partial left by an earlier run and says so; a finished OUT is never overwritten.
 
 --work holds everything generated (default build/<name of OUT>). The profile's `local` file, or
@@ -26,7 +27,7 @@ removes a .partial left by an earlier run and says so; a finished OUT is never o
 machine. Each step prints the command it runs, so a step can be repeated by hand. --list names
 the steps, --only runs one and --from resumes at one.
 """
-import glob, json, os, re, shlex, shutil, subprocess, sys
+import glob, hashlib, json, os, re, shlex, shutil, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 TOOLS = os.path.join(HERE, 'tools')
@@ -35,7 +36,7 @@ import cardcopy
 import clarion_profile
 
 GENERATE_STEPS = ['prep', 'cards', 'poi', 'icons', 'addr', 'consent', 'check']
-AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'master', 'card']
+AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'master', 'card', 'check']
 
 
 def run(*args, env=None):
@@ -150,9 +151,31 @@ def area_steps(P, prof, base, out, work, area, osm):
             raise SystemExit('no OSM extract: pass --osm FILE.osm.pbf')
         return path
 
+    base_id = j('factory', '.base')
+
+    def base_key():
+        st = os.stat(base)
+        return '%s %d %d' % (base, st.st_size, st.st_mtime_ns)
+
+    def same_base():
+        """Steps after factory read its copies, which must be of this --base."""
+        try:
+            with open(base_id) as f:
+                ok = f.read() == base_key()
+        except OSError:
+            ok = False
+        if not ok:
+            raise SystemExit('%s holds no copy of %s; run from the factory step' % (fac, base))
+
     def factory():
-        os.makedirs(outmap, exist_ok=True)
+        # files of an earlier base must not reach this card
+        for d in (fac, outmap):
+            if os.path.isdir(d):
+                shutil.rmtree(d)
+        os.makedirs(outmap)
         card_files(base, fac)
+        with open(base_id, 'w') as f:
+            f.write(base_key())
 
     def osm_step():
         pbf = need_osm()
@@ -161,6 +184,7 @@ def area_steps(P, prof, base, out, work, area, osm):
             '--turns', turns_all, turns, '--ramp-names')
 
     def strip():
+        same_base()
         pairs = []
         for n in sorted(os.listdir(fac)):
             if not n.endswith('.DAT') or n == 'MMAIN001.DAT': continue
@@ -190,24 +214,58 @@ def area_steps(P, prof, base, out, work, area, osm):
         return [os.path.join(outmap, n) for n in names if n != cell + '.DAT'] + [os.path.join(outmap, cell + '.DAT')]
 
     def master():
+        same_base()
         run(tool('make_mmain.py'), '--profile', prof, os.path.join(fac, 'MMAIN001.DAT'), mmain, *tiles(),
             '--lev', lev_out)
+
+    part = out + '.partial'
+    written = lambda: [('MAPAL001/' + os.path.basename(t), t) for t in tiles()] + \
+        [('MAPAL001/LEV3456R.DAT', lev_out), ('MMAIN001.DAT', mmain)]
 
     def card_step():
         if not os.path.isfile(base):
             raise SystemExit('--base must be a card image')
+        if os.path.exists(out):
+            raise SystemExit('%s already exists' % out)
+        if os.path.exists(part):
+            os.remove(part)
+            print('removed a stale file from an earlier run:', part)
+        same_base()
         # a fixed write time, so two runs stamp the image alike; set SOURCE_DATE_EPOCH to override
         os.environ.setdefault('SOURCE_DATE_EPOCH', '946684800')
-        cardcopy.clone(base, out)
-        ts = tiles()
-        run(tool('fatwrite.py'), out, '--write',
-            *['MAPAL001:%s=%s' % (os.path.basename(t), t) for t in ts],
-            'MAPAL001:LEV3456R.DAT=' + lev_out, ':MMAIN001.DAT=' + mmain)
-        run(tool('drstr_refresh.py'), out, *['MAPAL001:' + os.path.basename(t) for t in ts],
+        cardcopy.clone(base, part)
+        run(tool('fatwrite.py'), part, '--write', *['%s=%s' % (p.replace('/', ':') if '/' in p else ':' + p, f)
+                                                    for p, f in written()])
+        run(tool('drstr_refresh.py'), part, *['MAPAL001:' + os.path.basename(t) for t in tiles()],
             'MAPAL001:LEV3456R.DAT')
 
+    def check():
+        """The card is renamed to OUT only when every file reads back as built and the index,
+        MMAIN and DATA VERSION agree."""
+        import card_verify, fatread
+        if not os.path.exists(part):
+            raise SystemExit('no card in progress (%s); run from the card step' % part)
+        want = {p: cardcopy.sha256(f) for p, f in written()}
+        with fatread.Fat32(part) as fs:
+            got = {p.strip('/'): hashlib.sha256(fs.f.read_clusters(c, sz)).hexdigest()
+                   for p, sz, c, _ in fs.walk() if sz is not None and p.strip('/') in want}
+        bad = sorted(p for p in want if got.get(p) != want[p])
+        if bad:
+            raise SystemExit('check failed: %s do not read back as built' % ', '.join(bad))
+        print('%d written files read back as built' % len(want))
+        versions = set()
+        for n in os.listdir(fac):
+            with open(os.path.join(fac, n), 'rb') as f:
+                versions |= {m.group(1).decode('utf-16-be') for m in card_verify.STAMP.finditer(f.read())}
+        if len(versions) != 1:
+            raise SystemExit('check failed: the base card carries %d DATA VERSIONs: %s'
+                             % (len(versions), ', '.join(sorted(versions))))
+        run(tool('card_verify.py'), '--card', part, '--version', versions.pop(), '--skip', 'cmp_lst')
+        os.replace(part, out)
+        print('checked; card renamed to', out)
+
     return [('factory', factory), ('osm', osm_step), ('strip', strip), ('roads', roads_step),
-            ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step)]
+            ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step), ('check', check)]
 
 
 def interpreter(name):

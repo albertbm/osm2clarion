@@ -42,6 +42,11 @@ def drstr_check(drs, files):
     recs = {r['name']: r for r in dir_records(drs)}
     bad = []
     for d in SCOPE:
+        if d not in recs and not any(p.startswith(d + '/') for p in files):
+            continue        # a QY7 card has no HOUSE001
+        if d not in recs:
+            bad.append('%s is on the card but not in the index' % d)
+            continue
         listed = {n: sz for n, typ, sz in children(drs, recs[d]) if typ == 0}
         have = {}
         for p, b in files.items():

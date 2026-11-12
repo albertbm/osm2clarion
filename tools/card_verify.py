@@ -3,7 +3,7 @@
 """Check a finished card as a whole: what card_check's road rules do not look at.
 
     card_verify.py --card IMG --version VV/VV/VV/VV [--towns] [--manifest M.json]
-                   [--allow-new PATTERN ...]
+                   [--allow-new PATTERN ...] [--skip NAME ...]
 
 version   every DATA VERSION stamp in MAPAL001, REFER001, REFER002 and HOUSE001 is the unit's,
           and every map tile and HOUSE001 file carries one
@@ -15,6 +15,8 @@ towns     (--towns) every ADDRE street name's town index points at the card ICOD
 inventory (--manifest) every file the cards step recorded is still on the card; files it did
           not record fail unless --allow-new matches them. The final per-file hashes are
           written to the manifest as `final_files`.
+
+--skip leaves checks out: area mode skips cmp_lst, since it keeps the stock card's CMP.LST.
 
 Exit status 0 only if every check passes.
 """
@@ -158,10 +160,13 @@ def check_inventory(files, manifest, allow):
     return result('inventory', not notes, dict(files=len(files), gone=len(gone), new=len(new)), notes[:20])
 
 
-def verify(img, version, towns=False, manifest=None, allow=()):
+def verify(img, version, towns=False, manifest=None, allow=(), skip=()):
     files = card_files(img)
     plain = plain_files(files)
-    checks = [check_version(plain, version), check_index(files), check_cmp_lst(img, files), check_mmain(files)]
+    checks = [c() for name, c in (('version', lambda: check_version(plain, version)),
+                                  ('index', lambda: check_index(files)),
+                                  ('cmp_lst', lambda: check_cmp_lst(img, files)),
+                                  ('mmain', lambda: check_mmain(files))) if name not in skip]
     if towns:
         checks.append(check_towns(plain, register_pairs()))
     if manifest is not None:
@@ -176,12 +181,13 @@ def main(argv):
     ap.add_argument('--towns', action='store_true')
     ap.add_argument('--manifest')
     ap.add_argument('--allow-new', nargs='*', default=[])
+    ap.add_argument('--skip', nargs='*', default=[], choices=['version', 'index', 'cmp_lst', 'mmain'])
     a = ap.parse_args(argv)
     m = None
     if a.manifest:
         with open(a.manifest) as f:
             m = json.load(f)
-    checks, files = verify(a.card, a.version, a.towns, m, a.allow_new)
+    checks, files = verify(a.card, a.version, a.towns, m, a.allow_new, a.skip)
     print('== %s ==' % os.path.basename(a.card))
     for c in checks:
         print('[%s] %s  %s' % ('PASS' if c['passed'] else 'FAIL', c['name'],
