@@ -27,6 +27,22 @@ def config(local=None):
     return build.make_config(P, build.merge(LOCAL, local or {}), P.cells, '/cards/bases/base.img', None, '/work')
 
 
+class TestInterpreters(unittest.TestCase):
+    def test_a_bare_name_is_found_on_path(self):
+        self.assertTrue(os.path.isabs(build.interpreter('python3')))
+
+    def test_a_path_is_kept(self):
+        self.assertEqual(build.interpreter('/x/venv/bin/python3'), '/x/venv/bin/python3')
+
+    def test_an_unknown_name_is_refused(self):
+        with self.assertRaises(SystemExit):
+            build.interpreter('no-such-python-here')
+
+    def test_plain_steps_use_this_interpreter(self):
+        text = (ROOT / 'tools' / 'build_gen_lev.py').read_text(encoding='utf-8')
+        self.assertNotIn("['python3'", text)
+
+
 class TestConfig(unittest.TestCase):
     def test_profile_has_no_machine_paths(self):
         for name in ('iceland', 'finland'):

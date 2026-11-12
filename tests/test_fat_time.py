@@ -28,5 +28,23 @@ class FatTime(unittest.TestCase):
         self.assertEqual(fatwrite.fat_time(1577836800.0), fatwrite.fat_time(1577836800.0))
         self.assertNotEqual(fatwrite.fat_time(1577836800.0), fatwrite.fat_time(1577836800.0 + 86400))
 
+    def test_the_time_zone_does_not_matter(self):
+        os.environ['SOURCE_DATE_EPOCH'] = '946684800'      # 2000-01-01 00:00 UTC
+        old = os.environ.get('TZ')
+        try:
+            stamps = set()
+            for tz in ('UTC', 'Asia/Tokyo', 'America/New_York'):
+                os.environ['TZ'] = tz
+                time.tzset()
+                stamps.add(fatwrite.fat_time())
+            self.assertEqual(stamps, {(b'\x00\x00', b'\x21\x28')})
+        finally:
+            if old is None:
+                os.environ.pop('TZ', None)
+            else:
+                os.environ['TZ'] = old
+            time.tzset()
+
+
 if __name__ == '__main__':
     unittest.main()

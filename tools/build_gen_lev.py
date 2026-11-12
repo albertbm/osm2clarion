@@ -198,12 +198,12 @@ def road_steps(B, also, to=None, by=None, area=None):
     cmds = []
     for c in CELLS:
         dest = R + '/%s.DAT' % c if c not in sec4 else R + '/%s.nosec4.DAT' % c
-        cmds.append(['python3', t + '/rd_build.py', '--profile', PROFILE, '--simplify', '2',
+        cmds.append([sys.executable, t + '/rd_build.py', '--profile', PROFILE, '--simplify', '2',
                      '--l2-graph', '--upper-names', '--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
                      '--shape-index', R + '/%s.shapes.json' % c])
         if c in sec4:
-            cmds.append(['python3', t + '/sec4_write.py', dest, R + '/%s.DAT' % c, '--country', '352'])
-            cmds.append(['python3', t + '/shape_index.py', 'verify', R + '/%s.shapes.json' % c, R + '/%s.DAT' % c])
+            cmds.append([sys.executable, t + '/sec4_write.py', dest, R + '/%s.DAT' % c, '--country', '352'])
+            cmds.append([sys.executable, t + '/shape_index.py', 'verify', R + '/%s.shapes.json' % c, R + '/%s.DAT' % c])
     return [
         dict(name='roads', cwd=REPO, cmds=[sel + (['--also', also] if also else []) + (['--to', to] if to else [])
                                            + (['--by', by] if by else [])],
@@ -300,7 +300,7 @@ def icode_step(B, icode_base):
     addr = os.path.join(B, 'addr')
     i1, i2 = os.path.join(B, 'in', 'REFER001_ICODE001.DAT'), os.path.join(B, 'in', 'REFER002_ICODE001.DAT')
     return dict(name='icode', cwd=REPO,
-                cmd=['python3', HERE + '/addr/build_icode_clean.py', i1, i2, addr],
+                cmd=[sys.executable, HERE + '/addr/build_icode_clean.py', i1, i2, addr],
                 # the town rows come from the address register
                 inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
                                                                (icode_base, 'REFER002/ICODE001.DAT', i2)],
@@ -354,7 +354,7 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
              outputs={'MAPAL001/LEV3456R.DAT': ('file', B + '/LEV3456R.DAT')}),
         icode_step(B, icode_base),
         dict(name='addr', cwd=REPO,
-             cmd=['python3', HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
+             cmd=[sys.executable, HERE + '/addr/build_addr_area0.py', addr] + (['--shapes'] + shapes if shapes else [])
                  + (['--area', area] if area else []) + (['--only', ADDR_ONLY] if area and ADDR_ONLY else [])
                  + ['--addresses', ADDRESSES, '--postcodes', POSTCODES],
              inputs=[ADDRESSES, POSTCODES] + shapes, config=['addr'],

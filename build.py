@@ -207,6 +207,17 @@ def area_steps(P, prof, base, out, work, area, osm):
             ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step)]
 
 
+def interpreter(name):
+    """A path as given, or a bare name like python3 looked up on PATH."""
+    path = expand(name)
+    if os.sep in path:
+        return os.path.abspath(path)
+    found = shutil.which(path)
+    if not found:
+        raise SystemExit('poi_python %r is not on PATH' % name)
+    return found
+
+
 def consent_ok(code, output):
     """nnt exits 1 and says so for a card that carries the patch already; anything else
     but 0 is a failure."""
@@ -260,7 +271,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
     stage = args.get('stage') or os.path.join(work, 'stage')
     version = cfg['units'][unit]['version']
     conf = os.path.join(work, 'config', P.name + '.json')
-    poi_py = expand(cfg['poi_python'])
+    poi_py = interpreter(cfg['poi_python'])
     env = dict(os.environ, O2C_CONFIG=conf, CARDS_DIR=cards, OSM2CLARION=HERE,
                SOURCE_DATE_EPOCH=os.environ.get('SOURCE_DATE_EPOCH', '946684800'))
     py = sys.executable
