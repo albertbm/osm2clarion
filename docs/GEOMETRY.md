@@ -339,8 +339,11 @@ reads the count. The Azores and Svalbard need the same move as Iceland. See
 
 ## Tools
 
-All in `tools/`, Python 3. `shapely` is needed wherever geometry is built; `osmium` only by
-the two OSM readers.
+All in `tools/`, Python 3. `shapely` is needed wherever geometry is built, `osmium` by every
+tool that reads the OSM extract (`osm_roads`, `osm_turns`, `extract_coast`, `extract_landuse`,
+`extract_pois`, `extract_cameras`, `gen_roads_path`). `uv run` installs both at the versions in
+`uv.lock`. The table lists the format tools; the build chain that calls them is in
+[BUILD-STEPS.md](BUILD-STEPS.md).
 
 | tool | what it does |
 |---|---|
@@ -368,9 +371,6 @@ land parcels at the finer level, or accept the gap.
   w4/w5 and the extra words, and node flag 0x2000.
 - Section 4 (type 0x93) in large tiles.
 - Header words w3/w4 (`347a 2aef`) and the layer-4 group format `0002 0005`.
-- Whether the unit needs section 2, `LEV3456R.DAT` entries, or the address database to show
-  a tile at all.
 - The order the original writer lays out directories and blocks. The reader records the
   original order so that real tiles rebuild byte-identically; new tiles get table,
   directories, blocks per level. The unit follows addresses, so this should not matter.
-- House numbers and address search. Nothing in this chain writes the address database.

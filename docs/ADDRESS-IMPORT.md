@@ -1,10 +1,11 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Addresses: bring your own source
 
-`addre_io`, `zcode_io` and `icode_io` write an address database onto a card, but
-nothing here reads one in. The Iceland build gets its rows from the Icelandic
-national registry; a build for another country needs its own source, in the
-same flat shape.
+`addre_io`, `zcode_io` and `icode_io` write an address database onto a card. The one
+reader today is `tools/addr/addr_csv.py`, for Iceland's address register. Another
+country needs a reader that gives the same rows: a column mapping in `addr_csv.py` for
+a register like Iceland's, or a new reader. Nothing reads the flat shape below or OSM
+addresses yet; they describe what such a reader has to deliver.
 
 ## The shape
 
@@ -38,15 +39,21 @@ Iceland's own source is Staðfangaskrá, the national address registry (CSV,
 plus a `;`-delimited `postnumeraskra` file mapping postcodes to towns). The
 columns that matter: `HEITI_NF` (street, nominative case), `HUSNR` (house
 number), `BOKST` (letter), `POSTNR` (postcode), `SVFNR` (municipality code),
-`N_HNIT_WGS84` / `E_HNIT_WGS84` (lat/lon). The Icelandic-registry reader is a
-country-specific script and stays outside this repo; `addre_io.py` is the
-writer it feeds, turning a row into an `ADDRE`/`ZCODE` record.
+`N_HNIT_WGS84` / `E_HNIT_WGS84` (lat/lon). `tools/addr/addr_csv.py` reads it, and
+`tools/addr/build_addr_area0.py` turns the rows into `ADDRE`, `ZCODE` and `POINT`
+records through `addre_io.py`.
+
+HMS (Húsnæðis- og mannvirkjastofnun) publishes `Stadfangaskra.csv` as open data on
+fasteignaskra.is. The postcode list comes from Pósturinn (postur.is); save it as
+`;`-separated CSV, postcode in the first column and town in the second.
 
 A different country's registry will have different column names but the same
 shape: street, number, postcode, town or municipality, coordinates. Map those
 columns to the row above and the writers don't care where the data came from.
 
 ## Source 2: OSM
+
+No tool reads OSM addresses yet. This is how a reader would get them.
 
 Addresses tagged `addr:street` + `addr:housenumber` on nodes, ways or
 relations give the same rows without a national source. An Overpass query for

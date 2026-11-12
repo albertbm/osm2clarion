@@ -1,5 +1,8 @@
 # Building a region onto a base card: what the unit accepted
 
+This is the history of how the format was worked out, in the order it happened. The tools it
+names are the ones used then; today's build runs the chain in [BUILD-STEPS.md](BUILD-STEPS.md).
+
 A measured record of adding one region to a shipped European database and getting a Clarion QY8x
 head unit to draw it. Every result below came off a real unit, most of them a 2017 one, over ten
 builds between 23 and 26 September 2026. The failures pinned down more of the container's rules than

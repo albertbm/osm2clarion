@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Build the generated map files, put them on a fresh copy of the unit's base card, and write
-the card's manifest.
-
-Each step runs its command into BUILD_DIR. The card then gets the generated LEV3456R.DAT (old clusters zeroed),
-its DRSTR size, MMAIN's level counts summed from every MAPAL001 header, and a CMP.LST made
-from the card's own .cmp files. The tiles and address files already on the card are not
-rewritten: the manifest checks them against what their steps produce now.
-
-The manifest covers every file in MAPAL001, REFER001, REFER002, HOUSE001 and the root index files.
-Each is one of:
-
-    generated   byte-identical to a step's output; the step's command and inputs are listed
-    edited      the base card's file with named fields rewritten by this build
-    leftover    no step produced it
+the card's manifest. build.py runs it; docs/BUILD-STEPS.md explains every option.
 
     build_gen_lev.py --config PATH --unit NAME --slug NAME BUILD_DIR [--base IMG] [--what TEXT]
                      [--coast PATH] [--reuse] [--number N] [--partial]
@@ -22,56 +10,6 @@ Each is one of:
                      [--write lev|tiles,addr] [--addr-only NAME,NAME]
                      [--landuse lon0,lat0,lon1,lat1 [--landuse-kinds forest,water,...] [--buildings LAYER:CLASS]
                       [--house]]
-
---config names the build's config file (unit table, areas, cells, data paths, card naming -
-build.py writes it from the profile). Every build starts from a fresh cp -c of --base, which defaults to
-the unit's base card (config's card_naming.base_pattern). --unit picks the DATA VERSION every
-generated file carries (config units.*.version; the firmware checks it against the NAND) and
-the card build_icode_clean.py reads its two ICODE001.DAT files from (config units.*.icode). The
-card is written under CARDS/builds following card_naming.build_pattern, with its manifest
-beside it, one past the highest existing number, or the same number when the newest build is
-this slug on another unit (twins share a number), or the number --number gives. A line goes to the top of the cards log
-(config cards_log), status untested; --what is its "what changed" text (default: the slug).
---reuse skips steps whose outputs exist. --partial writes the card and its manifest with a
-.partial suffix and leaves out the log line; build.py renames them once its check step passes.
-
---map-from CARD writes the map, address and POI files of a finished card onto this unit's base, as
-they are: nothing is generated, restamped or recompressed, so the source must carry this unit's
-DATA VERSION (a card for another version is refused; --restamp-from makes that one), and the ICODE
-files that number its towns go with them. The target keeps its own app and
-settings and gets a refreshed index. This is "build once, write per unit"; BUILD_DIR is only a
-place for the config.
-
---restamp-from CARD does the same with this unit's DATA VERSION: every stamp in those files is
-rewritten (packed files are unpacked, stamped and repacked) and the icode step runs on this
-unit's ICODE input. That is all that differs between the units' full builds, so one full build
-gives the others' cards.
-
---roads adds the road steps: gen_roads_path.py picks the ways (--also adds whole streets,
---to a route to each named street and the street itself, --by how that route is weighed),
-rd_build.py writes them into step 1's tiles, names in upper case, with a shape index per tile,
-sec4_write.py gives the config's sec4_cells their section 4, and the address step points its
-streets at the index. The card's tiles are then the rd step's, not bg_tiles'. --write names
-what assemble puts on the card (default lev); the rest is only checked against the card.
-
---area builds named areas instead of a path: every drivable public road in their admin_level 6
-relations (config areas) into the areas' road cells, all given section 4; coarse roads at
-levels 3 to 5 in LEV3456R.DAT; and every address of those municipalities out of config's
-address CSV (config data.addresses/postcodes, addr_csv.py).
---addr-only NAME,NAME keeps only those streets in ADDRE (towns and postcodes stay whole).
-
---landuse adds a step that cuts OSM land use (forest, park, lakes; extract_landuse.py) to the
-box, and step 1 draws it into the tiles under the roads. --landuse capital names that area's
-box; --landuse area uses the union selected by --area.
---landuse-kinds narrows the kinds.
---buildings LAYER:CLASS adds OSM building footprints in that section-1 layer and class (a trial:
-no EUR class for buildings is known).
---house writes the landuse box as HOUSE001 files, the level-0 map the unit draws at its
-building-scale zoom: merged building blocks, green areas, water and the sea, and buffered road
-polygons (house_encode.py); per-file counts land in house/stats.json.
-Only cells inside a populated area are written (a place node buffered --house-city-buffer
-metres, default 400, or a residential/commercial/industrial/retail landuse polygon buffered
---house-landuse-buffer metres, default 100). Off by default.
 """
 import fnmatch
 import hashlib
@@ -112,7 +50,7 @@ from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
 _CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
 CONFIG = json.load(open(_CONFIG_FILE))
-CARDS = os.environ.get('CARDS_DIR', os.path.expanduser('~/cards'))  # override for scratch test builds
+CARDS = os.environ.get('CARDS_DIR', os.path.join(OSM_ROOT, 'cards'))   # build.py sets it from --out
 CELLS = CONFIG['cells']
 VERSION = next(iter(CONFIG['units'].values()))['version']
 UNITS = {u: dict(version=c['version'],
