@@ -482,6 +482,9 @@ def main():
         raise SystemExit('profile %s sets no [build] mode (generate or area)' % P.name)
     names = GENERATE_STEPS if mode == 'generate' else AREA_STEPS
     if '--list' in argv:
+        short = [k for k in ('map-from', 'restamp-from') if k in args]
+        if short and mode == 'generate':
+            names = ['prep', short[0].split('-')[0], 'consent', 'check']
         print('\n'.join(names))
         return
     if argv or 'base' not in args or 'out' not in args:
