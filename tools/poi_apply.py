@@ -46,12 +46,12 @@ def pos_arg(t):
 
 def run(argv):
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('--config', required=False, help='build config (default: $O2C_CONFIG or $ICELAND_CONFIG)')
+    ap.add_argument('--config', required=False, help='build config (default: $O2C_CONFIG)')
     ap.add_argument('build_dir')
     ap.add_argument('card')
     ap.add_argument('out_dir')
     a = ap.parse_args(argv)
-    cfg_path = a.config or os.environ.get('O2C_CONFIG') or os.environ.get('ICELAND_CONFIG')
+    cfg_path = a.config or os.environ.get('O2C_CONFIG')
     if not cfg_path:
         raise SystemExit('poi_apply.py needs --config PATH (or $O2C_CONFIG)')
     config = json.load(open(os.path.expanduser(cfg_path)))

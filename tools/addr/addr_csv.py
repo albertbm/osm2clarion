@@ -13,9 +13,9 @@ from pathlib import Path
 
 
 def _config():
-    cfg_path = os.environ.get('O2C_CONFIG') or os.environ.get('ICELAND_CONFIG')
+    cfg_path = os.environ.get('O2C_CONFIG')
     if not cfg_path:
-        raise SystemExit('addr_csv needs O2C_CONFIG (or ICELAND_CONFIG) set to a build config')
+        raise SystemExit('addr_csv needs O2C_CONFIG set to a build config')
     return json.load(open(cfg_path))
 
 

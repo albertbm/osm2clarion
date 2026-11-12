@@ -465,8 +465,8 @@ def main(workdir, args=None):
 
 def parser():
     p = argparse.ArgumentParser(description='Build a POI/house-range card image from a base card.')
-    p.add_argument('--config', default=os.environ.get('O2C_CONFIG') or os.environ.get('ICELAND_CONFIG'),
-                   metavar='PATH', help='build config (default: $O2C_CONFIG or $ICELAND_CONFIG)')
+    p.add_argument('--config', default=os.environ.get('O2C_CONFIG'),
+                   metavar='PATH', help='build config (default: $O2C_CONFIG)')
     p.add_argument('--osm2clarion', default=os.path.dirname(CARD_TOOLS),
                    metavar='DIR', help='osm2clarion checkout (default: this checkout)')
     p.add_argument('--python', metavar='PATH', help='Python interpreter with osmium (default: this interpreter)')

@@ -93,7 +93,7 @@ def _config_path():
     argv = sys.argv[1:]
     if '--config' in argv:
         return argv[argv.index('--config') + 1]
-    path = os.environ.get('O2C_CONFIG') or os.environ.get('ICELAND_CONFIG')
+    path = os.environ.get('O2C_CONFIG')
     if not path:
         raise SystemExit('build_gen_lev.py needs --config PATH (or $O2C_CONFIG)')
     return path
