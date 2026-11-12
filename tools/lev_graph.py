@@ -260,7 +260,9 @@ def encode_level(child, records, level, origin, country, occurrences, hierarchy=
         nodes = R['nodes']
         links = [(R['pos'][l['a']], R['pos'][l['b']], l['length']) for l in R['links']]
         classes = [l['cls'] for l in R['links']]; speeds = [l['speed'] for l in R['links']]
-        dirs = [l['direction'] for l in R['links']]; w4 = [l.get('w4', 0) for l in R['links']]
+        dirs = [l['direction'] for l in R['links']]
+        # bits 1-2 count the levels above that have the link: level 5 for a level-4 link of its classes
+        w4 = [l.get('w4', 0) & ~0x6 | (0x2 if level == 4 and l['cls'] in FACTORY_CLASSES[5] else 0) for l in R['links']]
         counts = collections.Counter(); ids = []
         for cls in classes:
             counts[cls] += 1; ids.append(counts[cls])

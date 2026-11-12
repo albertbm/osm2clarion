@@ -251,6 +251,8 @@ class TestGuidanceWords(unittest.TestCase):
         L = [link(0, 1, 0), link(1, 2, 0), link(2, 3, 0), link(3, 4, 0, 1), link(2, 9, 1)]
         runs = rd_build.coarse_runs({'p': dict(links=L)})['p']
         self.assertEqual(runs, [0, 0, 2, 3, 4], 'a new run past the junction at node 2 and where the one-way sense changes')
+        self.assertEqual(rd_build.levels_above(L[:2], 2, None), [2, 2], 'a primary link is at levels 4 and 5 too')
+        self.assertEqual(rd_build.levels_above(L[:2], 1, [7, None]), [3, 0], 'at level 1 only under a level-2 link')
         loop = [link(7, 1, 0), link(1, 2, 0), link(2, 3, 0), link(3, 1, 0)]
         self.assertEqual(rd_build.coarse_runs({'p': dict(links=loop)})['p'], [0, 1, 1, 3], 'a loop is not closed inside one run')
 

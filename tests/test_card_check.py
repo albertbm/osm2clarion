@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 14)
+        self.assertEqual(len(checks), 15)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -187,6 +187,18 @@ class TestTrafficShapes(unittest.TestCase):
         r = card_check.check_traffic_shapes(self.record(1))
         self.assertFalse(r['passed'])
         self.assertEqual((r['counts']['main set'], r['counts']['main']), (1, 3))
+
+
+class TestHierarchyCodes(unittest.TestCase):
+    def test_the_w4_code_is_the_word_count(self):
+        import fa_encode
+        nodes = [(100, 100), (300, 300)]
+        plain, _ = fa_encode.build_record(1, 96, 898, 7, 9, nodes, [[(1, 0, 1, [])]], hws=['primary'], country=352,
+                                          uppers=[[0x6000, 0x2007]])
+        def L1(w4): return {(0, 0): dict(nodes=[node(entries=[entry(id=1, cls=0x0494, w4=w4)])])}
+        self.assertTrue(card_check.check_hierarchy_codes(L1(0x4), {(0, 0): plain})['passed'])
+        self.assertTrue(card_check.check_hierarchy_codes(L1(0x7004), {(0, 0): plain})['passed'], 'ring bits aside')
+        self.assertFalse(card_check.check_hierarchy_codes(L1(0x2), {(0, 0): plain})['passed'])
 
 
 class TestResultShape(unittest.TestCase):

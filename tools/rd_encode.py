@@ -183,7 +183,7 @@ def mirror_cell(cell, side):
 def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=True, classes=None,
                        speeds=None, regs=None, country=None, dirs=None, ids=None, oneway_regs=True,
                        l2_twin=None, class_codes=None, node_flags=None, link_w4=None, l1_pair=None, l1_next=None,
-                       integrated=None):
+                       integrated=None, tops=None):
     """build_record with parcel-edge connections: edges = {node index: (side bits, twin index,
     twin's L1 child index or None)}. Level 1 ships zlib; level 2 raw, as two parts, the second a
     per-node connection table.
@@ -192,7 +192,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     L1 twin, as the loader's child-cell table wants it (table[block.w2 & 0x3fff] = block).
     l1_next: [(from a, from b)] aligned with links, level 2 only: the L1 node next along the
     link from each end's L1 twin; the descent (0x33aabc) looks that index up among the twin's
-    L1 entries and dereferences NULL when it is not one of them."""
+    L1 entries and dereferences NULL when it is not one of them.
+    tops: per link, the length word's bits 14-15 where the caller knows them, else None."""
     default = 0x0898 if level == 1 else 0x0797
     cls_of = ([class_word(c) for c in class_codes] if class_codes is not None else
               [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
@@ -211,6 +212,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         # L2 link's length-top code (b bits 14-15), same chains, same count.
         integ = bool(integrated[k]) if integrated else False
         a, bw = cost_words(length, speeds[k] if speeds else DEFAULT_SPEED_KMH, level == 1 and not integ,
+                           tops[k] if tops and tops[k] is not None else
                            L2_LENGTH_TOP.get(cls_of[k] & 0xf, 0) if level == 2 or integ else 0)
         low = cls_of[k] & 0xff
         ow = oneway_bits(dirs[k] if dirs else 0)

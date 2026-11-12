@@ -494,6 +494,12 @@ def follow_upper(parcels, upper, against):
 
 UPPER_REACH = 10    # metres a level-1 link's middle may sit outside its level-2 link's stretch
 
+def levels_above(links, level, up):
+    """Per link, how many upper-link words its shape carries with --coarse-words: the levels
+    above that have the link."""
+    return [0 if level == 1 and (not up or up[k] is None) else
+            len(fa_encode.coarse_words(fa_encode.layer_class(l[5], 2)[1])) + (level == 1) for k, l in enumerate(links)]
+
 def coarse_runs(parcels):
     """Per level-2 parcel, a number per link that changes where the level-4 graph can keep a
     node: a junction, a chain's end, a change of one-way sense, a loop closing on itself. A
@@ -738,8 +744,15 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         if level == 1 and l2_hw is not None:
             integrated = [l[5] in l2_hw for l in P['links']]
             link_w4 = [w | (0x2 if g else 0) for w, g in zip(link_w4, integrated)]
+        up = upper.get(pc) if upper else None
+        tops = None
+        if coarse:
+            # w4 bits 1-2 count the levels above; the length word's top bits name the highest (0 = level 5, 1 = level 4)
+            above = levels_above(P['links'], level, up); most = 3 if level == 1 else 2
+            link_w4 = [w if not n else w & ~0x6 | n << 1 for w, n in zip(link_w4, above)]
+            tops = [0 if n == most else 1 if n == most - 1 else None for n in above]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
-                                               integrated=integrated,
+                                               integrated=integrated, tops=tops,
                                                classes=[l[5] for l in P['links']],
                                                speeds=[rd_encode.speed_of(l[5], l[7], SPEED_UNIT) for l in P['links']],
                                                regs=(regs or {}).get(pc), country=COUNTRY,
@@ -748,7 +761,6 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                                l1_next=l1_next)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
-        up = upper.get(pc) if upper else None
         groups = link_groups(P['links'], chain, up)
         chains = chains_of(P['links'], idx, chain, ids, groups)
         L = P['links']

@@ -721,6 +721,27 @@ def check_traffic_shapes(SH1, none=0.01, some=0.4, streets=0.02):
                                              % (st['main set'], st['main'], 100 * none, 100 * some, st['street set'], st['street'], 100 * streets)])
 
 
+def check_hierarchy_codes(L1, SH1):
+    """Bits 1-2 of a level-1 link's w4 count the levels above that have the link: the number
+    of upper-link words in its shape header. Factory B50R068R: 2,192,458 of 2,192,458 entries."""
+    words = {}
+    for pc, w, shapes in road_shapes(SH1):
+        for S in shapes:
+            for lid in S['links']:
+                words[pc, S['cls'], lid & 0x1fff] = w[S['at']] >> 13
+    st = collections.Counter()
+    for pc, a in L1.items():
+        for nd in a['nodes']:
+            for e in nd['entries']:
+                n = words.get((pc, e['cls'] & 0xf, e['id'] & 0x1fff))
+                if e['cls'] & 0x8000 or n is None:
+                    continue
+                st['entries'] += 1
+                st['code is not the word count'] += (e['w4'] >> 1 & 3) != n
+    return result('hierarchy_codes', st['code is not the word count'] <= 0.005 * st['entries'], st,
+                  ['link entries whose w4 code is not their shape\'s word count: %d (factory 0, pass at 0.5%%)' % st['code is not the word count']])
+
+
 def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
     """A level-1 shape names its level-5, level-4 and level-2 links, highest first, each
     level-4 link is named from below, and the shapes naming a coarse link run its way."""
@@ -785,6 +806,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None):
     out.append(check_l2_nodes_on_l1(L1, L2))
     out.append(check_traffic_shapes(SH1))
     out.append(check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin))
+    out.append(check_hierarchy_codes(L1, SH1))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     return out
