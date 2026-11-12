@@ -341,7 +341,7 @@ def build_house_ranges(workdir, args):
     cmd = [VENV_PY, build_script, addr_dir, '--shapes'] + args.shapes + [
         '--area', args.area, '--house-ranges', args.house_ranges]
     if args.area != 'capital':
-        print('warning: only ADDRE001 and ZCODE001 are replaced; POINT001 remains from the base card')
+        print('warning: only ADDRE001 and ZCODE001 are replaced; POINT001 stays as it is on --base')
     if not args.all_streets and args.area == 'capital':
         if not ADDR_ONLY:
             raise SystemExit('without --all-streets this needs [poicap] addr_only_default')

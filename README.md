@@ -123,11 +123,10 @@ for every `[areas.NAME]` table.
 3. Copy [examples/iceland.local.toml](examples/iceland.local.toml) to `local/iceland.toml`,
    or anywhere and pass `--local`, and fill in the three paths in `[data]`.
 4. Build. `--out` must be `CARDS/builds/IS-NNN-UNIT-SLUG.img`: the unit (`ZE0`, `ZE1` or
-   `ME0`) and the slug come from the name, `CARDS` is two directories up, and the cards log
-   there (`CARDS/CARDS.md`) gets a row once the card passes its check.
+   `ME0`) and the slug come from the name, `CARDS` is two directories up (made when missing),
+   and the cards log there (`CARDS/CARDS.md`) gets a row once the card passes its check.
 
 ```
-mkdir -p cards/builds
 uv run build.py --profile iceland --base IS-000-ZE1-base.img \
     --out cards/builds/IS-001-ZE1-iceland.img --work work/ZE1
 ```
