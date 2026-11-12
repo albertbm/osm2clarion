@@ -30,11 +30,45 @@ def two_records(fmt, level=2):
     return clarion_format.slot_body(2, dict(fmt.levels[2])[level]) == 512
 
 
+def l2_geo(pc, x, y):
+    return pc[1] / 8 - 924 + x / 16384, pc[0] / 12 + y / 24576
+
+
+def l2_drawn(tile):
+    """{(parcel, class, link id): (points, route number)} of a tile's level-2 road shapes, the
+    points as (lon, lat) in drawn order."""
+    import fa_encode
+    shapes, names, out = {}, {}, {}
+    for r in tile.records(section=1, level=2):
+        pl = r.plain()
+        if len(pl) < 44: continue
+        w = struct.unpack_from('>22H', pl)
+        if w[2] == 0x00fa: shapes[w[0], w[1]] = pl
+        elif w[11] != 0xffff: names[w[0], w[1]] = pl[4 * w[11]:4 * (w[11] + w[12])]
+    for code, pl in shapes.items():
+        pc = clarion_bg.parcel_rowcol(2, *code)
+        w = struct.unpack('>%dH' % (len(pl) // 2), pl)
+        sec = names.get(code)
+        for S in fa_encode.parse_record(pl, 2)[2]:
+            ref = None
+            if sec and S['name'] != 0xffff:
+                o = 2 * S['name']; n = struct.unpack_from('>H', sec, o + 8)[0]
+                text = sec[o + 10:o + 10 + n].rstrip(b'\0').decode(tile.fmt.codec, 'replace')
+                ref = dict(part.split('=', 1) for part in text.split(';') if '=' in part).get('2')
+            run = []
+            for at, (kind, lid) in sorted(S['points'].items()):
+                run.append(l2_geo(pc, w[at] & 0x7ff, w[at + 1] & 0x7ff))
+                if kind == 'end':
+                    out[pc, S['cls'], lid & 0x1fff] = (run, ref); run = run[-1:]
+    return out
+
+
 def emitted_l2_layer(paths):
     """Read the exact L2 nodes, indexes and link metadata emitted in the road tiles."""
-    records = {}
+    records = {}; drawn = {}
     for path in paths:
         with TileScan(path) as tile:
+            drawn.update(l2_drawn(tile))
             two = two_records(tile.fmt)
             for rr in tile.records(section=2, level=2):
                 if two and rr.k % 2: continue   # part B
@@ -71,9 +105,12 @@ def emitted_l2_layer(paths):
             bits = ei['w5'] & 0xc000, ej['w5'] & 0xc000
             direction = 1 if bits == (0x4000, 0x8000) else -1 if bits == (0x8000, 0x4000) else 0
             assert ei['w4'] == ej['w4'], (pc, cls, lid, ei['w4'], ej['w4'])
+            ends = [l2_geo(pc, rec['nodes'][k]['x'], rec['nodes'][k]['y']) for k in (i, j)]
+            path, ref = drawn.get((pc, cls, lid), (ends, None))
+            if path[0] != ends[0] and path[-1] == ends[0]: path = path[::-1]
             links.append(dict(a=gids[i], b=gids[j], length=length, cls=cls, speed=speed,
                               direction=direction, w4=ei['w4'], parcel=pc, child=(pc, lid),
-                              next_a=gids[j], next_b=gids[i], pa=pc, pb=pc))
+                              next_a=gids[j], next_b=gids[i], pa=pc, pb=pc, path=path, ref=ref))
     return dict(nodes=nodes, links=links, level=2, records=records, paths=list(paths))
 
 
@@ -111,7 +148,7 @@ def geo_of(child, gid):
     pc, i = child['nodes'][gid][0]
     if child['level'] == 2:
         nd = child['records'][pc]['nodes'][i]
-        return pc[1] / 8 - 924 + nd['x'] / 16384, pc[0] / 12 + nd['y'] / 24576
+        return l2_geo(pc, nd['x'], nd['y'])
     return child['geo'][gid]
 
 
@@ -160,7 +197,11 @@ def collapse(per):
                 length = a['length'] + b['length']
                 speed = length / (a['length'] / a['speed'] + b['length'] / b['speed'])
                 if not encodable(length, speed): continue
+                # the drawn line runs x to y, as the merged link does
+                pa = a.get('path', [])[::1 if a['b'] == node else -1]
+                pb = b.get('path', [])[::1 if b['a'] == node else -1]
                 merged = dict(a=x, b=y, length=length, cls=a['cls'], speed=speed,
+                              path=pa + pb[1:], ref=(a if a['length'] >= b['length'] else b).get('ref'),
                               direction=0 if fwd and back else 1 if fwd else -1,
                               w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'],
                               next_a=a['next_a' if a['a'] == x else 'next_b'],
@@ -241,7 +282,34 @@ def encode_level(child, records, level, origin, country, occurrences, hierarchy=
         assert sorted(n['upper'] for n in pb['nodes']) == list(range(len(pa['nodes'])))
         # part B addresses part-A nodes by index, so the encoder must have kept our node order
         assert [(n['x'], n['y']) for n in pa['nodes']] == nodes, (level, parent)
-        R.update(a=a, b=b, edges=edges)
+        R.update(a=a, b=b, edges=edges, ids=ids)
+
+
+def link_shapes(level, records, origin):
+    """{parcel: [(class, route number, points, link id)]}, one item per graph link, for
+    lev_roads.graph_build. The unit draws a route link from the section-1 shape that carries
+    its class and id (Navi.exe 0x516604), so each link gets a shape of its own, from its
+    first node to the node whose entry carries the drawn-end flag."""
+    import lev_roads
+    out = {}
+    for parent, R in sorted(records.items()):
+        items = []
+        for link, lid in zip(R['links'], R['ids']):
+            start, end = R['nodes'][R['pos'][link['a']]], R['nodes'][R['pos'][link['b']]]
+            path = [list(p) for p in link.get('path', ())]; tol = lev_roads.TOLERANCE[level]
+            while True:
+                mid = rd_build.simplify(path, tol)[1:-1] if len(path) > 2 else []
+                pts = [start]
+                for p in mid:
+                    q = quant(level, parent, p, origin)
+                    if q != pts[-1]: pts.append(q)
+                if len(pts) > 1 and pts[-1] == end: pts.pop()
+                pts.append(end)
+                if len(pts) <= lev_roads.MAXPTS: break
+                tol *= 2
+            items.append((link['cls'], link.get('ref'), pts, lid))
+        out[parent] = items
+    return out
 
 
 def build_level(child, level, origin, country, allowed=None):
@@ -384,6 +452,7 @@ def build(ways, profile, l2_tiles, bbox=None):
     stats = {4: (len(r4), sum(len(r['nodes']) for r in r4.values()), sum(len(r['links']) for r in r4.values())),
              5: (len(r5), sum(len(r['nodes']) for r in r5.values()), sum(len(r['links']) for r in r5.values()))}
     stats['l2_patched'] = bbox is None
+    stats['shapes'] = {4: link_shapes(4, r4, origin), 5: link_shapes(5, r5, origin)}
     stats['l2_flags'] = collections.Counter(flags.values())
     return dirs, stats
 

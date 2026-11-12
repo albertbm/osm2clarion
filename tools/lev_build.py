@@ -156,7 +156,9 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None, graph_bbox=None
 
     graph_dirs = {}
     if ways:
-        for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country).items()):
+        # with a coarse graph, levels 4 and 5 take their shapes from its links, further down
+        only = (3,) if l2_tiles else (3, 4, 5)
+        for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country, only=only).items()):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
     # Off unless --l2-tile is given: the graph crashes the unit (cards 051-053) and rewrites the L2 tiles.
     if ways and l2_tiles:
@@ -166,6 +168,8 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None, graph_bbox=None
             print('level %d routing: %d records, %d nodes, %d links' % (level, nrec, nnodes, nlinks))
         print('level 2 hierarchy flags: %s' % ', '.join('%#x=%d' % x for x in sorted(graph_stats['l2_flags'].items())))
         print('level 2 tiles patched: %s' % graph_stats['l2_patched'])
+        for level, st in sorted(lev_roads.graph_build(levels, graph_stats['shapes'], P.country).items()):
+            print('level %d roads: %d records, %d shapes, %d points, %d route labels, %d links without a shape' % ((level,) + st))
 
     cells = arcmin(cy0, cy1, cx0, cx1)
     sec1 = dict(id=1, levels=[dict(level=l, typ=t, dirs=levels.get(l, [])) for l, t in tile_header.LEVELS[1]])

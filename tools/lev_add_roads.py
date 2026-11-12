@@ -32,11 +32,14 @@ def add(src, out, P, ways, l2_tiles=()):
         raise SystemExit('%s is %s, the profile says %s' % (src, lev['fmt'].name, P.fmt.name))
     rd_build.use_profile(P)
     levels = {L['level']: L['dirs'] for L in lev['sections'][0]['levels']}
-    stats = lev_roads.build(levels, ways, P.mesh_origin, P.country, keep=True)
+    stats = lev_roads.build(levels, ways, P.mesh_origin, P.country, keep=True,
+                            only=(3,) if l2_tiles else (3, 4, 5))
     if l2_tiles:
         import lev_build
         import lev_graph
         dirs, gstats = lev_graph.build(ways, P, list(l2_tiles))
+        # the route line is drawn from the shape of each graph link, so both come from one graph
+        stats.update({k: v[:4] for k, v in lev_roads.graph_build(levels, gstats['shapes'], P.country, keep=True).items()})
         for L in lev['sections'][1]['levels']:
             if L['level'] in dirs: L['dirs'] = [dirs[L['level']]]
         cells = lev_build.arcmin(*lev_build.cells_box(P.cells))

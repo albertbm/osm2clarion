@@ -315,11 +315,12 @@ def encode(s, level):
     return [w0] + out
 
 
-def shape(level, cls, links, name_off=0xffff):
+def shape(level, cls, links, name_off=0xffff, ids=None):
     """A shape from points: links is [[(x, y), ...], ...], the first point of the first link
     being the shape's start, each later link starting where the previous ended (that point
     not repeated). Named shapes carry word 3 0 and plain y words; unnamed ones word 3 0x3000
-    and 0x4000 on every y, the two commonest factory forms at levels 3 and 4."""
+    and 0x4000 on every y, the two commonest factory forms at levels 3 and 4. ids are the
+    links' numbers in the parcel's graph record; without them the links count from 1."""
     named = name_off != 0xffff
     code, ybits = fa_encode_fmt().coarse_unnamed
     yb = 0 if named else ybits
@@ -327,7 +328,7 @@ def shape(level, cls, links, name_off=0xffff):
     body = [[(x, y, yb) for x, y in links[0][1:]]] + [[(x, y, yb) for x, y in l] for l in links[1:]]
     npts = 1 + sum(len(b) for b in body)
     head = [(0x8000 if level != 3 else fa_encode_fmt().l3_points) | npts, cls << 12, 0 if named else code, name_off, 0, 0]
-    ids = list(range(1, len(body) + 1)) if level != 3 else [None] * len(body)
+    ids = [None] * len(body) if level == 3 else list(ids) if ids else list(range(1, len(body) + 1))
     return encode(dict(head=head, start=(start[0], start[1], yb), links=list(zip(ids, body))), level)
 
 
@@ -448,13 +449,32 @@ def parcel_runs(pts, level, origin):
     return out
 
 
-def record(code, shapes, country):
-    """A level-3 or level-4 road-shape record: the level-2 layout, shapes in layer 6, word
-    20 the country (02d4, Spain, on the Canary Islands' records)."""
+def layer_of(cls):
+    """The layer the unit looks in for a link of one class when it draws a route."""
+    return 7 if cls < 3 else LAYER if cls < 8 else 5 if cls == 8 else 4 if cls == 9 else 0
+
+
+def by_layer(shapes):
+    """Shapes in the order their layers are laid out."""
+    return sorted(shapes, key=lambda sh: layer_of(sh[2] >> 12))
+
+
+def road_unit(shapes):
+    """The eleven layer pairs and the shapes behind them, each layer on a 4-byte boundary."""
     unit = [0xffff, 0x0000] * 11
-    if shapes: unit[2 * LAYER], unit[2 * LAYER + 1] = 11, len(shapes)
-    for sh in shapes: unit += sh
+    for layer in sorted({layer_of(sh[2] >> 12) for sh in shapes}):
+        own = [sh for sh in shapes if layer_of(sh[2] >> 12) == layer]
+        if len(unit) % 2: unit.append(0)
+        unit[2 * layer], unit[2 * layer + 1] = len(unit) // 2, len(own)
+        for sh in own: unit += sh
     if len(unit) % 2: unit.append(0)
+    return unit
+
+
+def record(code, shapes, country):
+    """A level-3 or level-4 road-shape record: the level-2 layout, shapes in the layer of
+    their class, word 20 the country (02d4, Spain, on the Canary Islands' records)."""
+    unit = road_unit(shapes)
     w = [code[0], code[1], 0x00fa, 0xffff, 0xffff, 0, 0, 11, len(unit) // 2,
          0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0xffff, 0, 0, country, 0]
     return struct.pack('>22H', *w) + struct.pack('>%dH' % len(unit), *unit)
@@ -465,10 +485,7 @@ def road_block(plain, shapes, country):
     moves to w9/w10; names and the rest come through as they were."""
     w = list(struct.unpack_from('>22H', plain, 0))
     assert w[2] == 0x00fa and w[7] == 0xffff and w[9] not in (0, 0xffff), 'not a level-5 background record'
-    unit = [0xffff, 0x0000] * 11
-    unit[2 * LAYER], unit[2 * LAYER + 1] = 11, len(shapes)
-    for sh in shapes: unit += sh
-    if len(unit) % 2: unit.append(0)
+    unit = road_unit(shapes)
     road = struct.pack('>%dH' % len(unit), *unit)
     assert w[9] == 11, 'the background must follow the header directly'
     shift = len(road) // 4
@@ -501,18 +518,48 @@ def kept_names(plain, country):
     return base, (seen.most_common(1)[0][0] if seen else (0, 0, 0))
 
 
-def build(levels, ways, origin, country, keep=False):
+def put(D, level, row, col, items, country, keep):
+    """Write one parcel's road shapes and route labels. items are (class, ref, points, link
+    id), the id None for a shape no graph link stands behind. Returns (shapes, points,
+    labels), or None where the parcel has no background record to hang them on."""
+    import fa_encode, rd_build
+    if D is None or D['rows'][row] is None: return None
+    ppc = D['pairs'] // D['cols']
+    bg = D['rows'][row][col * ppc + ppc - 1]
+    if bg is None: return None
+    labels = list(dict.fromkeys('2=' + ref for _, ref, _, _ in items if ref))
+    base, area = kept_names(bg['plain'], country) if keep else ((b'', 0), None)
+    _, offs = fa_encode.names_section(labels, [], base)
+    shapes = by_layer([shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff, [lid] if lid else None)
+                       for cls, ref, piece, lid in items])
+    subs = [fa_encode.item_words(sh, 2, sh[4], country, area) for sh in shapes]
+    section, _ = fa_encode.names_section(labels, None if keep and level == 5 else subs, base)
+    plain = rd_build.replace_names(bg['plain'], section) if keep else rd_build.merge_names(bg['plain'], section)
+    if level == 5:
+        D['rows'][row][col] = dict(plain=road_block(plain, shapes, None if keep else country))
+    else:
+        code = struct.unpack_from('>2H', plain, 0)
+        D['rows'][row][col * ppc + ppc - 1] = dict(plain=plain)
+        D['rows'][row][col * ppc] = dict(plain=record(code, shapes, country))
+    return len(shapes), sum(len(p) for _, _, p, _ in items), len(labels)
+
+
+def build(levels, ways, origin, country, keep=False, only=(3, 4, 5)):
     """Put road shapes into a coarse file's section-1 directories, as lev_build lays them
     out: levels {level: [directory]}, rows of records {'plain': bytes}, background in the
     last pair of each column. Returns {level: (records, shapes, points, labels)}.
 
     keep is for a factory file whose roads road_strip.py took out: a background record keeps
     its own names and its level-5 country, an item takes the record's area codes, and level
-    5 gets no sub-table, as on the QY7 card."""
+    5 gets no sub-table, as on the QY7 card.
+
+    Levels 4 and 5 are only right from here on a card with no coarse graph. With one, the
+    unit draws a route link from the shape that carries its class and id, so graph_build
+    writes those two levels and this is called with only=(3,)."""
     import fa_encode, rd_build
     x_base = fa_encode.FMT.x_base
     stats = {}
-    for level in (3, 4, 5):
+    for level in only:
         sel = [dict(w) for w in ways if w['hw'] in LEVEL_CLASSES[level]]
         runs = chains(sel)
         for r in runs: r['nodes'] = rd_build.simplify([list(p) for p in r['nodes']], TOLERANCE[level])
@@ -521,30 +568,31 @@ def build(levels, ways, origin, country, keep=False):
             for k, run in parcel_runs(r['nodes'], level, origin):
                 for i in range(0, len(run) - 1, MAXPTS - 1):
                     piece = run[i:i + MAXPTS]
-                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece))
+                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece, None))
         dirs = {(D['y'], (D['x'] + x_base) & 0xffff) if level == 3 else tuple(origin): D for D in levels[level]}
         nrec = nsh = npt = nlab = 0
         for (y0, x0, row, col), items in sorted(per.items()):
-            D = dirs.get((y0, x0))
-            if D is None or D['rows'][row] is None: continue
-            ppc = D['pairs'] // D['cols']
-            bg = D['rows'][row][col * ppc + ppc - 1]
-            if bg is None: continue
-            labels = list(dict.fromkeys('2=' + ref for _, ref, _ in items if ref))
-            base, area = kept_names(bg['plain'], country) if keep else ((b'', 0), None)
-            _, offs = fa_encode.names_section(labels, [], base)
-            shapes = [shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff) for cls, ref, piece in items]
-            subs = [fa_encode.item_words(sh, 2, sh[4], country, area) for sh in shapes]
-            section, _ = fa_encode.names_section(labels, None if keep and level == 5 else subs, base)
-            plain = rd_build.replace_names(bg['plain'], section) if keep else rd_build.merge_names(bg['plain'], section)
-            if level == 5:
-                D['rows'][row][col] = dict(plain=road_block(plain, shapes, None if keep else country))
-            else:
-                code = struct.unpack_from('>2H', plain, 0)
-                D['rows'][row][col * ppc + ppc - 1] = dict(plain=plain)
-                D['rows'][row][col * ppc] = dict(plain=record(code, shapes, country))
-            nrec += 1; nsh += len(shapes); npt += sum(len(p) for _, _, p in items); nlab += len(labels)
+            n = put(dirs.get((y0, x0)), level, row, col, items, country, keep)
+            if n is None: continue
+            nrec += 1; nsh += n[0]; npt += n[1]; nlab += n[2]
         stats[level] = (nrec, nsh, npt, nlab)
+    return stats
+
+
+def graph_build(levels, links, country, keep=False):
+    """Levels 4 and 5 from the coarse graph: links is {level: {(row, col): [(class, ref,
+    points, link id)]}} from lev_graph.link_shapes, one shape for each graph link, between
+    its two nodes and under its class and id. Returns {level: (records, shapes, points,
+    labels, links left without a shape)}."""
+    stats = {}
+    for level in (4, 5):
+        D = levels[level][0]
+        nrec = nsh = npt = nlab = lost = 0
+        for (row, col), items in sorted(links[level].items()):
+            n = put(D, level, row, col, items, country, keep)
+            if n is None: lost += len(items); continue
+            nrec += 1; nsh += n[0]; npt += n[1]; nlab += n[2]
+        stats[level] = (nrec, nsh, npt, nlab, lost)
     return stats
 
 
