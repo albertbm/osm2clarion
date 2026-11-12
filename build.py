@@ -362,6 +362,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
             raise SystemExit('the build wrote another card than %s' % part)
 
     def check():
+        prep()      # card_verify reads the register through the config
         run('shasum', '-a', '256', part)
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
