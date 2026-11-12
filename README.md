@@ -1,28 +1,32 @@
 # osm2clarion
 
-Builds map cards for Clarion QY8x navigation units from OpenStreetMap, from 640 km down to
-building scale (25 m). Nissan no longer ships map updates for these units.
+Builds map cards for Clarion QY7 and QY8 navigation units from OpenStreetMap, from 640 km
+down to building scale (25 m). Nissan no longer ships map updates for these units.
 
-Tested only on QY8x units in the Nissan Leaf 2016-2019 (QY8202NA, QY8602NB, QY8600NE) and
-the Nissan e-NV200 (QY8202PB), European and US market. The format is undocumented;
-[docs/](docs/) was measured off 2014 and 2017 European cards. No card data ships here.
+Tested on QY8 units in the Nissan Leaf 2016-2019 (QY8202NA, QY8602NB, QY8600NE) and the
+Nissan e-NV200 (QY8202PB), European and US market. QY7 cards (QY7221NL) have only run in an
+emulator so far. The format is undocumented; [docs/](docs/) was measured off 2014 and 2017
+European cards. No card data ships here.
+
+Japanese units are not supported, QY7 or QY8. Their cards hold the map as one large file
+instead of tiles.
 
 ## Status
 
 | Feature | State |
 |---|---|
-| Coast, land, roads, road names | works |
-| Route guidance, including long routes on the coarse graph | works |
-| Roundabout ring markers | works |
-| Speed-limit signs | works |
-| Speed cameras from OSM | works when a camera file is given (`tools/extract_cameras.py` makes one) |
-| Address database and search | works: street search, City-first, house numbers, tested on the bench and in a car |
-| POI icons and search | works |
-| House numbers along a street | works |
-| Names on unnamed ramps | written by both builds |
-| Signposts | built and unit-tested, not written by either build |
-| Lake, fjord and river names | not written |
-| Showing the card's own map version | unsolved |
+| Coast, land, roads, road names | Works |
+| Route guidance | Works with bugs: on long routes the close-up route line ends a few km ahead and the unit recalculates (see Limits) |
+| Roundabouts | Works |
+| Speed-limit signs | Works |
+| Speed cameras | Works. Needs a camera file from `tools/extract_cameras.py` |
+| Address search and house numbers | Works |
+| House numbers drawn along streets | Works |
+| POI icons and search | Works with bugs: in a municipality with no town of its own, a POI can show a nearby town |
+| Names on unnamed ramps | Works |
+| Signposts | Not built |
+| Lake, fjord and river names | Not built |
+| The card's own map version on screen | Not working |
 
 Addresses come from a CSV import. The only reader today is for Iceland's address register;
 another country needs its columns mapped in `tools/addr/addr_csv.py`. See
@@ -200,16 +204,16 @@ tools will read. The keys are explained in comments in `profiles/iceland.toml` a
 - Stand-alone Iceland cards are built from scratch, own tiles and own coarse file. Adding
   a country to a card that already carries others is untested; the coarse file is written
   fresh, not merged into what is there.
-- Building outlines (25 m scale) are only drawn in populated areas - a place node or
-  residential/commercial/industrial/retail landuse within a couple hundred metres. A house
-  out in the open country gets no shape even where OSM has its footprint.
+- Building outlines (25 m scale) are only drawn in populated areas: near a place node or
+  residential, commercial, industrial or retail landuse. A house out in the open country
+  gets no shape even where OSM has its footprint.
 - North of about 60° the 640-160 km views look stretched east-west, as on factory cards.
-- In drive simulation, the 100 m and 200 m views stop drawing the route a few kilometres
-  from where it was calculated, at the edge of a 5x5 block of level-1 parcels around that
-  point; the unit recalculates once the car gets there. The 500 m and wider views show the
-  whole route. It showed up once builds covered more than one town and doesn't affect real
-  driving. Setting the level-1 link-direction flag and the two cost-word bits that factory
-  tiles carry on links an upper level covers did not change it.
+- On long routes the 100 m and 200 m views stop drawing the route a few kilometres from
+  where it was calculated, at the edge of a 5x5 block of level-1 parcels around that point.
+  The unit recalculates when the car gets there. This happens while driving, not only in
+  simulation. The 500 m and wider views show the whole route. It started once builds covered
+  more than one town. Copying the factory's level-1 link-direction flag and two cost-word
+  bits did not fix it.
 
 ## Docs
 
