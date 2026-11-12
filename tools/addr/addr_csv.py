@@ -42,7 +42,8 @@ def addresses(path=None, box=None, municipalities=None):
     """Yield dicts for rows inside the box, or with municipalities (SVFNR strings) for
     the rows of those municipalities wherever they lie."""
     p = path or os.path.expanduser(_config_data()['addresses'])
-    lo_lat, hi_lat, lo_lon, hi_lon = box or _box()
+    if municipalities is None:
+        lo_lat, hi_lat, lo_lon, hi_lon = box or _box()
     with open(p, encoding='utf-8', newline='') as f:
         for row in csv.DictReader(f):
             try:
@@ -82,6 +83,18 @@ def ladder():
     seen = {tn[p] for p in {r['post'] for r in addresses()} if p in tn}
     rows = sorted(seen, key=collate)
     return rows, {t: i for i, t in enumerate(rows)}
+
+
+def area_towns():
+    """The ICODE town rows: the postcode towns of every address in the config's
+    addr.area_municipalities, addr.poc_town first (row 0 is where a zero town index lands)
+    and the rest in the register's collation."""
+    cfg = _config()['addr']
+    svf = {k for a in cfg['area_municipalities'].values() for k in a}
+    tn = towns()
+    found = {tn[r['post']].upper() for r in addresses(municipalities=svf) if r['post'] in tn}
+    first = cfg['poc_town'].upper()
+    return tuple([first] + sorted(found - {first}, key=collate))
 
 
 def check_ladder():

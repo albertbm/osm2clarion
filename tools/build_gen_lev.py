@@ -293,9 +293,10 @@ def steps(B, coast, icode_base, roads=False, also=None, to=None, by=None, area=N
              outputs={'MAPAL001/LEV3456R.DAT': ('file', B + '/LEV3456R.DAT')}),
         dict(name='icode', cwd=REPO,
              cmd=['python3', HERE + '/addr/build_icode_clean.py', i1, i2, addr],
-             inputs=[i1, i2], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
-                                        (icode_base, 'REFER002/ICODE001.DAT', i2)],
-             tools=[HERE + '/addr/build_icode_clean.py'],
+             # the town rows come from the address register
+             inputs=[i1, i2, ADDRESSES, POSTCODES], extract=[(icode_base, 'REFER001/ICODE001.DAT', i1),
+                                                            (icode_base, 'REFER002/ICODE001.DAT', i2)],
+             tools=[HERE + '/addr/build_icode_clean.py', HERE + '/addr/addr_csv.py'],
              note='reads the input ICODE files for their volume table (languages and frame kinds); '
                   'REFER001 also copies their 18 POI genre frames byte for byte',
              outputs={'REFER001/ICODE001.DAT': ('file', addr + '/REFER001_ICODE001.DAT'),

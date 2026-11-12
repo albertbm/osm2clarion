@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parent.parent)) + '/tools')
 import icode_io  # noqa: E402
+import addr_csv  # noqa: E402
 import iceland_card  # noqa: E402
 import refer_header  # noqa: E402
 
@@ -40,11 +41,7 @@ VREC = 26
 AREA_F20 = 0x180         # every area frame, 38 of 38 across both files
 ENTRY_TAIL = b'\xff' * 10
 
-TOWNS = ('REYKJAVÍK', 'AKRANES', 'EYRARBAKKI', 'GARÐABÆR', 'GARÐABÆR (ÁLFTANES)', 'GARÐUR',
-         'GRINDAVÍK', 'HAFNARFJÖRÐUR', 'HELLA', 'HVERAGERÐI', 'HVOLSVÖLLUR',
-         'KEFLAVÍKURFLUGVÖLLUR', 'KJÓS', 'KÓPAVOGUR', 'MOSFELLSBÆR', 'REYKJANESBÆR',
-         'SANDGERÐI', 'SELFOSS', 'SELTJARNARNES', 'STOKKSEYRI', 'VESTMANNAEYJAR', 'VÍK',
-         'VOGAR', 'ÞORLÁKSHÖFN', 'ÖLFUS')
+TOWNS = addr_csv.area_towns()
 
 
 def addr(off):
