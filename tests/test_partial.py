@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A card is made under a .partial name: a new run clears a stale one, never a finished card,
 and the cards log is made when missing."""
+import json
 import os
 import sys
 import tempfile
@@ -12,6 +13,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / 'tools'))
 import build
+import cardcopy
 import cards_log
 import clarion_profile
 
@@ -53,6 +55,47 @@ class TestStale(unittest.TestCase):
         open(self.out + '.partial', 'w').close()
         self.before(['check'])
         self.assertTrue(os.path.exists(self.out + '.partial'))
+
+
+class TestChain(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        cards = os.path.join(self.tmp.name, 'cards')
+        os.makedirs(os.path.join(cards, 'builds'))
+        self.out = os.path.join(cards, 'builds', 'IS-200-ZE1-test.img')
+        P = clarion_profile.load('iceland')
+        plan, _ = build.generate_steps(P, P.path, '/b.img', self.out, os.path.join(self.tmp.name, 'work'),
+                                       None, None, LOCAL, {})
+        self.check = dict(plan)['check']
+        with open(self.out + '.partial', 'wb') as f:
+            f.write(b'card')
+        self.sha = cardcopy.sha256(self.out + '.partial')
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def manifest(self, names, sha=None):
+        m = dict(post_steps=[dict(name=n, args='', image_sha256=sha or self.sha) for n in names])
+        with open(self.out[:-4] + '.manifest.json.partial', 'w') as f:
+            json.dump(m, f)
+
+    def test_a_card_without_the_addr_step_fails(self):
+        self.manifest(['poi_apply', 'build_poicap-icons'])
+        with self.assertRaises(SystemExit) as e:
+            self.check()
+        self.assertIn('build_poicap-addr never finished', str(e.exception))
+        self.assertFalse(os.path.exists(self.out))
+
+    def test_a_card_the_last_step_did_not_write_fails(self):
+        self.manifest(list(build.CHAIN), sha='0' * 64)
+        with self.assertRaises(SystemExit) as e:
+            self.check()
+        self.assertIn('not the image build_poicap-addr wrote', str(e.exception))
+
+    def test_the_full_chain_passes_this_test(self):
+        m = dict(post_steps=[dict(name=n, image_sha256=self.sha) for n in build.CHAIN])
+        self.assertEqual(build.chain_problems(m, self.sha, True), [])
+        self.assertEqual(build.chain_problems(dict(post_steps=[]), self.sha, False), [])
 
 
 class TestCardsLog(unittest.TestCase):

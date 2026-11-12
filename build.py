@@ -290,6 +290,20 @@ def consent_ok(code, output):
     return code == 0 or (code == 1 and 'already patched' in output)
 
 
+# the post steps of the full chain, appended to the manifest only when each one succeeds
+CHAIN = ('poi_apply', 'build_poicap-icons', 'build_poicap-addr')
+
+
+def chain_problems(m, card_sha, full):
+    """Why the card in progress is not what the last step of its chain wrote, or []."""
+    post = m.get('post_steps', [])
+    names = [s['name'] for s in post]
+    bad = ['%s never finished' % n for n in CHAIN if full and n not in names]
+    if post and post[-1]['image_sha256'] != card_sha:
+        bad.append('the card is not the image %s wrote' % post[-1]['name'])
+    return bad
+
+
 def make_config(P, local, cells, base, osm, work):
     """The JSON config the generator tools read, from the profile and the local file."""
     raw = merge(P.raw, local)
@@ -441,7 +455,12 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         prep()      # card_verify reads the register through the config
         import buildstamp
         buildstamp.set_fields(mpart, deps=buildstamp.deps())
-        run(tool('cardcopy.py'), part)
+        card_sha = cardcopy.sha256(part)
+        print(card_sha, part)
+        with open(mpart) as f:
+            bad = chain_problems(json.load(f), card_sha, not (args.get('map-from') or args.get('restamp-from')))
+        if bad:
+            raise SystemExit('check failed: ' + '; '.join(bad))
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
         groups = (args.get('write') or B['write']).split(',')

@@ -554,4 +554,11 @@ def configure(args, p):
 if __name__ == '__main__':
     arg_parser = parser()
     options = arg_parser.parse_args()
-    main(configure(options, arg_parser), options)
+    workdir = configure(options, arg_parser)
+    # built under a temporary name, so a run that dies leaves nothing at --out
+    final, OUT_IMG = OUT_IMG, OUT_IMG + '.tmp'
+    if os.path.exists(OUT_IMG):
+        os.remove(OUT_IMG)
+    main(workdir, options)
+    os.replace(OUT_IMG, final)
+    print('renamed to', final)
