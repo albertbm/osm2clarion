@@ -3,7 +3,7 @@
 """Check a built card's road graph and coarse routing file against every format rule
 measured off factory tiles, and diff a card against the previous one field by field.
 
-    card_check.py --card A.img [--prev B.img] [--factory TILE ...] [--json]
+    card_check.py --card A.img [--cells C,C...] [--prev B.img] [--factory TILE ...] [--json]
     card_check.py --tiles TILE ... [--lev LEV3456R.DAT] [--factory TILE ...] [--json]
 
 With --card, MAPAL001/*.DAT and LEV3456R.DAT are read straight off the FAT image (no
@@ -15,6 +15,9 @@ tiles and a built card before being folded in here. A rule that fails on factory
 data is a rule bug, not a card bug - run --factory and
 read the factory column before trusting a FAIL on the card under test.
 
+--cells names the road cells the card must carry; a missing one, one with no L1 or L2
+records, or any record that does not parse is a FAIL.
+
 Exit status: 0 if every rule passes on the card under test, 1 otherwise (factory and
 --prev results never affect the exit status).
 """
@@ -24,7 +27,6 @@ import json
 import os
 import struct
 import sys
-import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
@@ -42,16 +44,19 @@ MAXSTEPS = 400
 
 # Loading: tiles and LEV3456R.DAT into the record dicts every rule below reads.
 
-def load_road_tiles(paths):
+def load_road_tiles(paths, errors=None):
     """L1 {(row,col): parsed record}, L2 {(row,col): (parsed a, parsed part-b)},
-    SH1 {(row,col): section-1 0x00fa Rec} over a set of tile files or bytes."""
+    SH1 {(row,col): section-1 0x00fa Rec} over a set of tile files or bytes. Records that do
+    not parse are counted in `errors` (a Counter) when one is given."""
     L1, L2, SH1 = {}, {}, {}
+    errors = collections.Counter() if errors is None else errors
     for p in paths:
         with TileScan(p) as t:
             for r in t.records(section=2, level=1):
                 try:
                     a = clarion_rd.parse_record(rd_check.part_a(r.plain(), 1))
                 except Exception:
+                    errors['L1'] += 1
                     continue
                 if 'nnodes' in a:
                     L1[clarion_bg.parcel_rowcol(1, *a['code'])] = a
@@ -62,6 +67,7 @@ def load_road_tiles(paths):
                     a = clarion_rd.parse_record(pa_b)
                     b = clarion_rd.parse_part_b(pl[len(pa_b):])
                 except Exception:
+                    errors['L2'] += 1
                     continue
                 if 'nnodes' in a:
                     L2[clarion_bg.parcel_rowcol(2, *a['code'])] = (a, b)
@@ -72,6 +78,7 @@ def load_road_tiles(paths):
                 try:
                     SH1[clarion_bg.parcel_rowcol(1, *pc)] = rec.plain()
                 except Exception:
+                    errors['SH1'] += 1
                     continue
     return L1, L2, SH1
 
@@ -551,6 +558,25 @@ def run_all(L1, L2, SH1, lev4, lev5):
     return out
 
 
+def check_tiles(expected, per_tile, errors):
+    """Every expected road cell is on the card with L1 and L2 records, and every record
+    parses. The ten rules pass on nothing, so this is the one that fails an empty card."""
+    st = collections.Counter(tiles=len(per_tile), L1=sum(n[0] for n in per_tile.values()),
+                             L2=sum(n[1] for n in per_tile.values()))
+    notes = []
+    for c in expected:
+        if c not in per_tile:
+            notes.append('%s: not on the card' % c)
+        elif not per_tile[c][0] or not per_tile[c][1]:
+            notes.append('%s: L1 %d, L2 %d records' % (c, per_tile[c][0], per_tile[c][1]))
+    if not st['L1'] or not st['L2']:
+        notes.append('no road records on the card at all')
+    for name, n in sorted(errors.items()):
+        st['parse_errors'] += n
+        notes.append('%s: %d records do not parse' % (name, n))
+    return result('tiles', not notes, st, notes)
+
+
 # Card extraction (FAT, read-only) and the whole-card / field-level diff.
 
 def extract_card(img):
@@ -680,28 +706,33 @@ def main(argv):
     ap.add_argument('--factory', nargs='*', default=[])
     ap.add_argument('--factory-lev')
     ap.add_argument('--json', action='store_true')
-    ap.add_argument('--tmp', default=None, help='scratch dir for extracted card files')
+    ap.add_argument('--cells', default='', help='road cells the card must carry, comma-separated')
     args = ap.parse_args(argv)
 
     report = {}
-    tmp_root = args.tmp or os.path.join(tempfile.gettempdir(), 'cardcheck')
-    os.makedirs(tmp_root, exist_ok=True)
 
     if args.card:
         files = extract_card(args.card)
-        card_tmp = os.path.join(tmp_root, os.path.splitext(os.path.basename(args.card))[0])
-        os.makedirs(card_tmp, exist_ok=True)
-        for name, data in files.items():
-            with open(os.path.join(card_tmp, os.path.basename(name)), 'wb') as f:
-                f.write(data)
         tiles = {k: v for k, v in files.items() if k.upper().startswith('MAPAL001/') and k.upper() != 'MAPAL001/LEV3456R.DAT'}
         lev = files.get('MAPAL001/LEV3456R.DAT') or next((v for k, v in files.items() if k.upper().endswith('LEV3456R.DAT')), None)
-        L1, L2, SH1 = load_road_tiles(list(tiles.values()))
+        L1, L2, SH1 = {}, {}, {}
+        errors, per_tile = collections.Counter(), {}
+        for name in sorted(tiles):
+            e = collections.Counter()
+            l1, l2, sh1 = load_road_tiles([tiles[name]], e)
+            cell = os.path.basename(name)[:-4]
+            per_tile[cell] = (len(l1), len(l2))
+            errors.update({'%s %s' % (cell, k): n for k, n in e.items()})
+            L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
         checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}))
+        checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
-        L1, L2, SH1, lev4, lev5 = load_for_check(args.tiles, args.lev)
-        checks = run_all(L1, L2, SH1, lev4, lev5)
+        errors = collections.Counter()
+        L1, L2, SH1 = load_road_tiles(args.tiles, errors)
+        levd = load_lev(args.lev)
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}))
+        checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
     report['card'] = dict(title=args.card or 'tiles', checks=checks)

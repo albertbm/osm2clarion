@@ -104,6 +104,20 @@ def mmain(m, headers):
     return bytes(m)
 
 
+def mmain_card(m, headers, nhouse):
+    """mmain, with section 5 level 0 counting the card's HOUSE001 files when it has any."""
+    mm = bytearray(mmain(m, headers))
+    if nhouse:
+        p = 0x1ae
+        for sid, rows in walk(mm, 0x1ac, 4)[0]:
+            p += 2
+            for e in rows:
+                if (sid, e[0]) == (5, 0):
+                    struct.pack_into('>H', mm, p + 2, nhouse)
+                p += 4
+    return bytes(mm)
+
+
 def ed_read(ed, d, n):
     """A whole file's plain bytes, read through an already-open fatedit.Editor."""
     g = ed.find(d, n)

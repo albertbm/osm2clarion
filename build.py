@@ -227,7 +227,7 @@ def make_config(P, local, cells, base, osm, work):
         dealer=raw['dealer'], road_tiles=B['road_tiles'], data=data,
         camera_speed_fallback=raw.get('camera_speed_fallback', {}), card_naming=raw['card_naming'],
         cards_log=B['cards_log'], poicap=raw['poicap'], poi_python=B.get('poi_python', 'python3'),
-        roads_poc=raw['roads_poc'], addr=raw['addr'])
+        roads_poc=raw['roads_poc'], addr=raw['addr'], allow_leftovers=B.get('allow_leftovers', []))
     return cfg
 
 
@@ -337,9 +337,12 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
 
     def check():
         run('shasum', '-a', '256', out)
-        checker = tool('card_check.py')
-        if os.path.exists(checker):
-            run(py, checker, '--card', out, *(['--prev', args['prev']] if args.get('prev') else []), env=env)
+        run(py, tool('card_check.py'), '--card', out, '--cells', ','.join(cfg['road_tiles']),
+            *(['--prev', args['prev']] if args.get('prev') else []), env=env)
+        groups = (args.get('write') or B['write']).split(',')
+        towns = ['--towns'] if args.get('map-from') or args.get('restamp-from') or 'addr' in groups else []
+        run(py, tool('card_verify.py'), '--card', out, '--version', version, *towns, '--manifest', manifest,
+            '--allow-new', *cfg['allow_leftovers'], env=env)
 
     if args.get('map-from'):
         return [('prep', prep), ('map', map_step), ('check', check)]

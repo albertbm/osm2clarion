@@ -105,6 +105,37 @@ class TestBitNote(unittest.TestCase):
         self.assertEqual(card_check.bit_note(0), '')
 
 
+class TestTiles(unittest.TestCase):
+    """The rule that fails a card the ten rules would pass on nothing."""
+
+    def test_empty_card_fails(self):
+        self.assertFalse(card_check.check_tiles([], {}, collections.Counter())['passed'])
+
+    def test_expected_cell_missing_fails(self):
+        r = card_check.check_tiles(['A', 'B'], {'A': (5, 2)}, collections.Counter())
+        self.assertFalse(r['passed'])
+        self.assertIn('B: not on the card', r['notes'])
+
+    def test_cell_without_l2_fails(self):
+        self.assertFalse(card_check.check_tiles(['A'], {'A': (5, 0)}, collections.Counter())['passed'])
+
+    def test_parse_errors_fail(self):
+        r = card_check.check_tiles(['A'], {'A': (5, 2)}, collections.Counter({'A L1': 1}))
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['parse_errors'], 1)
+
+    def test_full_cells_pass(self):
+        self.assertTrue(card_check.check_tiles(['A'], {'A': (5, 2), 'B': (1, 1)}, collections.Counter())['passed'])
+
+    def test_unparseable_tile_bytes_count_as_errors(self):
+        errors = collections.Counter()
+        try:
+            card_check.load_road_tiles([b'\0' * 0x2000], errors)
+        except Exception:
+            return      # a tile too broken to scan raises, which fails the step as well
+        self.assertEqual(card_check.check_tiles(['X'], {}, errors)['passed'], False)
+
+
 class TestResultShape(unittest.TestCase):
     def test_counts_and_notes_are_plain_types(self):
         r = card_check.result('x', True, collections.Counter(a=1), ['note'])

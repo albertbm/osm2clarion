@@ -70,6 +70,7 @@ Only cells inside a populated area are written (a place node buffered --house-ci
 metres, default 400, or a residential/commercial/industrial/retail landuse polygon buffered
 --house-landuse-buffer metres, default 100; housearea/PLAN.md). Off by default.
 """
+import fnmatch
 import hashlib
 import json
 import os
@@ -96,13 +97,13 @@ def _config_path():
     return path
 
 
-from card_pack import ed_read, mmain, restamped, wrap  # noqa: E402
+from card_pack import ed_read, mmain_card, restamped, wrap  # noqa: E402
 from drstr_add import add as drstr_add, children, dir_records, remove as drstr_remove  # noqa: E402
-from clarion_tile import walk  # noqa: E402
 from drstr_sizes import set_sizes  # noqa: E402
 from fatedit import Editor  # noqa: E402
 import fatread  # noqa: E402
 import buildstamp  # noqa: E402
+from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
 _CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
 CONFIG = json.load(open(_CONFIG_FILE))
@@ -118,8 +119,6 @@ CARD_PREFIX = CONFIG['card_naming']['prefix']
 CARD_BUILD_PATTERN = CONFIG['card_naming']['build_pattern']
 CARDS_LOG = CONFIG['cards_log']
 NAME = re.compile(r'%s-(\d{3})-(%s)-(.+)\.img$' % (CARD_PREFIX, '|'.join(CONFIG['card_naming']['units'])))
-SCOPE = ('MAPAL001', 'REFER001', 'REFER002', 'HOUSE001')
-ROOT_FILES = ('DRSTR001.DAT', 'MMAIN001.DAT', 'CMP.LST')
 PACKED = ['ADDRE001.DAT', 'ZCODE001.DAT', 'POINT001.DAT', 'INTER001.DAT', 'COORD001.DAT']
 SEC4_CELLS = CONFIG['sec4_cells']     # the tiles that carry roads get the build's section 4
 AREAS = {name: dict(relations=a['relations'], cells=a['cells'], bbox=tuple(a['bbox']))
@@ -387,15 +386,6 @@ def expected(S):
 def command(s):
     return ' && '.join(' '.join(c) for c in s.get('cmds', [s.get('cmd')]))
 
-
-def cmp_lst(img):
-    """CMP.LST from the card's own .cmp files: sorted, NUL-separated, no trailing NUL."""
-    with fatread.Fat32(img) as fs:
-        names = ['\\SystemSD' + p[:-4].replace('/', '\\') for p, sz, _, _ in fs.walk()
-                 if sz is not None and p.endswith('.cmp')]
-    return '\0'.join(sorted(names)).encode('ascii')
-
-
 GROUPS = dict(lev=lambda p: p == 'MAPAL001/LEV3456R.DAT',
               tiles=lambda p: p.startswith('MAPAL001/B'),
               addr=lambda p: p.startswith(('REFER001/', 'REFER002/')),
@@ -452,17 +442,8 @@ def assemble(img, exp, groups):
     ed.write('', 'DRSTR001.DAT', drs)
     heads = [ed_read(ed, 'MAPAL001', g.name)[:0x400]
              for g in ed.load('MAPAL001')[1] if g.name.endswith('.DAT')]
-    mm = bytearray(mmain(ed_read(ed, '', 'MMAIN001.DAT'), heads))
     house = [g for g in ed.load('HOUSE001')[1] if g.name.endswith('.DAT')]
-    if house:   # section 5 level 0 counts the HOUSE001 files
-        p = 0x1ae
-        for sid, rows in walk(mm, 0x1ac, 4)[0]:
-            p += 2
-            for e in rows:
-                if (sid, e[0]) == (5, 0):
-                    struct.pack_into('>H', mm, p + 2, len(house))
-                p += 4
-    ed.write('', 'MMAIN001.DAT', bytes(mm))
+    ed.write('', 'MMAIN001.DAT', mmain_card(ed_read(ed, '', 'MMAIN001.DAT'), heads, len(house)))
     free = ed.close()
     print('clusters zeroed %d, free after %d' % (ed.zeroed, free))
 
@@ -498,39 +479,6 @@ def copy_map(img, src):
     return sorted(files)
 
 
-def card_files(img):
-    out = {}
-    with fatread.Fat32(img) as fs:
-        for p, sz, c, _ in fs.walk():
-            parts = p.strip('/').split('/')
-            if sz is None:
-                continue
-            if (len(parts) == 2 and parts[0] in SCOPE) or (len(parts) == 1 and parts[0] in ROOT_FILES):
-                out['/'.join(parts)] = fs.f.read_clusters(c, sz) if sz else b''
-    return out
-
-
-def drstr_check(drs, files):
-    """Problems with the index's rows for the scoped folders, against the card."""
-    recs = {r['name']: r for r in dir_records(drs)}
-    bad = []
-    for d in SCOPE:
-        listed = {n: sz for n, typ, sz in children(drs, recs[d]) if typ == 0}
-        have = {}
-        for p, b in files.items():
-            if not p.startswith(d + '/'):
-                continue
-            n = p.split('/')[1]
-            if n.endswith('.ind'):
-                have[n[:-4]] = struct.unpack_from('<I', b)[0]    # indexed as one file, inflated size
-            elif not n.endswith('.cmp'):
-                have[n] = len(b)
-        for n in sorted(set(listed) | set(have)):
-            if listed.get(n) != have.get(n):
-                bad.append('%s/%s index %s card %s' % (d, n, listed.get(n), have.get(n)))
-    return bad
-
-
 def manifest(img, S, B, exp):
     files = card_files(img)
     recipe = os.path.abspath(__file__)
@@ -540,6 +488,7 @@ def manifest(img, S, B, exp):
     osm2clarion = dict(head=buildstamp.git_head(OSM_ROOT), dirty=o2c_dirty, diff_sha256=o2c_diff_sha,
                         diff_file=os.path.basename(diff_dest) if o2c_dirty else None)
     leaf = buildstamp.repo_manifest_state(REPO)
+    index_bad = drstr_check(files['DRSTR001.DAT'], files)
     rows = []
     for path in sorted(files):
         data = files[path]
@@ -557,7 +506,7 @@ def manifest(img, S, B, exp):
             row.update(status='generated', step='assemble', command=recipe + ' (cmp_lst)',
                        note="the card's .cmp files, sorted")
         elif path == 'DRSTR001.DAT':
-            bad = drstr_check(data, files)
+            bad = index_bad
             row.update(status='edited', step='assemble', command=recipe + ' (set_sizes)',
                        note="the base card's index of every folder; sizes rewritten by this build and "
                             "build_gen_card/build_clean2 before it. Scoped rows checked against the card: "
@@ -575,7 +524,7 @@ def manifest(img, S, B, exp):
                        stamp=buildstamp.load_stamp(buildstamp.stamp_path(B, s['name']))) for s in S]
     return dict(card=img, built=time.strftime('%Y-%m-%d %H:%M:%S'), tools=tools_rev,
                 osm2clarion=osm2clarion, leaf=leaf,
-                steps=steps_out, files=rows, missing_on_card=missing)
+                steps=steps_out, files=rows, missing_on_card=missing, index_problems=index_bad)
 
 
 def report(m):
@@ -598,6 +547,17 @@ def report(m):
         print('leftovers: none')
     if m['missing_on_card']:
         print('!!! produced but not on the card:', ', '.join(m['missing_on_card']))
+
+
+def card_problems(m):
+    """Leftovers the config does not allow, produced files missing from the card, and index
+    rows that disagree with it."""
+    allow = CONFIG.get('allow_leftovers', [])
+    out = ['leftover %s (%s)' % (r['path'], r['note']) for r in m['files']
+           if r['status'] == 'leftover' and not any(fnmatch.fnmatch(r['path'], a) for a in allow)]
+    out += ['produced but not on the card: ' + p for p in m['missing_on_card']]
+    out += ['index: ' + b for b in m.get('index_problems', [])]
+    return out
 
 
 def builds():
@@ -767,8 +727,11 @@ def main(argv):
         with open(p, 'w') as f:
             json.dump(m, f, indent=1, ensure_ascii=False)
     report(m)
-    cards_line(n, unit, slug, opt('--what', slug), base)
     print('manifest:', os.path.splitext(img)[0] + '.manifest.json')
+    problems = card_problems(m)
+    if problems:
+        raise SystemExit('the card is not what the steps made:\n  ' + '\n  '.join(problems))
+    cards_line(n, unit, slug, opt('--what', slug), base)
 
 
 if __name__ == '__main__':
