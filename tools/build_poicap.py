@@ -26,11 +26,11 @@ import zlib
 CARD_TOOLS = os.path.dirname(os.path.abspath(__file__))
 BASE_IMG = OUT_IMG = PBF = None
 O2C = O2C_ROOT = VENV_PY = FAT_TIME = CONFIG = None
-AREA_MUNICIPALITIES = SETTLEMENTS = FOLD = ADDR_ONLY = POI_TILE = None
+AREA_MUNICIPALITIES = SETTLEMENTS = FOLD = ADDR_ONLY = POI_TILES = None
 
 
 def load_config(path):
-    global AREA_MUNICIPALITIES, SETTLEMENTS, FOLD, ADDR_ONLY, POI_TILE, CONFIG
+    global AREA_MUNICIPALITIES, SETTLEMENTS, FOLD, ADDR_ONLY, POI_TILES, CONFIG
     CONFIG = json.load(open(os.path.expanduser(path)))
     poicap = CONFIG['poicap']
     AREA_MUNICIPALITIES = poicap['municipalities']
@@ -39,7 +39,8 @@ def load_config(path):
                     for name, v in poicap['settlements'].items()}
     FOLD = poicap['fold']
     ADDR_ONLY = poicap['addr_only_default']
-    POI_TILE = poicap['poi_tile']
+    # a facility gets its refs and icon from the road tile it lies in, so every road tile
+    POI_TILES = CONFIG.get('road_tiles') or [poicap['poi_tile']]
     return CONFIG
 
 
@@ -189,11 +190,11 @@ def extract_and_filter(workdir, areas):
     return area_json, found
 
 
-def run_poi_point(point_in, pois_json, road_tile, point_out, allow_placeholder_refs=False):
-    cmd = [VENV_PY, os.path.join(O2C, 'poi_point.py'),
-           point_in, pois_json, point_out,
-           '--road-tile', road_tile, '--municipalities', PBF,
-           '--fold', FOLD, '--allow-missing-ladder']
+def run_poi_point(point_in, pois_json, road_tiles, point_out, allow_placeholder_refs=False):
+    cmd = [VENV_PY, os.path.join(O2C, 'poi_point.py'), point_in, pois_json, point_out]
+    for t in road_tiles:
+        cmd += ['--road-tile', t]
+    cmd += ['--municipalities', PBF, '--fold', FOLD, '--allow-missing-ladder']
     if allow_placeholder_refs:
         cmd.append('--allow-placeholder-refs')
     subprocess.run(cmd, check=True)
@@ -256,30 +257,33 @@ def fix_orphan_ladders(plain, municipalities, pois):
     return full
 
 
-def add_icons(tile_plain, pois_json, allow_placeholder_refs=False):
-    t = clarion_tile.read_tile(tile_plain)
+def add_icons(tile_plains, pois_json, allow_placeholder_refs=False):
+    """tile_plains maps a tile name to its bytes (our own built road tiles only); returns
+    the tiles that gained an icon, rebuilt."""
+    tiles = {name: clarion_tile.read_tile(d) for name, d in tile_plains.items()}
     pois = json.load(open(pois_json))
 
     def plain_of(r):
         return zlib.decompress(r['raw']) if r['raw'][:2] == b'\x58\x85' else r['raw']
 
     idx = {}
-    for sec in t['sections']:
-        if sec['id'] != 1:
-            continue
-        for L in sec['levels']:
-            if L['level'] not in (1, 2):
+    for name, t in tiles.items():
+        for sec in t['sections']:
+            if sec['id'] != 1:
                 continue
-            for D in L['dirs']:
-                for row, sl in D['slots'].items():
-                    for i, r in enumerate(sl['recs']):
-                        if r['k'] % 2 == 0:
-                            continue
-                        pl = plain_of(r)
-                        if len(pl) < 4:
-                            continue
-                        w0, w1 = struct.unpack_from('>HH', pl, 0)
-                        idx[(L['level'], w0, w1)] = (sl, i, r)
+            for L in sec['levels']:
+                if L['level'] not in (1, 2):
+                    continue
+                for D in L['dirs']:
+                    for row, sl in D['slots'].items():
+                        for i, r in enumerate(sl['recs']):
+                            if r['k'] % 2 == 0:
+                                continue
+                            pl = plain_of(r)
+                            if len(pl) < 4:
+                                continue
+                            w0, w1 = struct.unpack_from('>HH', pl, 0)
+                            idx[(L['level'], w0, w1)] = (name, sl, i, r)
 
     groups = {}
     missing = []
@@ -298,8 +302,10 @@ def add_icons(tile_plain, pois_json, allow_placeholder_refs=False):
                 '  %s: level %d parcel %04x/%04x' % item for item in missing))
         print('  %d facility/level pairs have no background record, skipped' % len(missing))
 
+    touched = set()
     for (level, w0, w1), pts in groups.items():
-        sl, i, r = idx[(level, w0, w1)]
+        name, sl, i, r = idx[(level, w0, w1)]
+        touched.add(name)
         rec = cb.parse_record(plain_of(r))
         for code, x, y in pts:
             side = struct.pack('>HHHHHH', 0, 0, 0xffff, 0, code, 0)
@@ -314,8 +320,8 @@ def add_icons(tile_plain, pois_json, allow_placeholder_refs=False):
         body = bytearray(sl['body'])
         struct.pack_into('>II', body, 8 * r['k'], len(comp) // 2, len(new_plain) // 2)
         sl['body'] = bytes(body)
-    print('icons: %d parcels touched' % len(groups))
-    return clarion_tile.write_tile(t)
+    print('icons: %d parcels touched in %s' % (len(groups), ', '.join(sorted(touched)) or 'no tile'))
+    return {name: clarion_tile.write_tile(tiles[name]) for name in sorted(touched)}
 
 
 def build_house_ranges(workdir, args):
@@ -386,10 +392,11 @@ def main(workdir, args=None):
 
     point_cmp = os.path.join(workdir, 'POINT001.DAT.cmp')
     point_ind = os.path.join(workdir, 'POINT001.DAT.ind')
-    tile_in = os.path.join(workdir, POI_TILE + '.DAT')
+    tiles_in = {t: os.path.join(workdir, t + '.DAT') for t in POI_TILES}
     run(sys.executable, os.path.join(CARD_TOOLS, 'extract.py'), BASE_IMG, 'REFER001/POINT001.DAT.cmp', point_cmp)
     run(sys.executable, os.path.join(CARD_TOOLS, 'extract.py'), BASE_IMG, 'REFER001/POINT001.DAT.ind', point_ind)
-    run(sys.executable, os.path.join(CARD_TOOLS, 'extract.py'), BASE_IMG, 'MAPAL001/%s.DAT' % POI_TILE, tile_in)
+    for t, path in tiles_in.items():
+        run(sys.executable, os.path.join(CARD_TOOLS, 'extract.py'), BASE_IMG, 'MAPAL001/%s.DAT' % t, path)
 
     from cmp_wrap import wrap as _wrap  # noqa: F811
     ind = open(point_ind, 'rb').read()
@@ -410,7 +417,7 @@ def main(workdir, args=None):
     plain_path = os.path.join(workdir, 'POINT001.plain.DAT')
     open(plain_path, 'wb').write(plain)
     merged_path = os.path.join(workdir, 'POINT001.merged.DAT')
-    run_poi_point(plain_path, pois_json, tile_in, merged_path,
+    run_poi_point(plain_path, pois_json, list(tiles_in.values()), merged_path,
                   getattr(args, 'allow_placeholder_refs', False))
 
     print('orphan municipality ladder override:')
@@ -422,31 +429,33 @@ def main(workdir, args=None):
     check_poi_slots(final_plain)
 
     print('icons:')
-    tile_plain = open(tile_in, 'rb').read()
-    new_tile = add_icons(tile_plain, pois_json, getattr(args, 'allow_placeholder_refs', False))
+    new_tiles = add_icons({t: open(p, 'rb').read() for t, p in tiles_in.items()}, pois_json,
+                          getattr(args, 'allow_placeholder_refs', False))
 
     final_cmp, final_ind = wrap(final_plain)
-    tile_out = os.path.join(workdir, POI_TILE + '.out.DAT')
-    open(tile_out, 'wb').write(new_tile)
+    tiles_out = {}
+    for t, data in new_tiles.items():
+        tiles_out[t] = os.path.join(workdir, t + '.out.DAT')
+        open(tiles_out[t], 'wb').write(data)
     cmp_out = os.path.join(workdir, 'POINT001.out.DAT.cmp')
     ind_out = os.path.join(workdir, 'POINT001.out.DAT.ind')
     open(cmp_out, 'wb').write(final_cmp)
     open(ind_out, 'wb').write(final_ind)
 
     run(sys.executable, os.path.join(O2C, 'fatedit.py'), OUT_IMG, '--write',
-        'MAPAL001:%s.DAT=%s' % (POI_TILE, tile_out),
+        *['MAPAL001:%s.DAT=%s' % item for item in tiles_out.items()],
         'REFER001:POINT001.DAT.cmp=%s' % cmp_out,
         'REFER001:POINT001.DAT.ind=%s' % ind_out)
     run(sys.executable, os.path.join(O2C, 'drstr_refresh.py'), OUT_IMG,
-        'MAPAL001:%s.DAT' % POI_TILE, 'REFER001:POINT001.DAT=%d' % len(final_plain))
+        *['MAPAL001:%s.DAT' % t for t in tiles_out], 'REFER001:POINT001.DAT=%d' % len(final_plain))
 
     if FAT_TIME is not None:
         from fatedit import Editor
         from fatwrite import fat_time
         ht, hd = fat_time(FAT_TIME)
         editor = Editor(OUT_IMG)
-        for dirname, name in (('', 'DRSTR001.DAT'), ('MAPAL001', POI_TILE + '.DAT'),
-                              ('REFER001', 'POINT001.DAT.cmp'), ('REFER001', 'POINT001.DAT.ind')):
+        for dirname, name in ((('', 'DRSTR001.DAT'),) + tuple(('MAPAL001', t + '.DAT') for t in tiles_out)
+                              + (('REFER001', 'POINT001.DAT.cmp'), ('REFER001', 'POINT001.DAT.ind'))):
             entry = editor.find(dirname, name)
             entry.short[18:20], entry.short[22:24], entry.short[24:26] = hd, ht, hd
         editor.close()
