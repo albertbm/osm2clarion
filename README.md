@@ -16,7 +16,7 @@ instead of tiles.
 | Feature | State |
 |---|---|
 | Coast, land, roads, road names | Works |
-| Route guidance | Works with bugs: on long routes the route line is drawn only near the start and the end, at every zoom (see Limits) |
+| Route guidance | Works; long routes are tested in the emulator, not yet in a car |
 | Roundabouts | Works |
 | Speed-limit signs | Works |
 | Speed cameras | Works |
@@ -208,13 +208,6 @@ tools will read. The keys are explained in comments in `profiles/iceland.toml` a
   residential, commercial, industrial or retail landuse. A house out in the open country
   gets no shape even where OSM has its footprint.
 - North of about 60° the 640-160 km views look stretched east-west, as on factory cards.
-- On long routes the route line is drawn only near the start and near the destination, at
-  every zoom from 100 m to 64 km; the middle of the route is calculated but not drawn. Close
-  up, the line stops a few kilometres ahead, at the edge of a 5x5 block of level-1 parcels
-  around where the route was calculated, and the unit recalculates when the car gets there.
-  This happens while driving, not only in simulation. It started once builds covered more
-  than one town. Copying the factory's level-1 link-direction flag and two cost-word bits did
-  not fix it.
 
 ## Docs
 
