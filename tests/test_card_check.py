@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 15)
+        self.assertEqual(len(checks), 16)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -66,6 +66,53 @@ class TestCoarseGraphPresent(unittest.TestCase):
         lev5 = {(0, 0): (dict(nodes=[]), dict(nodes=[]))}
         r = card_check.check_coarse_graph_present(L2, lev4, lev5)
         self.assertTrue(r['passed'])
+
+
+class TestCoarseShapes(unittest.TestCase):
+    @staticmethod
+    def graph(lid, code=0):
+        end = lambda at, flag: dict(x=at[0], y=at[1], entries=[dict(cls=0x0494, id=lid | flag, w4=code << 1, w5=0)])
+        return {(0, 0): (dict(nodes=[end((10, 20), 0), end((30, 40), 0x2000)]), None)}
+
+    @staticmethod
+    def shapes(lid, above=0):
+        head = [0, 0x8000 | above, 0] if above else [0, 0]
+        shape = [0x8002, 0x4000, 0, 12] + head + [0x0800 | 10, 0x0800 | 20, lid, 0x3000 | 30, 40]
+        unit = [0xffff, 0] * 6 + [11, 1] + [0xffff, 0] * 4 + [len(shape) + 1 | (0x2000 if above else 0)] + shape
+        return {(0, 0): list(card_check.coarse_shapes(unit))}
+
+    def check(self, above, code=1):
+        return card_check.check_coarse_shapes(self.graph(1, code), self.graph(3), {4: self.shapes(1, above), 5: self.shapes(3)})
+
+    def test_shape_with_its_level5_word_passes(self):
+        r = self.check(3)
+        self.assertTrue(r['passed'], r)
+        self.assertEqual(r['counts']['L4 with a route number'], 1)
+
+    def test_missing_level5_word_fails(self):
+        r = self.check(0)
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['L4 shapes not naming their level-5 link'], 1)
+
+    def test_word_for_no_level5_link_fails(self):
+        self.assertEqual(self.check(4)['counts']['L4 shapes naming no level-5 link'], 1)
+
+    def test_link_level5_lacks_needs_no_word(self):
+        self.assertTrue(self.check(0, code=0)['passed'])
+
+    def test_graph_link_without_a_shape_fails(self):
+        r = card_check.check_coarse_shapes(self.graph(1), {}, {4: {(0, 1): []}})
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['L4 graph links without a shape'], 1)
+
+    def test_one_way_bits_must_be_the_links(self):
+        lev4 = self.graph(1)
+        for nd in lev4[0, 0][0]['nodes']: nd['entries'][0]['w5'] = 0x4000
+        r = card_check.check_coarse_shapes(lev4, {}, {4: self.shapes(1)})
+        self.assertEqual(r['counts']["L4 one-way bits not the link's"], 1)
+
+    def test_nothing_loaded_passes(self):
+        self.assertTrue(card_check.check_coarse_shapes({}, {}, {})['passed'])
 
 
 class TestNoJunctionOnParcelLine(unittest.TestCase):

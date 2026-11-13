@@ -55,6 +55,28 @@ class TestCoarseShapes(unittest.TestCase):
         self.assertEqual(w[12] & 0xf800, 0x1000, 'the last point')
         self.assertIsNotNone(lev_roads.decode(w, 4))
 
+    def test_level4_shape_names_its_level5_link(self):
+        w = lev_roads.shape(4, 4, [[(10, 20), (30, 40)]], name_off=12, ids=[7], upper=3)
+        self.assertEqual(w[0] >> 13, 1, 'one more header word')
+        self.assertEqual(w[5:8], [0, 0x8000 | 3, 0], 'the factory place: after word 5')
+        self.assertEqual(w[8:11], [0x0800 | 10, 0x0800 | 20, 7], 'start and link id follow')
+        self.assertIsNotNone(lev_roads.decode(w, 4))
+
+    def test_direction_goes_on_every_y(self):
+        along = lev_roads.shape(4, 4, [[(10, 20), (30, 40), (50, 60)]], name_off=12, ids=[7], direction=1)
+        self.assertEqual(along[3], 0x1000, 'named and one-way')
+        self.assertEqual([y & 0xc000 for y in (along[8], along[11], along[13])], [0x4000] * 3)
+        against = lev_roads.shape(4, 4, [[(10, 20), (30, 40)]], ids=[7], direction=-1)
+        self.assertEqual((against[3], against[8] & 0xc000), (0x3000, 0x8000))
+        both = lev_roads.shape(4, 7, [[(10, 20), (30, 40)]], ids=[7], direction=0)
+        self.assertEqual((both[3], both[8] & 0xc000, both[11] & 0xc000), (0, 0, 0), 'unnamed and two-way')
+        self.assertIsNotNone(lev_roads.decode(along, 4))
+
+    def test_layer_keeps_a_class_together(self):
+        shapes = [lev_roads.shape(4, c, [[(0, 0), (9, 9)]], ids=[i]) for i, c in enumerate((5, 3, 7, 3, 10, 5), 1)]
+        order = [(sh[2] >> 12, sh[-3]) for sh in lev_roads.by_layer(shapes)]
+        self.assertEqual(order, [(10, 5), (3, 2), (3, 4), (5, 1), (5, 6), (7, 3)], 'layer 0 first, ids in step')
+
     def test_level3_has_no_link_ids(self):
         w = lev_roads.shape(3, 7, [[(1, 2), (3, 4), (5, 6)]])
         self.assertEqual(w[1], 3, 'level 3 counts points without 0x8000')

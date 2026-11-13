@@ -141,6 +141,61 @@ def load_lev(path):
     return out
 
 
+def load_lev_shapes(path):
+    """{level: {(row, col): [(layer, class, links, level-5 word or None, named)]}} of the
+    level-4 and level-5 road shapes, walked as the unit walks them (Navi.exe 0x516604), a
+    link as (id, first point, last point, y bits, points), or {} when path is None."""
+    if path is None:
+        return {}
+    data = path if isinstance(path, (bytes, bytearray)) else open(path, 'rb').read()
+    out = {}
+    for layer in lev_file.read(data, decode=True)['sections'][0]['levels']:
+        if layer['level'] not in (4, 5):
+            continue
+        recs = out.setdefault(layer['level'], {})
+        for d in layer['dirs']:
+            per = d['pairs'] // d['cols']
+            for row, rr in enumerate(d['rows'] or []):
+                for col in range(d['cols'] if rr else 0):
+                    r = rr[col * per]
+                    if r is None or 'plain' not in r or len(r['plain']) < 44:
+                        continue
+                    w = struct.unpack('>%dH' % (len(r['plain']) // 2), r['plain'])
+                    if w[2] != 0x00fa or w[7] in (0, 0xffff):
+                        continue
+                    try:
+                        recs[row, col] = list(coarse_shapes(w[2 * w[7]:2 * (w[7] + w[8])]))
+                    except IndexError:
+                        recs[row, col] = []
+    return out
+
+
+def coarse_shapes(u):
+    """The shapes of one coarse road unit, layer by layer."""
+    for layer in range(11):
+        p, count = 2 * u[2 * layer], u[2 * layer + 1]
+        if u[2 * layer] == 0xffff:
+            continue
+        for _ in range(count):
+            w0, w1, w2, w3, name = u[p:p + 5]
+            q = p + 6 + (w3 & 3)
+            above = [x for x in u[q:q + (w0 >> 13 & 3)] if x & 0xe000 == fa_encode.UPPER_LEVEL[5]]
+            q += (w0 >> 13 & 3) + 1
+            ids, pts, way = [], [], []
+            for _ in range(w1 & 0xfff):
+                x, y = u[q], u[q + 1]
+                q += 2 + (1 if y & 0x2000 else 0)
+                if y & 0x0800:
+                    ids.append((u[q] & 0x1fff, len(pts)))
+                    q += 1
+                pts.append((x & 0x7ff, y & 0x7ff))
+                way.append(y & 0xc000)
+            links = [(lid, pts[at], pts[nxt[1] if nxt else -1], set(way[at + 1:nxt[1] + 1 if nxt else None]),
+                      (nxt[1] if nxt else len(pts) - 1) - at + 1) for (lid, at), nxt in zip(ids, ids[1:] + [None])]
+            yield layer, w2 >> 12, links, above[0] & 0x1fff if above else None, name != 0xffff
+            p += w0 & 0x1fff
+
+
 # Shared L1 walk (rules 1 and 6): follow the L2 part-B triple's w4 hop through L1.
 
 def l1_parcel(pc2, cell):
@@ -792,7 +847,77 @@ def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
                    % (st['L4 not named'], st['L4 links'], st['L4 backwards'] + st['L5 backwards'])])
 
 
-def run_all(L1, L2, SH1, lev4, lev5, origin=None):
+LINK_POINTS = 32          # the most one coarse link has on the factory card
+
+
+def check_coarse_shapes(lev4, lev5, coarse):
+    """The level-4 and level-5 road shapes are the graph's links, drawn: every graph link has
+    a shape link of its class and id running between its two nodes and every shape link a
+    graph link, so no road the graph carries has a gap. A level-4 shape names its level-5
+    link when the graph says level 5 has it, a layer keeps each class together, the points
+    of a link carry its one-way bits and number 32 at most, and the numbered classes carry
+    their route numbers."""
+    st = collections.Counter()
+    if not coarse or not lev4:
+        return result('coarse_shapes', True, st, ['no coarse road shapes loaded, nothing to check'])
+    keys5 = {par + (e['cls'] & 0xf, e['id'] & 0x1fff) for par, (a, b) in lev5.items()
+             for nd in a['nodes'] for e in nd['entries'] if not e['cls'] & 0x8000}
+    for lv, recs in ((4, lev4), (5, lev5)):
+        for par, (a, b) in recs.items():
+            ends = collections.defaultdict(dict)
+            for nd in a['nodes']:
+                for e in nd['entries']:
+                    if not e['cls'] & 0x8000:
+                        ends[e['cls'] & 0xf, e['id'] & 0x1fff]['E' if e['id'] & 0x2000 else 'S'] = ((nd['x'], nd['y']), e['w4'] >> 1 & 3, e['w5'] & 0xc000)
+            seen, layers = set(), collections.defaultdict(list)
+            for layer, cls, links, above, named in coarse.get(lv, {}).get(par, ()):
+                layers[layer].append(cls)
+                for lid, first, last, way, npts in links:
+                    st['L%d shape links' % lv] += 1
+                    st['links of more than %d points' % LINK_POINTS] += npts > LINK_POINTS
+                    if cls in (3, 4, 5):
+                        st['L%d numbered-class links' % lv] += 1
+                        st['L%d with a route number' % lv] += named
+                    g = ends.get((cls, lid))
+                    if g is None or (cls, lid) in seen:
+                        st['L%d shape links of no graph link' % lv] += 1
+                        continue
+                    seen.add((cls, lid))
+                    if g.get('S', (None,))[0] != first or g.get('E', (None,))[0] != last:
+                        st['L%d not node to node' % lv] += 1
+                    if 'S' in g and way != {g['S'][2]}:
+                        st['L%d one-way bits not the link\'s' % lv] += 1
+                    if lv == 4:
+                        has5 = g.get('S', g.get('E'))[1] > 0
+                        st['L4 links level 5 has'] += has5
+                        if has5 and above is None:
+                            st['L4 shapes not naming their level-5 link'] += 1
+                        elif above is not None and (par[0] // 4, par[1] // 4, cls, above) not in keys5:
+                            st['L4 shapes naming no level-5 link'] += 1
+            st['L%d graph links' % lv] += len(ends)
+            st['L%d graph links without a shape' % lv] += len(set(ends) - seen)
+            for classes in layers.values():
+                st['classes in a layer'] += len(set(classes))
+                st['class runs'] += 1 + sum(p != q for p, q in zip(classes, classes[1:]))
+    n = st['L4 graph links'] + st['L5 graph links']
+    loose = sum(st['L%d %s' % (lv, k)] for lv in (4, 5) for k in ('shape links of no graph link', 'graph links without a shape'))
+    apart = st['L4 not node to node'] + st['L5 not node to node']
+    words = st['L4 shapes not naming their level-5 link'] + st['L4 shapes naming no level-5 link']
+    numbered = st['L4 with a route number'] >= 0.4 * st['L4 numbered-class links']
+    ways = st['L4 one-way bits not the link\'s'] + st['L5 one-way bits not the link\'s']
+    ok = (loose <= 0.002 * n and apart <= 0.005 * n and words <= 0.005 * max(1, st['L4 links level 5 has'])
+          and st['class runs'] <= 2 * st['classes in a layer'] and numbered and ways <= 0.02 * n
+          and not st['links of more than %d points' % LINK_POINTS])
+    return result('coarse_shapes', ok, st,
+                  ['links without a shape or shapes without a link: %d of %d (want 0.2%% or less); not node to node: %d (0.5%%)' % (loose, n, apart),
+                   'level-4 shapes without or with a wrong level-5 word: %d of %d (want 0.5%% or less)' % (words, st['L4 links level 5 has']),
+                   'class runs %d for %d classes in their layers (want at most two a class)' % (st['class runs'], st['classes in a layer']),
+                   'links drawn with more than %d points: %d (want none)' % (LINK_POINTS, st['links of more than %d points' % LINK_POINTS]),
+                   'shape links whose one-way bits are not the graph link\'s: %d (want 2%% or less)' % ways,
+                   'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
+
+
+def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None):
     out = []
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
@@ -809,6 +934,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None):
     out.append(check_hierarchy_codes(L1, SH1))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
+    out.append(check_coarse_shapes(lev4, lev5, coarse))
     return out
 
 
@@ -979,13 +1105,13 @@ def main(argv):
             errors.update({'%s %s' % (cell, k): n for k, n in e.items()})
             L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(lev))
         checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
         errors = collections.Counter()
         L1, L2, SH1 = load_road_tiles(args.tiles, errors)
         levd = load_lev(args.lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(args.lev))
         checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
@@ -994,7 +1120,7 @@ def main(argv):
     if args.factory:
         L1f, L2f, SH1f = load_road_tiles(args.factory)
         levf = load_lev(args.factory_lev)
-        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'))
+        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'), load_lev_shapes(args.factory_lev))
         print_report('factory (%s)' % ', '.join(os.path.basename(f) for f in args.factory), fchecks)
         report['factory'] = dict(checks=fchecks)
 

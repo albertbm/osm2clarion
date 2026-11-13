@@ -296,11 +296,13 @@ def encode_level(child, records, level, origin, country, occurrences, hierarchy=
         R.update(a=a, b=b, edges=edges, ids=ids)
 
 
-def link_shapes(level, records, origin):
-    """{parcel: [(class, route number, points, link id)]}, one item per graph link, for
-    lev_roads.graph_build. The unit draws a route link from the section-1 shape that carries
-    its class and id (Navi.exe 0x516604), so each link gets a shape of its own, from its
-    first node to the node whose entry carries the drawn-end flag."""
+def link_shapes(level, records, origin, upper=None):
+    """{parcel: [(class, route number, points, link id, level-5 link id, direction)]}, one
+    item per graph link, for lev_roads.graph_build. The unit draws a route link from the
+    section-1 shape that carries its class and id (Navi.exe 0x516604), so each link gets a
+    shape of its own, from its first node to the node whose entry carries the drawn-end
+    flag. A link has LINK_MAXPTS points at most; a longer run is simplified harder. upper is
+    build()'s {level-2 link: {level: id}}, from which a level-4 shape names its level-5 link."""
     import lev_roads
     out = {}
     for parent, R in sorted(records.items()):
@@ -316,9 +318,10 @@ def link_shapes(level, records, origin):
                     if q != pts[-1]: pts.append(q)
                 if len(pts) > 1 and pts[-1] == end: pts.pop()
                 pts.append(end)
-                if len(pts) <= lev_roads.MAXPTS: break
-                tol *= 2
-            items.append((link['cls'], link.get('ref'), pts, lid))
+                if len(pts) <= lev_roads.LINK_MAXPTS: break
+                tol *= 1.25
+            above = {upper.get(m, {}).get(5) for m in link.get('members', ())} if upper and level == 4 else set()
+            items.append((link['cls'], link.get('ref'), pts, lid, above.pop() if len(above) == 1 else None, link['direction']))
         out[parent] = items
     return out
 
@@ -521,7 +524,7 @@ def build(ways, profile, l2_tiles, bbox=None):
     stats = {4: (len(r4), sum(len(r['nodes']) for r in r4.values()), sum(len(r['links']) for r in r4.values())),
              5: (len(r5), sum(len(r['nodes']) for r in r5.values()), sum(len(r['links']) for r in r5.values()))}
     stats['l2_patched'] = bbox is None
-    stats['shapes'] = {4: link_shapes(4, r4, origin), 5: link_shapes(5, r5, origin)}
+    stats['shapes'] = {4: link_shapes(4, r4, origin, upper), 5: link_shapes(5, r5, origin)}
     stats['l2_flags'] = collections.Counter(flags.values())
     stats['coarse_words'] = words
     return dirs, stats
