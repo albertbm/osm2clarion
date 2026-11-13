@@ -154,8 +154,9 @@ UPPER_LEVEL = {2: 0x2000, 4: 0x6000, 5: 0x8000}   # level code, top three bits o
 # table. The traffic module lists only such shapes (Navi.exe 0x4de924). Never written here:
 # factory shapes in a country with no table (Belarus, Albania) have it clear too.
 TRAFFIC = 0x4000
-# the level-2 classes the level-4 and level-5 graphs carry (lev_graph builds them from these)
-COARSE_CLASSES = {4: set(range(16)), 5: set(range(7)) | {10, 11, 12}}
+# the level-2 classes the level-4 and level-5 graphs carry (lev_graph builds them from these).
+# Class 7 stays at level 2: none of 33,432 entries on QY8 B50R068R or 69,400 on QY7 B58R050R is in level 4.
+COARSE_CLASSES = {4: set(range(16)) - {7}, 5: set(range(7)) | {10, 11, 12}}
 
 def coarse_words(cls):
     """Header words for the level-5 and level-4 links over a level-2 link of this class, highest

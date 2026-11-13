@@ -221,7 +221,8 @@ class TestGuidanceWords(unittest.TestCase):
 
     def test_coarse_words_are_filled_in_place(self):
         self.assertEqual(fa_encode.coarse_words(4), [0x8000, 0x6000], 'highest level first, ids left for lev_graph')
-        self.assertEqual(fa_encode.coarse_words(7), [0x6000])
+        self.assertEqual(fa_encode.coarse_words(7), [], 'class 7 stays at level 2')
+        self.assertEqual(fa_encode.coarse_words(12), [0x8000, 0x6000])
         rec, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, [self.CHAIN], hws=['primary'], styles=[[0x101e, 0x101e]],
                                         country=352, uppers=[fa_encode.coarse_words(4) + [0x2007]])
         import lev_graph
