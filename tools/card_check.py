@@ -104,6 +104,13 @@ def load_road_tiles(paths, errors=None):
     return L1, L2, SH1
 
 
+def tiles_format(paths):
+    """The format of the first tile, or None when there is none: the tiles of a card share one."""
+    for p in paths:
+        with TileScan(p) as t:
+            return t.fmt
+
+
 def load_lev(path):
     """{level: {(row,col): (parsed a, parsed part-b)}} for LEV3456R.DAT levels 4 and 5,
     or {} for every level when path is None."""
@@ -776,9 +783,12 @@ def check_traffic_shapes(SH1, none=0.01, some=0.4, streets=0.02):
                                              % (st['main set'], st['main'], 100 * none, 100 * some, st['street set'], st['street'], 100 * streets)])
 
 
-def check_hierarchy_codes(L1, SH1):
+def check_hierarchy_codes(L1, SH1, fmt=None):
     """Bits 1-2 of a level-1 link's w4 count the levels above that have the link: the number
-    of upper-link words in its shape header. Factory B50R068R: 2,192,458 of 2,192,458 entries."""
+    of upper-link words in its shape header. Factory B50R068R: 2,192,458 of 2,192,458 entries.
+    On QY7 the code is 1 for any number of words: 4,750,926 of 4,750,926 on factory B58R050R,
+    72,090 of them with two or three words."""
+    count = fmt is None or fmt.level_count
     words = {}
     for pc, w, shapes in road_shapes(SH1):
         for S in shapes:
@@ -792,9 +802,10 @@ def check_hierarchy_codes(L1, SH1):
                 if e['cls'] & 0x8000 or n is None:
                     continue
                 st['entries'] += 1
-                st['code is not the word count'] += (e['w4'] >> 1 & 3) != n
+                st['code is not the word count'] += (e['w4'] >> 1 & 3) != (n if count else min(n, 1))
     return result('hierarchy_codes', st['code is not the word count'] <= 0.005 * st['entries'], st,
-                  ['link entries whose w4 code is not their shape\'s word count: %d (factory 0, pass at 0.5%%)' % st['code is not the word count']])
+                  ['link entries whose w4 code is not %s: %d (factory 0, pass at 0.5%%)'
+                   % ('their shape\'s word count' if count else '1 under a shape with words, else 0', st['code is not the word count'])])
 
 
 def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
@@ -917,7 +928,7 @@ def check_coarse_shapes(lev4, lev5, coarse):
                    'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
 
 
-def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None):
+def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None):
     out = []
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
@@ -931,7 +942,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None):
     out.append(check_l2_nodes_on_l1(L1, L2))
     out.append(check_traffic_shapes(SH1))
     out.append(check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin))
-    out.append(check_hierarchy_codes(L1, SH1))
+    out.append(check_hierarchy_codes(L1, SH1, fmt))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     out.append(check_coarse_shapes(lev4, lev5, coarse))
@@ -1105,13 +1116,15 @@ def main(argv):
             errors.update({'%s %s' % (cell, k): n for k, n in e.items()})
             L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(lev))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(lev),
+                         tiles_format(tiles[k] for k in sorted(tiles)))
         checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
         errors = collections.Counter()
         L1, L2, SH1 = load_road_tiles(args.tiles, errors)
         levd = load_lev(args.lev)
-        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(args.lev))
+        checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(args.lev),
+                         tiles_format(args.tiles))
         checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
@@ -1120,7 +1133,8 @@ def main(argv):
     if args.factory:
         L1f, L2f, SH1f = load_road_tiles(args.factory)
         levf = load_lev(args.factory_lev)
-        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'), load_lev_shapes(args.factory_lev))
+        fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'), load_lev_shapes(args.factory_lev),
+                          tiles_format(args.factory))
         print_report('factory (%s)' % ', '.join(os.path.basename(f) for f in args.factory), fchecks)
         report['factory'] = dict(checks=fchecks)
 

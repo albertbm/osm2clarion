@@ -747,9 +747,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         up = upper.get(pc) if upper else None
         tops = None
         if coarse:
-            # w4 bits 1-2 count the levels above; the length word's top bits name the highest (0 = level 5, 1 = level 4)
+            # w4 bits 1-2 count the levels above (QY7: 1 for any); the length word's top bits name the highest (0 = level 5, 1 = level 4)
             above = levels_above(P['links'], level, up); most = 3 if level == 1 else 2
-            link_w4 = [w if not n else w & ~0x6 | n << 1 for w, n in zip(link_w4, above)]
+            link_w4 = [w if not n else w & ~0x6 | (n if FMT.level_count else 1) << 1 for w, n in zip(link_w4, above)]
             tops = [0 if n == most else 1 if n == most - 1 else None for n in above]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                integrated=integrated, tops=tops,

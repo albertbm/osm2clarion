@@ -246,6 +246,9 @@ class TestHierarchyCodes(unittest.TestCase):
         self.assertTrue(card_check.check_hierarchy_codes(L1(0x4), {(0, 0): plain})['passed'])
         self.assertTrue(card_check.check_hierarchy_codes(L1(0x7004), {(0, 0): plain})['passed'], 'ring bits aside')
         self.assertFalse(card_check.check_hierarchy_codes(L1(0x2), {(0, 0): plain})['passed'])
+        qy7 = card_check.clarion_format.get('x08-02')
+        self.assertTrue(card_check.check_hierarchy_codes(L1(0x2), {(0, 0): plain}, qy7)['passed'], 'QY7: 1 for any words')
+        self.assertFalse(card_check.check_hierarchy_codes(L1(0x4), {(0, 0): plain}, qy7)['passed'])
 
 
 class TestResultShape(unittest.TestCase):
