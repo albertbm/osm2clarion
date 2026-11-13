@@ -134,6 +134,16 @@ class TestLevel2Chains(unittest.TestCase):
         self.assertEqual(len(P['links']), 1)
         self.assertEqual(len(P['links'][0][8]), 3, 'the bends ride inside the level-2 link')
 
+    def test_level2_keeps_both_sides_of_an_island(self):
+        p, q = (-21.900, 64.130), (-21.899, 64.130)
+        east = dict(id=1, hw='secondary', name='A', ref=None, dir=1, nodes=[p, q])
+        west = dict(id=2, hw='secondary', name='A', ref=None, dir=1, nodes=[q, p])
+        self.assertEqual(len(next(iter(rd_build.build_graphs([east, west], 'B60R080R', 2, True).values()))['links']), 1)
+        west['full'] = [q, (-21.8995, 64.1301), p]
+        links = next(iter(rd_build.build_graphs([east, west], 'B60R080R', 2, True).values()))['links']
+        self.assertEqual(sorted(l[3] for l in links), [1, 2, 2], 'the side simplify left no point is cut at one it took')
+
+
 
 class TestEdgeTwins(unittest.TestCase):
     def setUp(self):

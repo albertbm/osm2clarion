@@ -259,6 +259,7 @@ def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
             for i in idx:
                 if i == short: continue
                 part = cands[i][0]
+                if len(part) == 2: part[1:1] = dropped_point(part, cands[i][1], pc, level, ends)
                 mids = [j for j in range(1, len(part) - 1) if part[j][0] not in ends]
                 cut_at[i] = mids[len(mids) // 2] if mids else None
         for i, (part, wy, rid) in enumerate(cands):
@@ -311,6 +312,18 @@ def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
         P['ring'] = not inside(pc)
     return parcels
 
+
+def dropped_point(part, wy, pc, level, ends):
+    """The middle point the level-2 simplify took from a two-point link, as [(key, point)], or
+    []. With it the second side of a traffic island can be cut and kept: without, level 2
+    has one side only and loses the other direction."""
+    full = [tuple(p) for p in wy.get('full', ())]
+    a, b = tuple(part[0][1]), tuple(part[1][1])
+    if a not in full or b not in full: return []
+    i, j = sorted((full.index(a), full.index(b)))
+    inner = [(tuple(min(2046, max(1, v)) for v in quant(p, pc, level)), list(p)) for p in full[i + 1:j]]
+    inner = [x for x in inner if x[0] not in ends]
+    return inner[len(inner) // 2:len(inner) // 2 + 1]
 
 def own(parcels):
     """The parcels of the cell itself, without the ring around it."""
@@ -945,6 +958,7 @@ def main():
     ways2 = [dict(w) for w in ways if w['hw'] in l2]
     pinned = pin_crossings(ways2)
     tol2 = P.l2_simplify_metres if P.l2_simplify_metres is not None else tol
+    for w in ways2: w['full'] = w['nodes']   # for dropped_point
     if tol2:
         shared = collections.Counter(tuple(p) for w in ways2 for p in w['nodes'])
         junctions = {p for p, n in shared.items() if n > 1} | pinned
