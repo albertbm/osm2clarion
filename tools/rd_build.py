@@ -989,6 +989,8 @@ def main():
         raise SystemExit('no road set: set source.roads in the profile or pass roads.json')
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
     derive_dir(ways)
+    for w in ways: w['hw'] = fa_encode.road_kind(w['hw'], w.get('ref'))
+    l2 = set(l2) | {fa_encode.UNNUMBERED[h] for h in l2 if h in fa_encode.UNNUMBERED}
     signs = {w['id']: w['dest'] for w in ways if w.get('dest')} if signs_path else None
     if signs_path and not signs:
         print('WARNING: --signposts but no way carries destination tags; rebuild roads.json with osm_roads.py', file=sys.stderr)

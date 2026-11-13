@@ -1675,6 +1675,8 @@ class TestRoadClasses(unittest.TestCase):
         'primary_link': (6, 4, 4, 5),
         'secondary': (6, 5, 5, 6),
         'secondary_link': (6, 5, 5, 6),
+        'secondary_unnumbered': (6, 6, 6, 6),
+        'secondary_unnumbered_link': (6, 6, 6, 6),
         'tertiary': (6, 7, 7, 7),
         'unclassified': (5, 8, 7, 7),
         'residential': (5, 8, 7, 7),

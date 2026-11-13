@@ -64,6 +64,7 @@ Layer 7 takes classes 1-2, layer 6 takes 3-7, layer 5 class 8, layer 4 class 9, 
 | `trunk`, `trunk_link` | 6 | 3 | 3 | 4 | 4 |
 | `primary`, `primary_link` | 6 | 4 | 4 | 5 | 5 |
 | `secondary`, `secondary_link` | 6 | 5 | 5 | 6 | 6 |
+| `secondary`, `secondary_link` with no `ref` | 6 | 6 | 6 | 6 | 6 |
 | `tertiary`, `tertiary_link` | 6 | 7 | 7 | 7 | n/a |
 | `unclassified`, `residential`, `living_street` | 5 | 8 | 7 | 7 | n/a |
 | `service`, `track` | 4 | 9 | 7, never used | 7 | n/a |
@@ -79,6 +80,16 @@ there never fires. Class follows the road's standard, not its route prefix, sinc
 data every layer-6 class-4 and class-5 level-1 shape carries a route number and nothing
 numbered sits below class 5. `fa_encode.CLASSES` also holds a level-3 column that
 `lev_roads.py` never reads; keep the two in step.
+
+## Numbered and unnumbered
+
+Classes 3 to 5 are numbered roads. Every level-4 link of them carries a route number on the
+factory cards, 260,899 of 260,899 on QY8 and 210,300 of 210,300 on QY7, while class 6 is mostly
+unnumbered: 89,495 of 306,581 on QY8. In Jyväskylä the factory has 79 class-4 and 226 class-3
+level-4 links, all numbered, no class 5, and 90 class-6 links of which 10 are numbered. So a
+`secondary` way with no `ref`, a town's main streets, is class 6 at every level
+(`fa_encode.road_kind`); the level-3 column, read from `roads.json` by `lev_roads.py`, is not
+changed by it.
 
 ## Which classes reach level 2
 

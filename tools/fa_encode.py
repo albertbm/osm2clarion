@@ -61,6 +61,8 @@ CLASSES = {
     'primary_link':   ((6, 4), 4, 5),
     'secondary':      ((6, 5), 5, 6),
     'secondary_link': ((6, 5), 5, 6),
+    'secondary_unnumbered':      ((6, 6), 6, 6),
+    'secondary_unnumbered_link': ((6, 6), 6, 6),
     'tertiary':       ((6, 7), 7, 7),
     'tertiary_link':  ((6, 7), 7, 7),
     'unclassified':   ((5, 8), 7, 7),
@@ -71,6 +73,13 @@ CLASSES = {
     'ferry':          ((0, 10), 10, 10),
 }
 DEFAULT = ((5, 8), 7, 7)
+# Factory classes 3 to 5 are numbered roads: every level-4 link of them carries a route number,
+# 260,899 of 260,899 on the QY8 card and 210,300 of 210,300 on QY7. A main street without one is class 6.
+UNNUMBERED = {'secondary': 'secondary_unnumbered', 'secondary_link': 'secondary_unnumbered_link'}
+
+def road_kind(hw, ref):
+    """The CLASSES key of a way: its highway value, or the unnumbered one when it has no ref."""
+    return hw if ref else UNNUMBERED.get(hw, hw)
 
 def layer_class(hw, level, layer=None):
     """(layer, class) for one OSM highway value at level 1 or 2."""

@@ -25,6 +25,7 @@ SPEED_KMH = {
     'trunk': 90, 'trunk_link': 50,
     'primary': 70, 'primary_link': 50,
     'secondary': 50, 'secondary_link': 50,
+    'secondary_unnumbered': 50, 'secondary_unnumbered_link': 50,
     'tertiary': 50, 'tertiary_link': 50,
     'unclassified': 50,
     'residential': 30,

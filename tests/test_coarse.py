@@ -144,6 +144,13 @@ class TestLevel2Chains(unittest.TestCase):
         self.assertEqual(sorted(l[3] for l in links), [1, 2, 2], 'the side simplify left no point is cut at one it took')
 
 
+    def test_a_secondary_without_a_number_is_class_6(self):
+        self.assertEqual(fa_encode.road_kind('secondary', '34'), 'secondary')
+        self.assertEqual(fa_encode.road_kind('primary', None), 'primary')
+        for level in (1, 2):
+            self.assertEqual(fa_encode.layer_class(fa_encode.road_kind('secondary', None), level), (6, 6))
+            self.assertEqual(fa_encode.layer_class(fa_encode.road_kind('secondary_link', ''), level), (6, 6))
+
 
 class TestEdgeTwins(unittest.TestCase):
     def setUp(self):
