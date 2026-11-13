@@ -43,7 +43,7 @@ def l2_drawn(tile):
         pl = r.plain()
         if len(pl) < 44: continue
         w = struct.unpack_from('>22H', pl)
-        if w[2] == 0x00fa: shapes[w[0], w[1]] = pl
+        if w[2] == 0x00fa and w[7] != 0xffff: shapes[w[0], w[1]] = pl   # a QY7 background is 0x00fa too, with no layer table
         elif w[11] != 0xffff: names[w[0], w[1]] = pl[4 * w[11]:4 * (w[11] + w[12])]
     for code, pl in shapes.items():
         pc = clarion_bg.parcel_rowcol(2, *code)
