@@ -488,8 +488,50 @@ def upper_links(ways, l2_parcels, parcels, l2_hw):
             if not near or near[0][0] > UPPER_REACH: stats['no level-2 link'] += 1; found.append(None)
             elif near[0][1] != fa_encode.layer_class(l[5], 1)[1]: stats['class differs'] += 1; found.append(None)
             else: stats['found'] += 1; found.append(near[0][2]); turned[-1] = fwd != near[0][3]
+    bridge_dropped(l2_parcels, parcels, l2_hw, out, against, stats)
     upper_links.stats = stats; upper_links.against = against
     return out
+
+BRIDGE_HOPS = 4     # level-1 links of dropped ways between a level-2 node and its link's own way
+
+def bridge_dropped(l2_parcels, parcels, l2_hw, out, against, stats):
+    """Name the links of a way level 2 drops under the level-2 link that runs through them.
+    A short way whose ends share a level-2 point leaves the links at its far end with a node
+    at its near end, so they expand through it, and on factory tiles every link on such a
+    path names the level-2 link."""
+    under = collections.defaultdict(list)
+    for pc in parcels:
+        if not parcels[pc].get('ring'): under[(pc[0] * 32 + pc[2]) // 4, (pc[1] * 32 + pc[3]) // 4].append(pc)
+    for (y, x, row, col), P2 in l2_parcels.items():
+        if P2.get('ring'): continue
+        on = collections.defaultdict(set); free = collections.defaultdict(list)
+        for pc in under[y * 8 + row, x * 8 + col]:
+            N = parcels[pc]['nodes']
+            for k, l in enumerate(parcels[pc]['links']):
+                ga, gb = tuple(N[l[0]]['geo']), tuple(N[l[1]]['geo'])
+                cls = fa_encode.layer_class(l[5], 1)[1]
+                if out[pc][k] is not None: on[cls, out[pc][k]] |= {ga, gb}
+                elif l[5] in l2_hw: free[ga].append((gb, pc, k, cls, True)); free[gb].append((ga, pc, k, cls, False))
+        if not free: continue
+        for l, lid in zip(P2['links'], link_ids(P2['links'], 2)):
+            cls = fa_encode.layer_class(l[5], 2)[1]; own = on.get((cls, lid))
+            if not own: continue
+            for end in (0, 1):
+                g = tuple(P2['nodes'][l[end]]['geo'])
+                if g in own: continue
+                paths = [(g, [])]; seen = {g}; hit = None
+                for _ in range(BRIDGE_HOPS):
+                    nxt = []
+                    for at, path in paths:
+                        for to, pc, k, c, fwd in free[at]:
+                            if c != cls or to in seen or out[pc][k] is not None: continue
+                            seen.add(to); nxt.append((to, path + [(pc, k, fwd)]))
+                            if to in own and hit is None: hit = nxt[-1][1]
+                    paths = nxt
+                    if hit or not paths: break
+                for pc, k, fwd in hit or ():
+                    # walked from the link's first node the path runs its way, from its last against it
+                    out[pc][k] = lid; against[pc][k] = fwd == (end == 1); stats['through a dropped way'] += 1
 
 def follow_upper(parcels, upper, against):
     """Turn the links under each level-2 link to run its way; returns how many turned. The
@@ -762,7 +804,9 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         if coarse:
             # w4 bits 1-2 count the levels above (QY7: 1 for any); the length word's top bits name the highest (0 = level 5, 1 = level 4)
             above = levels_above(P['links'], level, up); most = 3 if level == 1 else 2
-            link_w4 = [w if not n else w & ~0x6 | (n if FMT.level_count else 1) << 1 for w, n in zip(link_w4, above)]
+            link_w4 = [w & ~0x6 | (n if FMT.level_count else min(n, 1)) << 1 for w, n in zip(link_w4, above)]
+            # a link no level-2 link runs through has no word: it is a level-1 link only
+            if integrated: integrated = [n > 0 for n in above]
             tops = [0 if n == most else 1 if n == most - 1 else None for n in above]
         out[pc] = rd_encode.build_record_edges(level, pc[0], pc[1], pc[2], pc[3], nodes, links, edges,
                                                integrated=integrated, tops=tops,
@@ -1024,7 +1068,7 @@ def main():
         if level == 1:
             st = upper_links.stats
             report.append(f"level 1: links named in a shape's level-2 word {st['found']}, on a level-2 road with "
-                          f"no level-2 link found {st['no level-2 link']}, class differs between the levels {st['class differs']}, "
+                          f"no level-2 link found {st['no level-2 link']} ({st['through a dropped way']} of them named through a dropped way), class differs between the levels {st['class differs']}, "
                           f"turned to run the way their level-2 link runs {turned}")
         lv = [L for L in sec2['levels'] if L['level'] == level][0]; lv['dirs'] = []
         per_dir = {}
