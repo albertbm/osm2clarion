@@ -3,8 +3,8 @@
 """Check a built card's road graph and coarse routing file against every format rule
 measured off factory tiles, and diff a card against the previous one field by field.
 
-    card_check.py --card A.img [--cells C,C...] [--prev B.img] [--factory TILE ...] [--json]
-    card_check.py --tiles TILE ... [--lev LEV3456R.DAT] [--factory TILE ...] [--json]
+    card_check.py --card A.img [--cells C,C...] [--roads roads.json] [--prev B.img] [--factory TILE ...] [--json]
+    card_check.py --tiles TILE ... [--lev LEV3456R.DAT] [--roads roads.json] [--factory TILE ...] [--json]
 
 With --card, MAPAL001/*.DAT and LEV3456R.DAT are read straight off the FAT image (no
 mount, no full-image load). With --tiles, the files are given directly - useful for a
@@ -14,6 +14,9 @@ Each rule below started as a one-off measurement script, checked against factory
 tiles and a built card before being folded in here. A rule that fails on factory
 data is a rule bug, not a card bug - run --factory and
 read the factory column before trusting a FAIL on the card under test.
+
+--roads names the roads.json the tiles were built from. Level 1 is then held against the
+OSM ways too, so a road OSM has whole and the card draws in pieces fails at any level.
 
 --cells names the road cells the card must carry; a missing one, one with no L1 or L2
 records, or any record that does not parse is a FAIL.
@@ -177,8 +180,9 @@ def load_lev_shapes(path):
     return out
 
 
-def coarse_shapes(u):
-    """The shapes of one coarse road unit, layer by layer."""
+def coarse_walk(u):
+    """(layer, class, name word, level-5 words, [(link id, index of its first point)], points,
+    y bits) of each shape of one coarse road unit, layer by layer."""
     for layer in range(11):
         p, count = 2 * u[2 * layer], u[2 * layer + 1]
         if u[2 * layer] == 0xffff:
@@ -197,10 +201,16 @@ def coarse_shapes(u):
                     q += 1
                 pts.append((x & 0x7ff, y & 0x7ff))
                 way.append(y & 0xc000)
-            links = [(lid, pts[at], pts[nxt[1] if nxt else -1], set(way[at + 1:nxt[1] + 1 if nxt else None]),
-                      (nxt[1] if nxt else len(pts) - 1) - at + 1) for (lid, at), nxt in zip(ids, ids[1:] + [None])]
-            yield layer, w2 >> 12, links, above[0] & 0x1fff if above else None, name != 0xffff
+            yield layer, w2 >> 12, name, above, ids, pts, way
             p += w0 & 0x1fff
+
+
+def coarse_shapes(u):
+    """The shapes of one coarse road unit, layer by layer."""
+    for layer, cls, name, above, ids, pts, way in coarse_walk(u):
+        links = [(lid, pts[at], pts[nxt[1] if nxt else -1], set(way[at + 1:nxt[1] + 1 if nxt else None]),
+                  (nxt[1] if nxt else len(pts) - 1) - at + 1) for (lid, at), nxt in zip(ids, ids[1:] + [None])]
+        yield layer, cls, links, above[0] & 0x1fff if above else None, name != 0xffff
 
 
 # Shared L1 walk (rules 1 and 6): follow the L2 part-B triple's w4 hop through L1.
@@ -716,19 +726,28 @@ def first_ends(a):
             if not e['cls'] & 0x8000 and not e['id'] & 0x2000]
 
 
-def check_upper_link_shapes(L1, L2, SH1):
-    """The level-1 shapes naming a level-2 link run the way the link runs: the unit takes
-    the shape that starts where the last one ended (Navi.exe 0x34d2b8), so one drawn
-    backwards ends its walk. Factory B50R068R: none backwards on 46,835 links."""
+def upper_link_walks(L1, L2, SH1):
+    """(level-2 parcel, class, link id, how the walk ends) of each level-2 link over loaded
+    level-1 records: walk_shapes over the level-1 shapes naming it, or 'not named'."""
     named = upper_shapes(SH1)
-    st = collections.Counter()
     for pc2, (a, b) in L2.items():
         blocks = blocks_of(b)
         for cls, lid, k in first_ends(a):
             node = l1_node(L1, pc2, blocks.get(k))
-            if (pc2[0], pc2[1], cls, lid) in named and node:
-                st['links named'] += 1
-                st[walk_shapes(named[pc2[0], pc2[1], cls, lid], node)] += 1
+            if node:
+                key = pc2 + (cls, lid)
+                yield pc2, cls, lid, walk_shapes(named[key], node) if key in named else 'not named'
+
+
+def check_upper_link_shapes(L1, L2, SH1):
+    """The level-1 shapes naming a level-2 link run the way the link runs: the unit takes
+    the shape that starts where the last one ended (Navi.exe 0x34d2b8), so one drawn
+    backwards ends its walk. Factory B50R068R: none backwards on 46,835 links."""
+    st = collections.Counter()
+    for pc2, cls, lid, status in upper_link_walks(L1, L2, SH1):
+        if status != 'not named':
+            st['links named'] += 1
+            st[status] += 1
     return result('upper_link_shapes', st['backwards'] == 0, st,
                   ['level-2 links with a level-1 shape drawn backwards: %d (want 0)' % st['backwards']])
 
@@ -808,6 +827,33 @@ def check_hierarchy_codes(L1, SH1, fmt=None):
                    % ('their shape\'s word count' if count else '1 under a shape with words, else 0', st['code is not the word count'])])
 
 
+COARSE_SPAN = {4: 64, 5: 256}      # a coarse parcel's side in level-1 parcels
+
+
+def coarse_link_walks(L1, L2, SH1, lev4, lev5, origin):
+    """(level, parcel, class, link id, how the walk ends) of each level-4 and level-5 link
+    over loaded tiles: walk_shapes over the level-1 shapes naming it, or 'not named'."""
+    def under(level, par, k):
+        """The level-1 node under node k of a level-4 or level-5 record."""
+        rec = (lev4 if level == 4 else lev5).get(par)
+        block = blocks_of(rec[1]).get(k) if rec else None
+        if block is None:
+            return None
+        child = child_parcel(level, par, block['parcel'], origin)
+        if level == 5:
+            return under(4, child, block['child'])
+        return l1_node(L1, child, blocks_of(L2[child][1]).get(block['child'])) if child in L2 else None
+
+    for lv, recs in ((4, lev4), (5, lev5)):
+        named = upper_shapes(SH1, fa_encode.UPPER_LEVEL[lv], COARSE_SPAN[lv], (origin[0] * 32, origin[1] * 32))
+        for par, (a, b) in recs.items():
+            for cls, lid, k in first_ends(a):
+                node = under(lv, par, k)
+                if node is not None:
+                    key = par + (cls, lid)
+                    yield lv, par, cls, lid, walk_shapes(named[key], node) if key in named else 'not named'
+
+
 def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
     """A level-1 shape names its level-5, level-4 and level-2 links, highest first, each
     level-4 link is named from below, and the shapes naming a coarse link run its way."""
@@ -823,31 +869,13 @@ def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
         if codes != sorted(codes, key=lambda c: order.get(c, 3)) or codes[-1] != 0x2000 or (0x8000 in codes and 0x6000 not in codes):
             st['words out of order'] += 1
 
-    def under(level, par, k):
-        """The level-1 node under node k of a level-4 or level-5 record."""
-        rec = (lev4 if level == 4 else lev5).get(par)
-        block = blocks_of(rec[1]).get(k) if rec else None
-        if block is None:
-            return None
-        child = child_parcel(level, par, block['parcel'], origin)
-        if level == 5:
-            return under(4, child, block['child'])
-        return l1_node(L1, child, blocks_of(L2[child][1]).get(block['child'])) if child in L2 else None
-
-    base = (origin[0] * 32, origin[1] * 32)
-    for lv, span, recs in ((4, 64, lev4), (5, 256, lev5)):
-        named = upper_shapes(SH1, {4: 0x6000, 5: 0x8000}[lv], span, base)
-        links = {par + (cls, lid): k for par, (a, b) in recs.items() for cls, lid, k in first_ends(a)}
+    for lv, recs in ((4, lev4), (5, lev5)):
+        named = upper_shapes(SH1, fa_encode.UPPER_LEVEL[lv], COARSE_SPAN[lv], (origin[0] * 32, origin[1] * 32))
+        links = {par + key for par, (a, b) in recs.items() for key in {(cls, lid) for cls, lid, k in first_ends(a)}}
         st['L%d names of no link' % lv] = sum(key[:2] in recs and key not in links for key in named)
-        for key, k in links.items():
-            node = under(lv, key[:2], k)
-            if node is None:
-                continue          # not under the loaded tiles
-            st['L%d links' % lv] += 1
-            if key in named:
-                st['L%d %s' % (lv, walk_shapes(named[key], node))] += 1
-            else:
-                st['L%d not named' % lv] += 1
+    for lv, par, cls, lid, status in coarse_link_walks(L1, L2, SH1, lev4, lev5, origin):
+        st['L%d links' % lv] += 1
+        st['L%d %s' % (lv, status)] += 1
     n = st['L4 links'] + st['L5 links']
     ok = (st['words out of order'] <= 0.001 * st['shapes with words']
           and st['L4 names of no link'] + st['L5 names of no link'] <= 0.02 * n
@@ -928,7 +956,273 @@ def check_coarse_shapes(lev4, lev5, coarse):
                    'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
 
 
-def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None):
+GAP = 8                   # level units between two pieces of a road before it counts as a break
+NAMED_BREAKS = 0.002      # share of a level's roads broken where level 1 names the level's links, or OSM has the way
+CLASS_BREAKS = {2: 0.002, 4: 0.015, 5: 0.015}   # the same where level 1 has the road in the level's classes
+OPEN_ENDS = 0.001         # share of the shape ends on a parcel line that may have nothing across
+UPPER_CODE = {code: level for level, code in fa_encode.UPPER_LEVEL.items()}
+
+Road = collections.namedtuple('Road', 'label cls points parcel above')    # above: the levels a level-1 shape names a link of
+
+
+def shape_labels(plain, codec):
+    """{word offset: label text} of the names section of a background record."""
+    w = struct.unpack_from('>22H', plain)
+    sec = plain[4 * w[11]:4 * (w[11] + w[12])] if w[11] != 0xffff else b''
+    out, p = {}, 24
+    for _ in range(struct.unpack_from('>H', sec, 2)[0] if len(sec) >= 24 else 0):
+        if p + 10 > len(sec):
+            break
+        q = p + 8 + (2 if struct.unpack_from('>H', sec, p + 2)[0] & 0x4000 else 0)
+        n = struct.unpack_from('>H', sec, q)[0]
+        out[p // 2] = sec[q + 2:q + 2 + n].rstrip(b'\0').decode(codec, 'replace')
+        p = q + 2 + n + (n & 1)
+    return out
+
+
+def far_edge(v):
+    """2047 is the far parcel line, the next parcel's 0."""
+    return v + (v == 2047)
+
+
+def load_drawn_roads(tile_paths, lev_path, osm=None):
+    """{level: dict(scale, roads, parcels, base, long)} of the road shapes drawn at levels 1, 2, 4 and 5.
+
+    Points are in the level's units from longitude -924 and the equator; scale is the degrees
+    a unit spans, base the parcel the coarse graph's (0, 0) is. A coarse shape is cut into its
+    links. A link of more than LINK_POINTS points is counted in long, not drawn, since the unit
+    left all four such links on our Iceland card undrawn. osm is a roads.json to hold level 1
+    against."""
+    out = {'osm': load_osm_roads(osm, tiles_format(tile_paths))} if osm else {}
+    for level in (1, 2):
+        per_lon, per_lat = clarion_bg.PARCELS_PER_DEG[level]
+        D = out[level] = dict(scale=(1 / (2048 * per_lon), 1 / (2048 * per_lat)), roads=[], parcels=set(), base=(0, 0), long=0)
+        for path in tile_paths:
+            with TileScan(path) as t:
+                cols = collections.defaultdict(dict)
+                for r in t.records(section=1, level=level):
+                    if not r.sub:
+                        cols[r.dir_off, r.slot, r.col][r.k % r.per_col == 0] = r
+                for c in cols.values():
+                    try:
+                        pl = c[True].plain()
+                        if len(pl) < 44 or struct.unpack_from('>H', pl, 4)[0] != 0x00fa:
+                            continue
+                        code, _, shapes = fa_encode.parse_record(pl, level)
+                        names = shape_labels(c[False].plain(), t.fmt.codec) if False in c else {}
+                    except Exception:
+                        continue
+                    if not all(S['length'] for S in shapes):
+                        continue
+                    w = struct.unpack('>%dH' % (len(pl) // 2), pl)
+                    row, col = clarion_bg.parcel_rowcol(level, *code)
+                    D['parcels'].add((row, col))
+                    for S in shapes:
+                        pts = [(col * 2048 + far_edge(w[i] & 0x7ff), row * 2048 + far_edge(w[i + 1] & 0x7ff)) for i in S['points']]
+                        q = S['at'] + 6 + (w[S['at'] + 3] & 3)
+                        above = {UPPER_CODE.get(u & 0xe000) for u in w[q:q + (w[S['at']] >> 13)]}
+                        D['roads'].append(Road(names.get(S['name'], ''), S['cls'], pts, (row, col), above))
+    if lev_path is None:
+        return out
+    data = lev_path if isinstance(lev_path, (bytes, bytearray)) else open(lev_path, 'rb').read()
+    lev = lev_file.read(data, decode=True)
+    for layer in lev['sections'][0]['levels']:
+        if layer['level'] not in (4, 5):
+            continue
+        D = out[layer['level']] = dict(scale=None, roads=[], parcels=set(), base=(0, 0), long=0)
+        for d in layer['dirs']:
+            per = d['pairs'] // d['cols']
+            lon0, lat0, pw, ph = clarion_bg.parcel_geo(layer['level'], d['y'], (d['x'] + 1024) & 0xffff, 0, 0)
+            D['scale'], D['base'] = (pw / 2048, ph / 2048), (round(lat0 / ph), round((lon0 + 924) / pw))
+            for row, rr in enumerate(d['rows'] or []):
+                for col in range(d['cols'] if rr else 0):
+                    r, bg = rr[col * per], rr[col * per + per - 1]
+                    if r is None or 'plain' not in r or len(r['plain']) < 44:
+                        continue
+                    w = struct.unpack('>%dH' % (len(r['plain']) // 2), r['plain'])
+                    if w[2] != 0x00fa or w[7] in (0, 0xffff):
+                        continue
+                    try:
+                        shapes = list(coarse_walk(w[2 * w[7]:2 * (w[7] + w[8])]))
+                        names = shape_labels(bg['plain'], lev['fmt'].codec) if bg and 'plain' in bg else {}
+                    except Exception:
+                        continue
+                    pc = (row + D['base'][0], col + D['base'][1])
+                    D['parcels'].add(pc)
+                    for _, cls, name, above, ids, pts, way in shapes:
+                        pts = [(pc[1] * 2048 + far_edge(x), pc[0] * 2048 + far_edge(y)) for x, y in pts]
+                        cuts = [at for lid, at in ids] or [0]
+                        for a, b in zip(cuts, cuts[1:] + [len(pts) - 1]):
+                            if b - a + 1 > LINK_POINTS:
+                                D['long'] += 1
+                            else:
+                                D['roads'].append(Road(names.get(name, ''), cls, pts[a:b + 1], pc, ()))
+    return out
+
+
+def load_osm_roads(path, fmt=None):
+    """The ways of a roads.json as a level for road_breaks, in level-1 units, labelled as
+    rd_build labels them."""
+    per_lon, per_lat = clarion_bg.PARCELS_PER_DEG[1]
+    text = (lambda t: fmt.text(t).decode(fmt.codec, 'replace')) if fmt else str
+    with open(path) as f:
+        ways = json.load(f)
+    roads = [Road(text('2=' + w['ref'] if w.get('ref') else '1=' + (w.get('name') or '')), None,
+                  [(round((lon + 924) * per_lon * 2048), round(lat * per_lat * 2048)) for lon, lat in w['nodes']], None, ()) for w in ways]
+    return dict(scale=(1 / (2048 * per_lon), 1 / (2048 * per_lat)), roads=roads, parcels=set(), base=(0, 0), long=0)
+
+
+def road_key(label):
+    """What names a road across shapes and levels: its route number, or else its name."""
+    parts = dict(p.split('=', 1) for p in label.split(';') if '=' in p)
+    return '2=' + parts['2'] if parts.get('2') else '1=' + parts['1'].upper() if parts.get('1') else None
+
+
+class Joined:
+    """Sets of things joined pair by pair."""
+
+    def __init__(self):
+        self.up = {}
+
+    def find(self, a):
+        up = self.up
+        while up.setdefault(a, a) != a:
+            up[a] = a = up[up[a]]
+        return a
+
+    def join(self, a, b):
+        self.up[self.find(a)] = self.find(b)
+
+
+def road_pieces(roads):
+    """{road key: [points of one piece]}: shapes of a road that share a point are one piece."""
+    sets = Joined()
+    for r in roads:
+        k = road_key(r.label)
+        if k:
+            for a in r.points:
+                sets.join((k, r.points[0]), (k, a))
+    out = collections.defaultdict(lambda: collections.defaultdict(list))
+    for k, pt in list(sets.up):
+        out[k][sets.find((k, pt))].append(pt)
+    return {k: list(v.values()) for k, v in out.items()}
+
+
+def road_breaks(D, ref, tol=2):
+    """(roads both have, [(gap in units, road key, point, point)]) of the roads this level
+    draws in pieces that the reference roads, in their own units, join."""
+    mine, below = road_pieces(D['roads']), road_pieces(ref['roads'])
+    fx, fy = D['scale'][0] / ref['scale'][0], D['scale'][1] / ref['scale'][1]
+    breaks = []
+    for k, ps in mine.items():
+        if len(ps) < 2 or k not in below:
+            continue
+        at = collections.defaultdict(set)
+        for n, pts in enumerate(below[k]):
+            for x, y in pts:
+                at[int(x / fx), int(y / fy)].add(n)
+        sets = Joined()
+        for n, pts in enumerate(ps):
+            for x, y in pts:
+                for dx in range(-tol, tol + 1):
+                    for dy in range(-tol, tol + 1):
+                        for m in at.get((x + dx, y + dy), ()):
+                            sets.join(('piece', n), ('below', m))
+        groups = collections.defaultdict(list)
+        for n in range(len(ps)):
+            if ('piece', n) in sets.up:
+                groups[sets.find(('piece', n))].append(n)
+        for g in groups.values():
+            g.sort(key=lambda n: -len(ps[n]))
+            for n in g[1:]:
+                rest = [q for o in g if o != n for q in ps[o]]
+                breaks.append(min((max(abs(p[0] - q[0]), abs(p[1] - q[1])), k, p, q) for p in ps[n] for q in rest))
+    return len(set(mine) & set(below)), sorted(breaks, reverse=True)
+
+
+def open_ends(D, dead_ends=(), tol=2):
+    """(shape ends on a parcel line, [(label, point)] of those with nothing across).
+
+    An end another shape shares, one whose far parcel is not loaded and one on a graph node
+    with no link across are left out: a junction or a dead end the grid rounded onto the line."""
+    near, ends = collections.defaultdict(set), collections.Counter()
+    for r in D['roads']:
+        ends.update({r.points[0], r.points[-1]})
+        for a in r.points:
+            if min(a[0] % 2048, -a[0] % 2048, a[1] % 2048, -a[1] % 2048) <= tol:
+                near[a].add(r.parcel)
+    n, bad = 0, []
+    for label, cls, pts, pc, above in D['roads']:
+        for a in {pts[0], pts[-1]}:
+            if a[0] % 2048 and a[1] % 2048:
+                continue
+            n += 1
+            across = {((a[1] - dy) // 2048, (a[0] - dx) // 2048) for dx in (0, 1) for dy in (0, 1)} - {pc}
+            met = any(near.get((a[0] + dx, a[1] + dy), set()) - {pc} for dx in range(-tol, tol + 1) for dy in range(-tol, tol + 1))
+            if not met and across & D['parcels'] and ends[a] == 1 and a not in dead_ends:
+                bad.append((label, a))
+    return n, bad
+
+
+def graph_dead_ends(recs, base=(0, 0)):
+    """Where a graph node has no link to the next parcel, in the units of load_drawn_roads."""
+    return {((pc[1] + base[1]) * 2048 + far_edge(nd['x']), (pc[0] + base[0]) * 2048 + far_edge(nd['y']))
+            for pc, a in recs.items() for nd in a['nodes'] if not any(e['cls'] & 0x8000 for e in nd['entries'])}
+
+
+def check_road_continuity(drawn, L1, L2, lev4, lev5):
+    """A road is drawn whole at every level. A shape end on a parcel line has a shape across
+    it. A road's shapes at levels 2, 4 and 5 fall into separate pieces only where level 1
+    has it in pieces, read two ways: the level-1 shapes that name a link of the level, and
+    the level-1 shapes of the classes the level carries. Level 1 is held the same way
+    against the OSM ways when they are given, so a break is a gap in a road OSM has whole.
+    Factory B50R068R under the factory coarse file: 1,711 of 1,725 gaps are 8 units or less
+    (a slip road or a crossing left out). Wider ones by name: 3 of 7,044 roads at level 2,
+    none of 223 at level 4, none of 49 at level 5. By class: 6 of 7,046, 2 of 254 and 1 of
+    91, because the factory picks a level's links one by one where we take whole classes.
+    Ends with nothing across: 3 of 162,392 at level 1, none at level 2, 4 of 11,124 at
+    level 4, none at level 5."""
+    st, notes, ok = collections.Counter(), [], True
+    if not drawn or not drawn[1]['roads']:
+        return result('road_continuity', True, st, ['no road shapes loaded, nothing to check'])
+    graphs = {1: L1, 2: {pc: a for pc, (a, b) in L2.items()}, 4: {pc: a for pc, (a, b) in lev4.items()},
+              5: {pc: a for pc, (a, b) in lev5.items()}}
+
+    def where(level, p):
+        sx, sy = drawn[level]['scale']
+        return '%.4f,%.4f' % (p[1] * sy, p[0] * sx - 924)
+
+    for level in (1, 2, 4, 5):
+        D = drawn.get(level)
+        if not D or not D['roads']:
+            continue
+        ends, bad = open_ends(D, graph_dead_ends(graphs[level], D['base']))
+        st['L%d ends on a parcel line' % level], st['L%d with nothing across' % level] = ends, len(bad)
+        st['L%d links too long to draw' % level] = D['long']
+        notes += ['level %d: %s ends on a parcel line at %s with no shape across' % (level, label or 'an unnamed road', where(level, a))
+                  for label, a in bad[:20]]
+        ok = ok and len(bad) <= OPEN_ENDS * ends
+        classes = {r.cls for r in D['roads']}
+        refs = ([('against OSM', 'OSM has whole', drawn['osm']['roads'], NAMED_BREAKS)] if 'osm' in drawn else []) if level == 1 else [
+            ('by name', 'level 1 names whole', [r for r in drawn[1]['roads'] if level in r.above], NAMED_BREAKS),
+            ('by class', 'level 1 has whole in these classes', [r for r in drawn[1]['roads'] if r.cls in classes], CLASS_BREAKS[level])]
+        told = set()
+        for tag, what, roads, share in refs:
+            n, breaks = road_breaks(D, dict(drawn[1], roads=roads))
+            wide = [b for b in breaks if b[0] > GAP]
+            for key, v in (('roads', n), ('gaps', len(breaks)), ('breaks', len(wide))):
+                st['L%d %s %s' % (level, key, tag)] = v
+            notes += ['level %d: %s is broken between %s and %s (%d units), a road %s' % (level, k, where(level, p), where(level, q), gap, what)
+                      for gap, k, p, q in wide[:20] if (k, p, q) not in told]
+            told.update((k, p, q) for gap, k, p, q in wide)
+            ok = ok and len(wide) <= share * n
+    notes.append('a break is a gap of more than %d units; pass at %.1f%% of the roads level 1 names or OSM has, %s by class, '
+                 'and %.1f%% of the ends on a parcel line with nothing across'
+                 % (GAP, 100 * NAMED_BREAKS, ', '.join('%.1f%% at level %d' % (100 * v, k) for k, v in CLASS_BREAKS.items()), 100 * OPEN_ENDS))
+    return result('road_continuity', ok, st, notes)
+
+
+def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=None):
     out = []
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
@@ -946,6 +1240,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None):
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     out.append(check_coarse_shapes(lev4, lev5, coarse))
+    out.append(check_road_continuity(drawn, L1, L2, lev4, lev5))
     return out
 
 
@@ -1094,6 +1389,7 @@ def main(argv):
     ap.add_argument('--prev')
     ap.add_argument('--tiles', nargs='*', default=[])
     ap.add_argument('--lev')
+    ap.add_argument('--roads', help='the roads.json the tiles were built from: level 1 is then held against the OSM ways')
     ap.add_argument('--factory', nargs='*', default=[])
     ap.add_argument('--factory-lev')
     ap.add_argument('--json', action='store_true')
@@ -1117,14 +1413,14 @@ def main(argv):
             L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
         checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(lev),
-                         tiles_format(tiles[k] for k in sorted(tiles)))
+                         tiles_format(tiles[k] for k in sorted(tiles)), load_drawn_roads([tiles[k] for k in sorted(tiles)], lev, args.roads))
         checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
         errors = collections.Counter()
         L1, L2, SH1 = load_road_tiles(args.tiles, errors)
         levd = load_lev(args.lev)
         checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(args.lev),
-                         tiles_format(args.tiles))
+                         tiles_format(args.tiles), load_drawn_roads(args.tiles, args.lev, args.roads))
         checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
@@ -1134,7 +1430,7 @@ def main(argv):
         L1f, L2f, SH1f = load_road_tiles(args.factory)
         levf = load_lev(args.factory_lev)
         fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'), load_lev_shapes(args.factory_lev),
-                          tiles_format(args.factory))
+                          tiles_format(args.factory), load_drawn_roads(args.factory, args.factory_lev))
         print_report('factory (%s)' % ', '.join(os.path.basename(f) for f in args.factory), fchecks)
         report['factory'] = dict(checks=fchecks)
 

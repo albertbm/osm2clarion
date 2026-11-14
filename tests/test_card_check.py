@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 16)
+        self.assertEqual(len(checks), 17)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -113,6 +113,81 @@ class TestCoarseShapes(unittest.TestCase):
 
     def test_nothing_loaded_passes(self):
         self.assertTrue(card_check.check_coarse_shapes({}, {}, {})['passed'])
+
+
+class TestRoadContinuity(unittest.TestCase):
+    @staticmethod
+    def level(roads, unit=1, parcels=((0, 0),)):
+        """Roads as (label, points); a unit is this many level-1 units."""
+        pc = lambda pts: (pts[0][1] // 2048, pts[0][0] // 2048)
+        return dict(scale=(unit, unit), roads=[card_check.Road(label, 4, pts, pc(pts), {4}) for label, pts in roads],
+                    parcels=set(parcels), base=(0, 0), long=0)
+
+    def check(self, level4, level1=None, L4=None):
+        whole = [('1=VESTURVEGUR;2=54', [(0, 64), (6400, 64)])]
+        drawn = {1: self.level(level1 or whole, parcels=[(0, c) for c in range(4)]), 4: self.level(level4, 64)}
+        return card_check.check_road_continuity(drawn, {}, {}, L4 or {}, {})
+
+    def test_a_road_drawn_whole_passes(self):
+        r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(40, 1), (100, 1)])])
+        self.assertTrue(r['passed'], r)
+        self.assertEqual(r['counts']['L4 gaps by name'], 0)
+
+    def test_a_missing_stretch_fails_and_says_where(self):
+        r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(60, 1), (100, 1)])])
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['L4 breaks by name'], 1)
+        self.assertIn('level 4: 2=54 is broken between', r['notes'][0])
+        self.assertIn('(20 units)', r['notes'][0])
+
+    def test_a_gap_the_width_of_a_crossing_is_not_a_break(self):
+        r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(44, 1), (100, 1)])])
+        self.assertTrue(r['passed'], r)
+        self.assertEqual((r['counts']['L4 gaps by class'], r['counts']['L4 breaks by class']), (1, 0))
+
+    def test_a_road_level_1_has_in_two_pieces_may_be_in_two(self):
+        apart = [('2=54', [(0, 64), (2560, 64)]), ('2=54', [(3840, 64), (6400, 64)])]
+        r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(60, 1), (100, 1)])], apart)
+        self.assertTrue(r['passed'], r)
+
+    def test_the_name_stands_in_where_there_is_no_number(self):
+        self.assertEqual(card_check.road_key('1=Vesturvegur;2=54'), '2=54')
+        self.assertEqual(card_check.road_key('1=Vesturvegur'), '1=VESTURVEGUR')
+        self.assertIsNone(card_check.road_key(''))
+
+    def test_an_end_on_a_parcel_line_needs_a_shape_across(self):
+        west, east = ('2=54', [(2000, 1), (2048, 1)]), ('2=54', [(2049, 2), (2100, 2)])
+        two = dict(parcels=[(0, 0), (0, 1)])
+        ends = lambda roads, dead=(): card_check.open_ends(self.level(roads, **two), dead)
+        self.assertEqual(ends([west, east]), (1, []))
+        self.assertEqual(ends([west]), (1, [('2=54', (2048, 1))]))
+        self.assertEqual(ends([west], {(2048, 1)}), (1, []))
+        self.assertEqual(ends([west, ('2=1', [(2048, 1), (2040, 9)])]), (2, []))
+        self.assertEqual(card_check.open_ends(self.level([west]))[1], [])    # nothing loaded across
+
+    def test_one_open_end_fails_the_card(self):
+        r = self.check([('2=54', [(0, 1), (100, 1)]), ('2=1', [(2000, 5), (2048, 5)])])
+        self.assertTrue(r['passed'], r)
+        drawn = {1: self.level([('2=54', [(0, 64), (6400, 64)])]),
+                 4: self.level([('2=1', [(2000, 5), (2048, 5)])], 64, [(0, 0), (0, 1)])}
+        r = card_check.check_road_continuity(drawn, {}, {}, {}, {})
+        self.assertFalse(r['passed'])
+        self.assertIn('with no shape across', r['notes'][0])
+
+    def test_a_dead_end_is_a_node_with_no_link_across(self):
+        node = lambda x, cls: dict(x=x, y=5, entries=[dict(cls=cls)])
+        recs = {(0, 0): dict(nodes=[node(2047, 0x0004), node(0, 0x8004)])}
+        self.assertEqual(card_check.graph_dead_ends(recs, (1, 2)), {(3 * 2048, 2048 + 5)})
+
+    def test_labels_are_read_by_word_offset(self):
+        text = b'2=54'
+        sec = b'\0\6\0\1' + b'\xff\xff\0\0' * 5 + b'\0\xff\0\0\0\0\0\0\0\4' + text
+        plain = bytearray(44) + sec
+        plain[22:26] = (11).to_bytes(2, 'big') + (len(sec) // 4 + 1).to_bytes(2, 'big')
+        self.assertEqual(card_check.shape_labels(bytes(plain) + b'\0\0', 'utf-8'), {12: '2=54'})
+
+    def test_nothing_loaded_passes(self):
+        self.assertTrue(card_check.check_road_continuity(None, {}, {}, {}, {})['passed'])
 
 
 class TestNoJunctionOnParcelLine(unittest.TestCase):

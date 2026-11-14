@@ -277,7 +277,7 @@ def area_steps(P, prof, base, out, work, area, osm):
             raise SystemExit('check failed: %s do not read back as built' % ', '.join(bad))
         print('%d written files read back as built' % len(want))
         # the roads of our own rebuilt cell and coarse file; the factory tiles are never parsed
-        run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out)
+        run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out, '--roads', roads)
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()
@@ -514,7 +514,10 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
             bad.append('unit %s needs the consent step, which did not run' % unit)
         if bad:
             raise SystemExit('check failed: ' + '; '.join(bad))
+        # a card made from another card's map has no roads.json of its own to be held against
+        ways = os.path.join(work, 'roads', 'roads.json')
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
+            *(['--roads', ways] if full and os.path.exists(ways) else []),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
         groups = (args.get('write') or B['write']).split(',')
         towns = ['--towns'] if args.get('map-from') or args.get('restamp-from') or 'addr' in groups else []
