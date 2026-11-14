@@ -1,0 +1,8 @@
+# Test only: read Finnish addresses from a Ryhti CSV instead of OSM. Pass with --local FILE.
+# Data: Syke, Ryhti (open_address), CC BY 4.0. Make the CSV with tools/addr/pull_ryhti.py; the
+# columns are in docs/ADDRESS-IMPORT.md.
+[addr]
+format = "ryhti"
+
+[data]
+addresses = "/path/to/ryhti-jyvaskyla.csv"
