@@ -1,11 +1,19 @@
 <!-- SPDX-License-Identifier: GPL-3.0-or-later -->
 # Addresses: bring your own source
 
-`addre_io`, `zcode_io` and `icode_io` write an address database onto a card. The one
-reader today is `tools/addr/addr_csv.py`, for Iceland's address register. Another
-country needs a reader that gives the same rows: a column mapping in `addr_csv.py` for
-a register like Iceland's, or a new reader. Nothing reads the flat shape below or OSM
-addresses yet; they describe what such a reader has to deliver.
+`addre_io`, `zcode_io` and `icode_io` write an address database onto a card.
+`tools/addr/addr_csv.py` reads the rows, by `[addr] format` in the profile:
+
+| format | reads | from |
+|---|---|---|
+| `stadfangaskra` | Iceland's address register | `[data] addresses`, `[data] postcodes` |
+| `osm` | `addr:*` tags on nodes, closed ways and multipolygon relations | `[data] pbf` |
+| `ryhti` | a CSV pulled from Finland's Ryhti open_address service | `[data] addresses` |
+
+`osm` is the shipping path and the Finland profile's default. `ryhti` is for testing and for
+measuring OSM's coverage; a local file switches to it (`examples/finland.local.toml`).
+Another country needs one more reader that gives the same rows. The flat shape below
+describes what such a reader has to deliver.
 
 ## The shape
 
@@ -53,7 +61,13 @@ columns to the row above and the writers don't care where the data came from.
 
 ## Source 2: OSM
 
-No tool reads OSM addresses yet. This is how a reader would get them.
+`format = "osm"` reads `addr:street` and `addr:housenumber` (and `addr:postcode`,
+`addr:city` where present) from the pbf, inside `[addr] box`. A house number such as
+`12a` or `12 A` splits into number 12 and letter A; a range keeps its first number. The
+municipality is not looked up. `towns()` takes the town written most often beside each
+postcode.
+
+The Overpass queries below give the same rows for a place you have no pbf for.
 
 Addresses tagged `addr:street` + `addr:housenumber` on nodes, ways or
 relations give the same rows without a national source. An Overpass query for
@@ -87,3 +101,15 @@ which is enough to fill the row above (`addr:street`, `addr:housenumber`,
 `addr:postcode`, `addr:city`, and the centre for lat/lon). The same tags can be
 read offline from a local `.osm.pbf` with `osmium`, for an area too large for
 one Overpass call.
+
+## Source 3: Ryhti (Finland)
+
+`format = "ryhti"` reads a CSV of Finland's building addresses, for testing against OSM.
+The data is from Syke's Ryhti service (`open_address` at
+`paikkatiedot.ymparisto.fi/geoserver/ryhti_building/ogc/features/v1/`), licensed CC BY 4.0;
+credit "Syke, Ryhti". The columns are `street`, `number`, `number2` (end of a range),
+`letter`, `letter2`, `postcode`, `town`, `municipality` (three digits, becomes `svf`),
+`lat` and `lon`, with `address_key`, `building_key` and `street_swe` kept for reference. The
+service returns WGS84 and no reprojection is needed. Rows with no street or number are
+skipped. `tools/addr/pull_ryhti.py OUT.csv LON_MIN LAT_MIN LON_MAX LAT_MAX` pulls a box;
+the whole country is 3.9 million rows.

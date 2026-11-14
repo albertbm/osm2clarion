@@ -127,5 +127,14 @@ class TestDispatch(unittest.TestCase):
                     os.environ['O2C_CONFIG'] = old
 
 
+class TestFinlandProfile(unittest.TestCase):
+    def test_default_is_osm(self):
+        import tomllib
+        raw = tomllib.loads((ROOT / 'profiles' / 'finland.toml').read_text(encoding='utf-8'))
+        self.assertEqual(raw['addr']['format'], 'osm')
+        local = tomllib.loads((ROOT / 'examples' / 'finland.local.toml').read_text(encoding='utf-8'))
+        self.assertEqual(local['addr']['format'], 'ryhti')
+
+
 if __name__ == '__main__':
     unittest.main()

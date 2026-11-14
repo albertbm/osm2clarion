@@ -47,6 +47,12 @@ l2_simplify_metres = 5
 l2_graph = true
 speed_unit = "km/h"
 
+[addr]
+# Addresses come from OSM addr:* tags. A local file can switch to format = "ryhti"
+# (Syke, Ryhti, CC BY 4.0) for testing; see examples/finland.local.toml.
+format = "osm"
+box = [61.84, 62.43, 25.26, 26.06]   # lat_min, lat_max, lon_min, lon_max; the Jyvaskyla area
+
 [targets]
 default = "v2014"
 v2014 = { label = "2014 QY7 European database", volume = "QSD-357-101" }
