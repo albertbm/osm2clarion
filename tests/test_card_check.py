@@ -152,6 +152,14 @@ class TestRoadContinuity(unittest.TestCase):
         self.assertTrue(r['passed'], r)
         self.assertEqual((r['counts']['L4 gaps by class'], r['counts']['L4 breaks by class']), (1, 0))
 
+    def test_at_level_1_any_gap_is_a_break(self):
+        osm = self.level([('2=54', [(0, 64), (6400, 64)])], parcels=[(0, c) for c in range(4)])
+        cut = [('2=54', [(0, 64), (2046, 64)]), ('2=54', [(2049, 64), (6400, 64)])]
+        drawn = {1: self.level(cut, parcels=[(0, c) for c in range(4)]), 'osm': osm}
+        r = card_check.check_road_continuity(drawn, {}, {}, {}, {})
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['L1 breaks against OSM'], 1)
+
     def test_a_road_level_1_has_in_two_pieces_may_be_in_two(self):
         apart = [('2=54', [(0, 64), (2560, 64)]), ('2=54', [(3840, 64), (6400, 64)])]
         r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(60, 1), (100, 1)])], apart)
