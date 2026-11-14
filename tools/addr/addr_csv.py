@@ -4,13 +4,18 @@
 The column names and the box come from config['addr'] - this module reads the Icelandic
 Stadfangaskra format (config['addr']['format'] == 'stadfangaskra': columns N_HNIT_WGS84,
 E_HNIT_WGS84, HEITI_NF, HEITI_TGF, SVFNR, HUSNR, BOKST, POSTNR; a ';'-delimited postcode
-register), since that is the only format measured so far. A different country's register
-would need its own column mapping here.
+register). 'osm' (the pbf at [data] pbf) and 'ryhti' (a Ryhti CSV at [data] addresses, Syke,
+CC BY 4.0) come from addr_sources and yield the same dicts, plus a 'town' key. A different
+country's register would need its own reader.
 """
 import csv
 import json
 import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import addr_sources  # noqa: E402
 
 
 def _config():
@@ -28,7 +33,19 @@ def _box():
     return tuple(_config()['addr']['box'])
 
 
+def _format():
+    return _config()['addr'].get('format', 'stadfangaskra')
+
+
 def towns(path=None):
+    if _format() != 'stadfangaskra':
+        # no postcode register: the town most often written next to each postcode
+        count = {}
+        for r in addresses():
+            if r['post'] and r.get('town'):
+                c = count.setdefault(r['post'], {})
+                c[r['town']] = c.get(r['town'], 0) + 1
+        return {k: max(v, key=v.get) for k, v in count.items()}
     p = path or os.path.expanduser(_config_data()['postcodes'])
     out = {}
     with open(p, encoding='utf-8-sig', newline='') as f:
@@ -42,6 +59,18 @@ def towns(path=None):
 def addresses(path=None, box=None, municipalities=None):
     """Yield dicts for rows inside the box, or with municipalities (SVFNR strings) for
     the rows of those municipalities wherever they lie."""
+    fmt = _format()
+    if fmt == 'osm':
+        yield from addr_sources.osm_addresses(path or os.path.expanduser(_config_data()['pbf']),
+                                              box or _box())
+        return
+    if fmt == 'ryhti':
+        yield from addr_sources.ryhti_addresses(path or os.path.expanduser(_config_data()['addresses']),
+                                                None if municipalities is not None else (box or _box()),
+                                                municipalities)
+        return
+    if fmt != 'stadfangaskra':
+        raise SystemExit('unknown [addr] format %r' % fmt)
     p = path or os.path.expanduser(_config_data()['addresses'])
     if municipalities is None:
         lo_lat, hi_lat, lo_lon, hi_lon = box or _box()
