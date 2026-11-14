@@ -76,7 +76,7 @@ class Format:
         self.coarse_unnamed = coarse_unnamed  # word 3 and the y bits lev_roads gives an unnamed coarse shape
         self.l3_points = l3_points      # bit set beside the point count of a level-3 coarse shape
         self.marker_shift = marker_shift  # added to the rotating selector of a coarse graph's part B
-        self.level_count = level_count  # w4 bits 1-2 of a link count the levels above; else 1 for any
+        self.level_count = level_count  # a link's w4 bits 1-2 and a level-2 node's flag count the levels above; else 1 for any
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""

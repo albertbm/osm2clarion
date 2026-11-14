@@ -377,6 +377,11 @@ class TestQY7Roads(unittest.TestCase):
         finally:
             rd_build.ORIGIN, rd_build.FMT, fa_encode.FMT, rd_encode.FMT, rd_build.COUNTRY, rd_build.SPEED_UNIT = old
 
+    def test_level_2_node_flag_counts_levels_on_qy8_only(self):
+        import lev_graph
+        self.assertEqual([lev_graph.l2_flag(QY8, in5) for in5 in (False, True)], [0x2000, 0x4000])
+        self.assertEqual([lev_graph.l2_flag(QY7, in5) for in5 in (False, True)], [0x2000, 0x2000])
+
     def test_coarse_graph_directory_and_selector(self):
         import lev_graph
         old = rd_build.FMT

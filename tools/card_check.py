@@ -560,10 +560,11 @@ def check_l1_link_direction(L1, L2):
                   ['classes 8/9/12 with w4&6 set: %r (want 0)' % dict(never)])
 
 
-def check_l2_nflags(L2):
+def check_l2_nflags(L2, fmt=None):
     """L2 nodes carry the hierarchy flags 0x4000/0x2000 (lev_graph.patch_l2_flags). Report
-    counts; fail only if the tile has L2 nodes at all but neither flag ever appears - the
-    bug that hit card 075."""
+    counts; fail if the tile has L2 nodes at all but neither flag ever appears - a bug
+    an earlier card had - or if a QY7 tile has 0x4000, which its factory tiles never do
+    on a node with a level above (0 of 49,840 on B48R060R)."""
     st = collections.Counter()
     for pc, a in L2nodes(L2).items():
         for n in a['nodes']:
@@ -572,6 +573,8 @@ def check_l2_nflags(L2):
             st['nflags 0x2000'] += bool(n['nflags'] & 0x2000)
             st['nflags other bits'] += bool(n['nflags'] & ~0x6000)
     ok = st['nodes'] == 0 or st['nflags 0x4000'] + st['nflags 0x2000'] > 0
+    if fmt is not None and not fmt.level_count:
+        ok = ok and not st['nflags 0x4000']
     return result('l2_nflags', ok, st)
 
 
@@ -1235,7 +1238,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_no_junction_on_parcel_line(L1, L2))
     out.append(check_node_order(lev4, lev5))
     out.append(check_l1_link_direction(L1, L2))
-    out.append(check_l2_nflags(L2))
+    out.append(check_l2_nflags(L2, fmt))
     out.append(check_roundabouts(L1, L2, SH1))
     out.append(check_upper_link_shapes(L1, L2, SH1))
     out.append(check_l2_nodes_on_l1(L1, L2))
@@ -1440,12 +1443,12 @@ def main(argv):
         report['factory'] = dict(checks=fchecks)
 
     if args.prev and args.card:
-        print('== diff: whole card, %s vs %s ==' % (args.card, args.prev))
+        print('== diff: whole card, %s -> %s ==' % (args.prev, args.card))
         only_a, only_b, diff, common_count = whole_card_diff(args.card, args.prev)
         print('only in %s: %r' % (args.card, only_a))
         print('only in %s: %r' % (args.prev, only_b))
         for path, sa, sb, ma, mb in diff:
-            print('  DIFFERS %-26s size %s -> %s  md5 %s -> %s' % (path, sa, sb, ma, mb))
+            print('  DIFFERS %-26s size %s -> %s  md5 %s -> %s' % (path, sb, sa, mb, ma))
 
         # identical here is whole-card: common_count minus the DIFFERS above, not scoped to
         # extract_card()'s MAPAL001/LEV3456R-only subset (that mismatch used to make this

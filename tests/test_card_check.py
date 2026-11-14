@@ -44,6 +44,13 @@ class TestL2Nflags(unittest.TestCase):
         r = card_check.check_l2_nflags(L2)
         self.assertTrue(r['passed'])
 
+    def test_qy7_has_no_two_level_flag(self):
+        qy7 = card_check.clarion_format.get('x08-02')
+        L2 = {(0, 0): (dict(nodes=[node(nflags=0x4000), node(nflags=0x2000)]), None)}
+        self.assertFalse(card_check.check_l2_nflags(L2, qy7)['passed'])
+        L2 = {(0, 0): (dict(nodes=[node(nflags=0x2000), node(nflags=0)]), None)}
+        self.assertTrue(card_check.check_l2_nflags(L2, qy7)['passed'])
+
     def test_passes_on_no_l2_nodes_at_all(self):
         r = card_check.check_l2_nflags({})
         self.assertTrue(r['passed'])
