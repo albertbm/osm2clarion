@@ -430,6 +430,13 @@ def patch_l2_flags_zlib(data, flags, found):
     return bytearray(clarion_tile.write_tile(t, clarion_tile.default_order(t)))
 
 
+def l2_flag(fmt, in5):
+    """A level-2 node's hierarchy flag. QY8 counts the levels above that have the node:
+    0x2000 for level 4 alone (34,725 nodes of factory B48R060R), 0x4000 with level 5 too
+    (2,422). QY7 writes 0x2000 for either: 49,840 of 49,840 on its B48R060R."""
+    return 0x4000 if in5 and fmt.level_count else 0x2000
+
+
 def fill_record(plain, level, upper, st):
     """Write the level-4 and level-5 ids into one road-shape record's header words; True if any changed."""
     w = struct.unpack('>%dH' % (len(plain) // 2), plain)
@@ -508,7 +515,7 @@ def build(ways, profile, l2_tiles, bbox=None):
     for parent, R in r4.items():
         for gid in R['gids']:
             pc, i = child_node_ref(child, gid, parent, 4)
-            flags[pc, i] = 0x4000 if gid in upper5 else 0x2000
+            flags[pc, i] = l2_flag(profile.fmt, gid in upper5)
     upper = collections.defaultdict(dict)
     for lv, recs in ((4, r4), (5, r5)):
         for R in recs.values():
