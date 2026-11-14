@@ -278,6 +278,7 @@ def area_steps(P, prof, base, out, work, area, osm):
         print('%d written files read back as built' % len(want))
         # the roads of our own rebuilt cell and coarse file; the factory tiles are never parsed
         run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out, '--roads', roads)
+        run(tool('drive_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out)
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()
@@ -519,6 +520,7 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
         run(py, tool('card_check.py'), '--card', part, '--cells', ','.join(cfg['road_tiles']),
             *(['--roads', ways] if full and os.path.exists(ways) else []),
             *(['--prev', args['prev']] if args.get('prev') else []), env=env)
+        run(py, tool('drive_check.py'), '--card', part, env=env)
         groups = (args.get('write') or B['write']).split(',')
         towns = ['--towns'] if args.get('map-from') or args.get('restamp-from') or 'addr' in groups else []
         run(py, tool('card_verify.py'), '--card', part, '--version', version, *towns, '--manifest', mpart,

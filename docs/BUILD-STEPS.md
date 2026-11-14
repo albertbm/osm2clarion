@@ -14,7 +14,7 @@ step prints its command, so any of them can be run again by hand.
 | `icons` | `build_poicap.py`: POI icons and POINT search records from the OSM extract |
 | `addr` | `build_poicap.py --house-ranges ALL --all-streets`: the address database with house-number ranges |
 | `consent` | the unit's `consent_cmd` from the local file, if it has one; a unit with `consent = "required"` in the profile fails without one |
-| `check` | needs every step of the chain in the manifest and the card to be the image the last one wrote, then runs `card_check.py` (road graph, coarse file, and every road drawn whole at each level against the work dir's `roads.json`) and `card_verify.py` (DATA VERSION, index, CMP.LST, MMAIN, towns, inventory); renames the card on a pass and prints the cameras, dealer and consent the manifest records |
+| `check` | needs every step of the chain in the manifest and the card to be the image the last one wrote, then runs `card_check.py` (road graph, coarse file, and every road drawn whole at each level against the work dir's `roads.json`), `drive_check.py` (300 long routes, every link looked up the way the unit does) and `card_verify.py` (DATA VERSION, index, CMP.LST, MMAIN, towns, inventory); renames the card on a pass and prints the cameras, dealer and consent the manifest records |
 
 With `--map-from` or `--restamp-from` the chain is `prep`, `map` or `restamp`, `consent`,
 `check`.
@@ -35,7 +35,7 @@ today only the emptied stage dirs keep one out.
 | `sec4` | `sec4_write.py`: section-4 country records on the rebuilt tile |
 | `master` | `make_mmain.py`: MMAIN001.DAT from the tile headers |
 | `card` | a copy of the base card with the tiles, the coarse file and MMAIN written on |
-| `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cell, the coarse file and the area's `roads.json` (never on a factory tile), then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
+| `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cell, the coarse file and the area's `roads.json` (never on a factory tile), `drive_check.py` on the same files, then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
 
 ## build_gen_lev.py
 

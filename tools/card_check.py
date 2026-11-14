@@ -702,9 +702,11 @@ def child_parcel(level, par, word, origin):
     return par[0] * 4 + (word >> 14), par[1] * 4 + (word >> 6 & 3)
 
 
-def walk_shapes(shapes, first):
+def walk_shapes(shapes, first, loaded=None):
     """Follow the shapes naming one upper link from the level-1 node under its first node,
-    the way the unit does: the shape that starts where the last one ended (Navi.exe 0x34d2b8)."""
+    the way the unit does: the shape that starts where the last one ended (Navi.exe 0x34d2b8).
+    With the loaded level-1 parcels given, a walk that ends at one not loaded, with no shape
+    left that is near, says so."""
     left = list(shapes)
     pos = first
     if not any(s == pos for s, e in left):
@@ -717,6 +719,9 @@ def walk_shapes(shapes, first):
         pos = nxt[1]
     if not left:
         return 'walked'
+    off = loaded is not None and any(((pos[1] - dy) // 2048, (pos[0] - dx) // 2048) not in loaded for dx in (0, 1) for dy in (0, 1))
+    if off and not any(max(abs(p[0] - pos[0]), abs(p[1] - pos[1])) <= GAP for g in left for p in g):
+        return 'walk leaves the loaded tiles'
     return 'backwards' if any(e == pos for s, e in left) else 'walk stops short'
 
 
@@ -726,7 +731,7 @@ def first_ends(a):
             if not e['cls'] & 0x8000 and not e['id'] & 0x2000]
 
 
-def upper_link_walks(L1, L2, SH1):
+def upper_link_walks(L1, L2, SH1, loaded=None):
     """(level-2 parcel, class, link id, how the walk ends) of each level-2 link over loaded
     level-1 records: walk_shapes over the level-1 shapes naming it, or 'not named'."""
     named = upper_shapes(SH1)
@@ -736,7 +741,7 @@ def upper_link_walks(L1, L2, SH1):
             node = l1_node(L1, pc2, blocks.get(k))
             if node:
                 key = pc2 + (cls, lid)
-                yield pc2, cls, lid, walk_shapes(named[key], node) if key in named else 'not named'
+                yield pc2, cls, lid, walk_shapes(named[key], node, loaded) if key in named else 'not named'
 
 
 def check_upper_link_shapes(L1, L2, SH1):
@@ -830,7 +835,7 @@ def check_hierarchy_codes(L1, SH1, fmt=None):
 COARSE_SPAN = {4: 64, 5: 256}      # a coarse parcel's side in level-1 parcels
 
 
-def coarse_link_walks(L1, L2, SH1, lev4, lev5, origin):
+def coarse_link_walks(L1, L2, SH1, lev4, lev5, origin, loaded=None):
     """(level, parcel, class, link id, how the walk ends) of each level-4 and level-5 link
     over loaded tiles: walk_shapes over the level-1 shapes naming it, or 'not named'."""
     def under(level, par, k):
@@ -851,7 +856,7 @@ def coarse_link_walks(L1, L2, SH1, lev4, lev5, origin):
                 node = under(lv, par, k)
                 if node is not None:
                     key = par + (cls, lid)
-                    yield lv, par, cls, lid, walk_shapes(named[key], node) if key in named else 'not named'
+                    yield lv, par, cls, lid, walk_shapes(named[key], node, loaded) if key in named else 'not named'
 
 
 def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
