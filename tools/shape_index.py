@@ -7,11 +7,13 @@ An address record names a point by its word offset from the record's geometry un
 tiles against. Link ids restart at 1 per class, so (cls, id) names a link within a record."""
 import json, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_bg, clarion_tile, fa_encode
+import clarion_bg, clarion_format, clarion_tile, fa_encode
+
+ZLIB = {f.zmagic for f in clarion_format.FORMATS.values()}
 
 
 def inflate(raw):
-    return zlib.decompress(raw) if raw[:2] == b'\x58\x85' else raw
+    return zlib.decompress(raw) if raw[:2] in ZLIB else raw
 
 
 def label_name(label):
@@ -20,7 +22,7 @@ def label_name(label):
     return part[2:] if part.startswith('1=') else part
 
 
-def bg_labels(bg):
+def bg_labels(bg, codec='utf-8'):
     r = clarion_bg.parse_record(bg)
     s = r['sections'].get('names')
     out = {}
@@ -30,7 +32,7 @@ def bg_labels(bg):
         if p + 10 > len(s): break
         typ, flags = struct.unpack_from('>HH', s, p)
         q = p + 8 + (2 if flags & 0x4000 else 0); ln = struct.unpack_from('>H', s, q)[0]
-        out[p // 2] = s[q + 2:q + 2 + ln].rstrip(b'\0').decode('utf-8', 'replace')
+        out[p // 2] = s[q + 2:q + 2 + ln].rstrip(b'\0').decode(codec, 'replace')
         p = q + 2 + ln + (ln & 1)
     return out
 
@@ -54,9 +56,9 @@ def tile_records(d):
     return out
 
 
-def shapes_of(plain, bg):
+def shapes_of(plain, bg, codec='utf-8'):
     code, unit, shapes = fa_encode.parse_record(plain)
-    names = bg_labels(bg) if bg else {}
+    names = bg_labels(bg, codec) if bg else {}
     for s in shapes: s['label'] = names.get(s['name'], '')
     return code, unit, shapes
 
@@ -64,11 +66,12 @@ def shapes_of(plain, bg):
 def verify(side, d):
     """[] when every indexed word matches the tile: same shape, label, class, points."""
     recs = tile_records(d); bad = []
+    codec = clarion_format.of_header(d).codec
     for R in side['records']:
         code = tuple(R['code'])
         if code not in recs:
             bad.append('%04x %04x: no 0x00fa record' % code); continue
-        _, unit, shapes = shapes_of(*recs[code])
+        _, unit, shapes = shapes_of(*recs[code], codec)
         if unit != R['unit']: bad.append('%04x %04x: unit %d, index says %d' % (code + (unit, R['unit'])))
         for S in R['shapes']:
             got = next((s for s in shapes if s['at'] == S['at']), None)
@@ -96,8 +99,9 @@ def main(argv):
         for b in bad: print('  ' + b)
         return 1 if bad else 0
     if argv[:1] == ['dump']:
-        for code, (plain, bg) in sorted(tile_records(open(argv[1], 'rb').read()).items()):
-            _, unit, shapes = shapes_of(plain, bg)
+        d = open(argv[1], 'rb').read()
+        for code, (plain, bg) in sorted(tile_records(d).items()):
+            _, unit, shapes = shapes_of(plain, bg, clarion_format.of_header(d).codec)
             print('%04x %04x unit %d, %d shapes' % (code + (unit, len(shapes))))
             for s in shapes:
                 print('  @%-5d layer %d %-28s links %s points %d%s' % (s['at'], s['layer'], s['label'], s['links'],
