@@ -185,6 +185,16 @@ class TestEdgeTwins(unittest.TestCase):
         self.assertGreater(n, 0)
         self.assertEqual(bad, [])
 
+    def test_a_crossing_beside_a_corner_keeps_its_twin(self):
+        lon, lat, u = -22.0 + 1.875 / 60 * 3, 64.125, 1.875 / 60 / 2048
+        w = dict(id=1, hw='secondary', name='A', ref='26',
+                 nodes=[(lon - 0.3 * u - 0.001, lat - 0.002), (lon - 0.3 * u + 0.001, lat + 0.002)])
+        parcels = rd_build.build_graphs([w], 'B60R080R', 1, True)
+        self.assertEqual(sum(len(P['links']) for P in parcels.values()), 3, 'the clipped parcel keeps its piece')
+        import rd_check
+        n, bad = rd_check.edge_joins([zlib_plain(r) for r in rd_build.encode_parcels(parcels, 1).values()], 1)
+        self.assertEqual((n, bad), (4, []))
+
     def test_ring_parcels_are_built_but_not_written(self):
         x0 = -28.0
         w = dict(id=1, hw='residential', name='A', ref=None, nodes=[(x0 + 0.01, 64.13), (x0 - 0.01, 64.13)])

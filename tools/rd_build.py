@@ -158,12 +158,10 @@ def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
             for p in run:
                 key = quant(p, pc, level)
                 ux, uy = (p[0] - lon0) / w * 2048, (p[1] - lat0) / h * 2048
-                on_line = min(abs(ux), abs(ux - 2048), abs(uy), abs(uy - 2048)) < 1e-3
-                if not on_line:
-                    # only a cut point sits on the parcel line; a vertex or junction that merely
-                    # rounds onto it stays one unit inside, or it merges with the cut node and that
-                    # gets two real links, which the factory never has
-                    key = (min(2046, max(1, key[0])), min(2046, max(1, key[1])))
+                # only a cut point sits on a parcel line, and only on the line it was cut at. Anything
+                # else stays a unit inside, or it merges with the cut node into two real links (never
+                # on factory tiles), or beside a corner its twin is sought across the wrong line
+                key = tuple(k if min(abs(u), abs(u - 2048)) < 1e-3 else min(2046, max(1, k)) for k, u in zip(key, (ux, uy)))
                 q.append((key, p))
             raw[pc].append((q, wy))
     for pc, runs in raw.items():
