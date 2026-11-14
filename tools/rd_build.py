@@ -72,15 +72,24 @@ def pin_crossings(ways):
     """Give each way the points where it crosses a level-2 parcel line, as level 1 cuts them, and
     return those points. Level 2 simplifies harder, so it would cut the line a little off the
     level-1 node; kept through its simplify, the two levels share the node. Factory B50R068R:
-    41,875 of 41,875 level-2 nodes sit on a level-1 node."""
+    41,875 of 41,875 level-2 nodes sit on a level-1 node. Where a way dips over a line and
+    comes back, its farthest point over the line is returned too: without one the level-2
+    simplify flattens the dip onto the line and level 2 has no link in that parcel for the
+    level-1 links there to name."""
     def above(pc): return (pc[0] * 32 + pc[2]) // 4, (pc[1] * 32 + pc[3]) // 4
     pinned = set()
     for w in ways:
         runs = cut(w['nodes'], 1)
         if len(runs) < 2: continue
-        nodes = list(runs[0][1])
+        nodes = list(runs[0][1]); visit = None
         for (prev, _), (pc, run) in zip(runs, runs[1:]):
-            if above(prev) != above(pc): pinned.add(tuple(run[0]))
+            if above(prev) != above(pc):
+                if visit is not None:
+                    a, b = nodes[visit], run[0]; inner = nodes[visit + 1:]
+                    axis = 0 if abs(a[0] - b[0]) < abs(a[1] - b[1]) else 1
+                    if inner and abs(a[axis] - b[axis]) < ON_POINT:
+                        pinned.add(tuple(max(inner, key=lambda p: abs(p[axis] - a[axis]))))
+                pinned.add(tuple(run[0])); visit = len(nodes) - 1
             nodes += run[1:]
         w['nodes'] = nodes
     return pinned

@@ -159,6 +159,16 @@ class TestLevel2Chains(unittest.TestCase):
         self.assertIn(b, geos); self.assertIn(c, geos)
         self.assertEqual(sorted(l[3] for l in P['links']), [1, 2, 3, 4, 5], 'the link between them is kept')
 
+    def test_level2_keeps_a_dip_over_its_parcel_line(self):
+        line = 772 / 12
+        w = dict(id=1, hw='primary', name='A', ref='47',
+                 nodes=[(-21.720, line - 0.0003), (-21.717, line + 0.00001), (-21.714, line - 0.0003)])
+        pinned = rd_build.pin_crossings([w])
+        self.assertIn((-21.717, line + 0.00001), pinned)
+        w['nodes'] = rd_build.simplify(w['nodes'], 5, pinned)
+        parcels = rd_build.build_graphs([w], 'B60R080R', 2, True)
+        self.assertEqual(sorted(len(P['links']) for P in parcels.values()), [1, 2], 'a level-2 link over the line too')
+
     def test_a_secondary_without_a_number_is_class_6(self):
         self.assertEqual(fa_encode.road_kind('secondary', '34'), 'secondary')
         self.assertEqual(fa_encode.road_kind('primary', None), 'primary')
