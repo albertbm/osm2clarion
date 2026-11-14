@@ -50,6 +50,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parent.parent)) + '/tools')
+import addr_links  # noqa: E402
 import addre_io  # noqa: E402
 import frames  # noqa: E402
 import iceland_card  # noqa: E402
@@ -116,9 +117,7 @@ def fold(name):
 
 def word_keys(name, kw):
     """One key per word start, the whole remainder from it, and whether it is a later word."""
-    s = fold(name)
-    starts = [0] + [j + 1 for j, c in enumerate(s) if c == ' ' and j + 1 < len(s)]
-    return [(keyunits(s[p:], kw), p > 0) for p in starts if s[p].isalnum()]
+    return addr_links.word_keys(fold(name), kw)
 
 
 def point_word_keys(name, kw):

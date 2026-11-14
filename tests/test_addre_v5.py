@@ -10,6 +10,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / 'tools'))
 
+sys.path.insert(0, str(ROOT / 'tools' / 'addr'))
+
+import addr_links
 import addre_io
 import clarion_format
 import frames
@@ -93,6 +96,33 @@ class File(unittest.TestCase):
         a = addre_io.Addre(out)
         self.assertEqual((a.nsrec, len(a.names), len(a.blocks)), (len(rows), len(names), -(-len(names) // 500)))
         self.assertEqual(a.srec(len(rows) - 1), rows[-1])
+
+
+class Keys(unittest.TestCase):
+    def test_shortest(self):
+        # ADDRE014 on the QY7 card: AEULE, AEULEGRABEN, AEULESTRASSE, AEULEWEG, AKMEIN
+        full = [b'AEULE', b'AEULEGRABEN', b'AEULESTRASSE', b'AEULEWEG', b'AKMEIN']
+        self.assertEqual(addr_links.shortest_keys(full), [b'AEULE', b'AEULEG', b'AEULES', b'AEULEW', b'AK'])
+        self.assertEqual(addr_links.shortest_keys([b'KATU']), [b'K'])
+
+    def test_word_keys(self):
+        self.assertEqual(addr_links.word_keys('ALVAR AALLON KATU'),
+                         [(b'ALVAR AALLON KATU', False), (b'AALLON KATU', True), (b'KATU', True)])
+        self.assertEqual(addr_links.word_keys('14 TIE'), [(b'14 TIE', False), (b'TIE', True)])
+
+    def test_shortened_file_finds_every_street(self):
+        ladder = (6, 6, 2, 4, 11)
+        ents = [dict(name=n, nums=[], link=dict(la=1, lo=2, refs=addre_io.street_refs(10, 20)))
+                for n in ('KAUPPAKATU', 'KAUPPAKUJA', 'KOULUTIE')]
+        out, keys, _ = addr_links.addre_mixed(ents, lambda e: ladder, addr_links.word_keys,
+                                              frames.addre_prefix(BOUNDS, '14/04/12/01', V5), frames.addre_df(V5),
+                                              6, 3, fmt=V5, shorten=True)
+        self.assertEqual([k[0] for k in keys], [b'KAUPPAKA', b'KAUPPAKU', b'KO'])
+        a = addre_io.Addre(out)
+        self.assertEqual(a.keys, keys)
+        got = [addre_io.parse_name_record(a.names[struct.unpack_from('>I', (a.srec_pre + a.rows)[i * 22:], 18)[0]], V5)['name']
+               for i in range(a.nsrec)]
+        self.assertEqual(got, ['KAUPPAKATU', 'KAUPPAKUJA', 'KOULUTIE'])
 
 
 if __name__ == '__main__':

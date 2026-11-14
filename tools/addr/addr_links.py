@@ -148,6 +148,31 @@ def link_refs(e, how, d, c):
                 other_parcel=tuple(home) != tuple(R['code']))
 
 
+def word_keys(folded, kw=1):
+    """[(key, is a later word)] for a folded name: one key per word start, running to the end."""
+    def units(t):
+        return b''.join(ch.encode('utf-8').ljust(kw, b'\0') for ch in t)
+    starts = [0] + [j + 1 for j, c in enumerate(folded) if c == ' ' and j + 1 < len(folded)]
+    return [(units(folded[p:]), p > 0) for p in starts if folded[p].isalnum()]
+
+
+def shortest_keys(keys):
+    """Sorted keys cut to the first letter that tells each from its neighbours, as a factory trie cuts them.
+
+    1,100 of the 1,133 keys of the QY7 card's ADDRE014 hold one name; the rest are later
+    words that several names share."""
+    def common(a, b):
+        n = 0
+        while n < min(len(a), len(b)) and a[n] == b[n]:
+            n += 1
+        return n
+    out = []
+    for i, k in enumerate(keys):
+        near = [common(k, keys[j]) for j in (i - 1, i + 1) if 0 <= j < len(keys)]
+        out.append(k[:max(near, default=0) + 1])
+    return out
+
+
 def ladder_first(srecs):
     """(rows, pre): each row carries the next row's ladder, and pre the first.
 
@@ -169,10 +194,12 @@ def house_items(nums):
     return out
 
 
-def addre_mixed(ents, ladder_of, word_keys, prefix, df, area, ntier, kw=1, fmt=None):
-    """An ADDRE file of entries sorted by key. An entry with e['ranges'] gets one row per
-    range (continuation flag 0x8000 past the first), any other a generic row to e['link'].
-    word_keys(name) gives [(key, is a later word)]. Returns (file, keys, name blocks)."""
+def addre_mixed(ents, ladder_of, word_keys, prefix, df, area, ntier, kw=1, fmt=None, shorten=False):
+    """(file, keys, name blocks) of an ADDRE file of entries sorted by key.
+
+    An entry with e['ranges'] gets one row per range (continuation flag 0x8000 past the
+    first), any other a generic row to e['link']. word_keys(name) gives [(key, is a later
+    word)]. `shorten` cuts the keys as shortest_keys does."""
     cr = 8 + kw + (4 if kw == 2 else 3)
     names, idx_of, range_idx_of = [], {}, {}
     for i, e in enumerate(ents):
@@ -206,6 +233,9 @@ def addre_mixed(ents, ladder_of, word_keys, prefix, df, area, ntier, kw=1, fmt=N
             else:
                 srecs.append(addre_io.street_record(0x4000 if later else 0, idx_of[i], ladder_of(e)))
         keys.append((u, start, len(srecs) - start))
+    if shorten:
+        assert kw == 1, kw
+        keys = [(u, f, n) for u, (_, f, n) in zip(shortest_keys([k[0] for k in keys]), keys)]
     srecs, pre = ladder_first(srecs)
     d, w = frames.addre_hints(names)
     out, blocks = addre_io.assemble(prefix, keys, srecs, names, df, pre, cr, kw, area, ntier,

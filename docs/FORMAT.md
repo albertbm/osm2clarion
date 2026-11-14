@@ -142,6 +142,10 @@ own fields: `06 00 "STREET"` for the table, `09 00 "area code"` and `0b 00 "stre
 its columns. `area code` appears in every family and is presumably the join key to the
 administrative hierarchy. The records between header and schema are packed binary, not decoded.
 
+A QY7 card (X08-02-00) packs every `REFER001` file, `ICODE001.DAT` included, and its
+`CMP.LST` is the folder name alone. Its street file has a third column, `dndc-id`, and keeps
+its street rows compressed; `tools/addre_io.py` reads and writes both layouts.
+
 ## DRSTR001.DAT, the directory index
 
 The unit reads this instead of scanning the card, so a database with new tiles needs a

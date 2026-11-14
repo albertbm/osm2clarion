@@ -98,6 +98,33 @@ def pack_list(rows, parent_roff, deepest=False):
     return body + struct.pack('>HHII', TERM, 0, 0xffffffff, parent_roff)
 
 
+def iso_ordinal(d, iso):
+    """A country's ordinal in the ISO table, which is its row in every language's top chain."""
+    for o in range(struct.unpack_from('>HH', d, ISO_TABLE)[1]):
+        if struct.unpack_from('>HH', d, ISO_TABLE + 4 + o * ENTRY)[1] == iso:
+            return o
+    raise KeyError(iso)
+
+
+def area_frames(d):
+    """[(language, byte offset)] of the area-name frames, from the volume table slot 13 names."""
+    a = struct.unpack_from('>I', d, 0x800 + 6 * 13)[0]
+    p = (a >> 8) * 0x800 + (a & 0xff) * 0x100
+    out = []
+    while True:
+        nxt, sa, _tot, _z, _flc, _f20, lang, kind = struct.unpack_from('>HIIIHHBB', d, p)
+        if kind == 1:
+            out.append((lang, (sa >> 8) * 0x800 + (sa & 0xff) * 0x100))
+        if nxt == 0xffff:
+            return out
+        p += 26
+
+
+def children(d, base, row):
+    """The rows under one row of the frame at `base`."""
+    return [] if row.nosub or not row.cnt else read_list(d, base + row.roff * 2)
+
+
 def iso_entry(d, ordinal):
     """(ISO 3166 number, tier labels) for one country, from the ISO table at 0x1000."""
     o = ISO_TABLE + 4 + ordinal * ENTRY

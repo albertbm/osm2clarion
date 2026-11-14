@@ -113,3 +113,20 @@ credit "Syke, Ryhti". The columns are `street`, `number`, `number2` (end of a ra
 service returns WGS84 and no reprojection is needed. Rows with no street or number are
 skipped. `tools/addr/pull_ryhti.py OUT.csv LON_MIN LAT_MIN LON_MAX LAT_MAX` pulls a box;
 the whole country is 3.9 million rows.
+
+## A factory card with one rebuilt area (QY7)
+
+An area-mode card keeps the factory area tree, so there is no ICODE, ZCODE or POINT to
+write. `tools/addr/build_addr_country.py` rewrites one file, the country's `ADDRE`, from the
+OSM addresses inside the area's relations:
+
+- the ladder is the row `[addr] municipality` names one level above the deepest tier of the
+  card's own `ICODE001.DAT`, plus the settlement under it that `addr:city` names. An address
+  whose town is no settlement row goes to the settlement named like the municipality;
+- a street gets one row per road link and side with the house numbers along it, as
+  `--house-ranges ALL` writes for Iceland, or a plain row when it has no numbers;
+- a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
+- the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.
+
+Street search for the rest of that country then finds nothing, where the factory file
+pointed at roads the build removed.
