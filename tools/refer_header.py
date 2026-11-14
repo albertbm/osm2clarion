@@ -7,6 +7,10 @@ Andorra, ADDRE040 Vatican, ADDRE042 Belarus, ADDRE011 Greece, ADDRE007 Germany, 
 UK - and across both ICODE001 files, which hold every country at once. `check()` rebuilds
 a factory header from its own decoded fields and asserts it matches byte for byte.
 
+An X08-02 (QY7) card writes the same header with its own strings, language list and fill;
+16 of the 17 REFER files read off the 2014 QY7 card rebuild from `V5`; POINT007 has three
+more bytes at 0x5db.
+
 Decided per file: the db bounds at 0x184 and 0x5d0 (arc-minutes; the factory writes the
 whole database's extent), the slot table at 0x800 (sector address and 256-byte block
 count per frame), and DATA VERSION, which has to be the target card's own vintage. The
@@ -14,6 +18,8 @@ NAVTEQ supplier string at 0x3b0 is left as 0xff fill unless a factory header is 
 reproduced.
 """
 import struct
+
+import clarion_format
 
 FILL = 0xff
 NSLOT = 341
@@ -42,12 +48,27 @@ CONSTS = [
     (0x5d4, bytes.fromhex('0b0b') + b'\0' * 554),
 ]
 
+V5 = [
+    (0x000, _s('CLARION')),
+    (0x040, _s('HITACHI')),
+    (0x080, _s('CLA-NAVI05-01')),
+    (0x0a0, _s('FORMAT VERSION X08-02-00')),
+    (0x160, bytes.fromhex('1400') + _s('V05.00.00')),
+    (0x182, b'\x24'),
+    (0x18c, bytes.fromhex('050402070a06080d0c1615091917181a143f3f3f') + b'\0' * 14),
+    (0x2ac, b'\0\0'),
+    (0x3ac, b'\0' * 322),             # no supplier string
+    (0x52c, b'\0' * 160 + bytes.fromhex('80000000')),
+    (0x5d4, bytes.fromhex('0b0b') + b'\0' * 6),
+]
 
-def header(slots, bounds, version, navteq=None):
+
+def header(slots, bounds, version, navteq=None, fmt=None):
     """slots: {slot number: (sector address, 256-byte block count)}. bounds: lat max, lat
-    min, lon min, lon max in arc-minutes. version: the card's DATA VERSION, '14/11/17/01'."""
+    min, lon min, lon max in arc-minutes. version: the card's DATA VERSION, '14/11/17/01'.
+    fmt: the card's clarion_format, X08-03 when left out."""
     h = bytearray([FILL]) * 0x1000
-    for off, b in CONSTS:
+    for off, b in V5 if fmt is not None and fmt.refer_v5 else CONSTS:
         h[off:off + len(b)] = b
     v = _s('DATA VERSION ' + version)
     h[0x0e0:0x0e0 + len(v)] = v
@@ -75,5 +96,6 @@ def check(h):
     """Rebuild a factory header from its own bounds, slots, version and NAVTEQ string."""
     bounds = struct.unpack_from('>4h', h, 0x184)
     version = bytes(h[0x0fa:0x0fa + 22]).decode('utf-16-be')
-    nav = h[0x3b0:0x3b0 + 22]
-    return header(slots_of(h), bounds, version, nav) == bytes(h[:0x1000])
+    fmt = clarion_format.of_header(h)
+    nav = None if fmt.refer_v5 else h[0x3b0:0x3b0 + 22]
+    return header(slots_of(h), bounds, version, nav, fmt) == bytes(h[:0x1000])

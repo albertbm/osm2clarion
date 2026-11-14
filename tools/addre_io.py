@@ -4,6 +4,18 @@
 Decompressed form. Offsets and sizes inside the trie are 16-bit words; so are the
 name-block chunk sizes in the tail table, which is what made the block look like an
 unknown codec. The name blocks are zlib with a 4 KiB window.
+
+An X08-02 (QY7) file is the V05 layout, measured on six files of the 2014 QY7 card, which
+all rebuild byte for byte (Andorra, Finland, Liechtenstein, Monaco, San Marino, Vatican):
+
+* the street records are not stored plain. Their block holds 0x4e20, a zero word, one
+  u32 size in halfwords per 20,000 records, then one zlib stream per 20,000 records, each
+  padded to four bytes. Inflated, the rows are the X08-03 rows without the ten-byte shift:
+  ladder first, then relation, flags, ID and name index.
+* the definition frame has a third field, dndc-id, so the tail-table address and size sit
+  0x18 further in, and frame byte 0x1a is 0 where X08-03 writes the record width.
+* a name record has two more bytes, 00 ff, between its name length and its ladder.
+* names are Latin-1 and the name blocks zlib with a 32 KiB window, padded to four bytes.
 """
 import math
 import os
@@ -14,6 +26,7 @@ import zlib
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg  # noqa: E402
+import clarion_format  # noqa: E402
 
 ALIGN = 0x100
 DF_LEN = 0x100
@@ -21,6 +34,8 @@ NAMES_PER_BLOCK = 500
 SREC = 22
 SREC_W = 11
 SREC_PRE = 0x0a        # the street records start this far into their 256-byte block
+V5_PER = 20000         # street records per zlib stream in a V05 file
+V5_TAIL = 0x92         # the tail-table address in a V05 definition region
 
 
 def u16(d, o): return struct.unpack_from('>H', d, o)[0]
@@ -84,17 +99,26 @@ def deflate_block(b):
     return co.compress(b) + co.flush()
 
 
+def _v5(fmt):
+    return fmt is not None and fmt.refer_v5
+
+
 class Addre:
     """Parsed file. `keys` and `names` are the content; everything else is derived."""
 
     def __init__(self, d):
         self.d = d
+        self.fmt = clarion_format.of_header(d)
         self.cr = d[0x1032] * 2
         self.kw = d[0x1033]
         self.area = u16(d, 0x103a)
         self.nodew = u32(d, 0x1006)
         self.node_end = 0x1100 + self.nodew * 2
         self.nsrec = u32(d, 0x1016) // SREC_W
+        if self.fmt.refer_v5:
+            self._v5()
+            self._trie()
+            return
         # 0x1012 is the street-record block's own sector address, exact on all seven
         # factory files, and the records sit 10 bytes into it. Searching for the first
         # 7f7f instead lands two records late on Denmark and Norway, whose leading
@@ -108,11 +132,36 @@ class Addre:
         self._tail()
         self._trie()
 
+    def _v5(self):
+        """The V05 layout: inflate the street records into the X08-03 row stream."""
+        d = self.d
+        o = unaddr(u32(d, 0x1012))
+        assert u16(d, o) == V5_PER, hex(u16(d, o))
+        n = -(-self.nsrec // V5_PER)
+        p = o + 4 + 4 * n
+        rows = b''
+        for i in range(n):
+            size = u32(d, o + 4 + 4 * i) * 2
+            rows += zlib.decompress(d[p:p + size])
+            p += size
+        assert len(rows) == self.nsrec * SREC, (len(rows), self.nsrec)
+        self.srec_pre = rows[:SREC_PRE]
+        self.rows = rows[SREC_PRE:] + b'\0' * SREC_PRE
+        dfr = unaddr(u32(d, 0x800 + 6 * 7))
+        self.nb = dfr + DF_LEN
+        self.df = d[dfr:self.nb]
+        self.ntier = self.df[0x49] - 2
+        self._blocks(unaddr(u32(self.df, V5_TAIL)))
+
     def _tail(self):
         d = self.d
         t = self.nb
         while d[t:t + 4] != b'\x01\xf4\x00\x00':
             t = (t // ALIGN + 1) * ALIGN
+        self._blocks(t)
+
+    def _blocks(self, t):
+        d = self.d
         self.tail_off = t
         self.blocks = []
         o = t + 4
@@ -141,7 +190,8 @@ class Addre:
         d = self.d
         o = 0x1100
         root = []
-        while u32(d, o):
+        # a V05 root can open on a leaf at record 0, so the all-ones key ends it there
+        while d[o + 8:o + 8 + self.kw] != b'\xff' * self.kw if self.fmt.refer_v5 else u32(d, o):
             root.append(self._crec(o))
             o += self.cr
         self.nroot = len(root)
@@ -168,6 +218,8 @@ class Addre:
         self.keys = keys
 
     def srec(self, i):
+        if self.fmt.refer_v5:
+            return self.rows[i * SREC:(i + 1) * SREC]
         return self.d[self.srec_off + i * SREC:self.srec_off + (i + 1) * SREC]
 
 
@@ -249,15 +301,79 @@ def build_trie(keys, cr, kw, recw=SREC_W):
     return bytes(buf), first, len(ks)
 
 
+def _name_blocks(out, names, deflate):
+    """Append the name blocks and the tail table. Returns (blocks, tail-table offset)."""
+    blocks = []
+    cmp_parts = []
+    st = 0
+    for i in range(0, len(names), NAMES_PER_BLOCK):
+        plain = b''.join(names[i:i + NAMES_PER_BLOCK])
+        c = deflate(plain)
+        c += b'\x00' * (-len(c) % 4)
+        blocks.append((st, len(c) // 2, len(plain) // 2))
+        cmp_parts.append(c)
+        st += len(c) // 2
+    out += b''.join(cmp_parts)
+    tail = (len(out) + ALIGN - 1) // ALIGN * ALIGN
+    out += b'\x00' * (tail - len(out))
+    t = bytearray((4 + 12 * len(blocks) + ALIGN - 1) // ALIGN * ALIGN)
+    struct.pack_into('>I', t, 0, 0x01f40000)
+    o = 4
+    for b in blocks:
+        struct.pack_into('>III', t, o, *b)
+        o += 12
+    out += t
+    return blocks, tail
+
+
+def _assemble_v5(fmt, prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier, maxkey_hint, namewidth_hint):
+    node, first, _nroot = build_trie(keys, cr, kw)
+    out = bytearray(prefix)
+    out[0x1032] = cr // 2
+    out[0x1033] = kw
+    struct.pack_into('>H', out, 0x103a, area)
+    struct.pack_into('>I', out, 0x1006, len(node) // 2)
+    struct.pack_into('>H', out, 0x100e, first)
+    struct.pack_into('>I', out, 0x1016, len(srecs) * SREC_W)
+    out += node
+    out += b'\x00' * (-len(out) % ALIGN)
+    struct.pack_into('>I', out, 0x1012, addr(len(out)))
+    rows = (srec_pre + b''.join(srecs))[:len(srecs) * SREC]     # undo the ten-byte shift
+    parts = [fmt.deflate(rows[i:i + V5_PER * SREC]) for i in range(0, len(rows), V5_PER * SREC)]
+    out += struct.pack('>HH', V5_PER, 0) + b''.join(struct.pack('>I', len(c) // 2) for c in parts)
+    out += b''.join(parts)
+    out += b'\x00' * (-len(out) % ALIGN)
+    dfr = len(out)
+    out += df
+    nb = len(out)
+    blocks, tail = _name_blocks(out, names, fmt.deflate)
+    struct.pack_into('>I', out, dfr + 0x24, addr(nb))
+    struct.pack_into('>I', out, dfr + 0x28, sum(b[1] for b in blocks))
+    struct.pack_into('>H', out, dfr + 0x30, max(len(n) for n in names) // 2)
+    if maxkey_hint is not None:
+        struct.pack_into('>H', out, dfr + 0x32, maxkey_hint)
+    out[dfr + 0x49] = 2 + ntier
+    if namewidth_hint is not None:
+        out[dfr + 0x63] = namewidth_hint
+    struct.pack_into('>I', out, dfr + V5_TAIL, addr(tail))
+    struct.pack_into('>I', out, dfr + V5_TAIL + 4, (4 + 12 * len(blocks)) // 2)
+    struct.pack_into('>I', out, 0x824 + 6, addr(dfr))
+    return bytes(out), blocks
+
+
 def assemble(prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
-             maxkey_hint=None, namewidth_hint=None):
+             maxkey_hint=None, namewidth_hint=None, fmt=None):
     """prefix: bytes 0..0x1100 from a donor; patched in place. Returns (file, blocks).
 
     Fills every definition-frame field that has a known formula (
     verified exact on all seven factory ADDRE files). D and the name-width hint have
     none, so they pass through from `df` unless `maxkey_hint`/`namewidth_hint` override
     them - needed whenever `df` is a donor's, not this content's own, as for Iceland.
+    `fmt` is the card's clarion_format; an X08-02 card gets the V05 layout.
     """
+    if _v5(fmt):
+        return _assemble_v5(fmt, prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
+                            maxkey_hint, namewidth_hint)
     node, first, _nroot = build_trie(keys, cr, kw)
     out = bytearray(prefix)
     out[0x1032] = cr // 2
@@ -279,26 +395,7 @@ def assemble(prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
     out += df
     assert len(out) == nb
     dfo = nb - DF_LEN + 0x20          # the definition frame proper, inside the definition region
-    blocks = []
-    cmp_parts = []
-    st = 0
-    for i in range(0, len(names), NAMES_PER_BLOCK):
-        plain = b''.join(names[i:i + NAMES_PER_BLOCK])
-        c = deflate_block(plain)
-        c += b'\x00' * (-len(c) % 4)
-        blocks.append((st, len(c) // 2, len(plain) // 2))
-        cmp_parts.append(c)
-        st += len(c) // 2
-    out += b''.join(cmp_parts)
-    tail = (len(out) + ALIGN - 1) // ALIGN * ALIGN
-    out += b'\x00' * (tail - len(out))
-    t = bytearray((4 + 12 * len(blocks) + ALIGN - 1) // ALIGN * ALIGN)
-    struct.pack_into('>I', t, 0, 0x01f40000)
-    o = 4
-    for b in blocks:
-        struct.pack_into('>III', t, o, *b)
-        o += 12
-    out += t
+    blocks, tail = _name_blocks(out, names, deflate_block)
 
     cmpw = sum(b[1] for b in blocks)
     struct.pack_into('>I', out, dfo + 4, addr(nb))                           # A: name-block address
@@ -359,7 +456,7 @@ def street_refs(k, i, k_node=True, i_node=True):
 
 
 def name_record(name, lat, lon, levels, items=b'', refs=((2, 0x40, 0), (3, 0x40, 0)),
-                flags=0x18):
+                flags=0x18, fmt=None):
     """One ADDRE name record. `lat`, `lon` are the parcel code of the level-1 shape
     record the references point into (parcel_words), not a linear coordinate.
 
@@ -369,21 +466,29 @@ def name_record(name, lat, lon, levels, items=b'', refs=((2, 0x40, 0), (3, 0x40,
     (name words, country, parish) and a settlement byte, Italy's five give three more
     halfwords. A level the data does not know is set to the parent's child count, which
     is the factory's own out-of-range marker - 208 of Andorra's 905 records use it.
+
+    A V05 record (`fmt` X08-02) has the name in Latin-1 and 00 ff ahead of the ladder,
+    in a continuation record too.
     """
-    nm = name.encode('utf-8') if isinstance(name, str) else name
+    v5 = _v5(fmt)
+    nm = (fmt.text(name) if v5 else name.encode('utf-8')) if isinstance(name, str) else name
     nm += b'\0' * (len(nm) % 2)
     ref = b''.join(struct.pack('>BBH', *r) for r in refs)
+    if v5:
+        ladder = bytes([len(levels), len(nm) // 2, 0, 0xff]) + struct.pack('>%dH' % len(levels), *levels) + nm
+    elif levels:
+        ladder = (bytes([len(levels)]) + struct.pack('<%dH' % len(levels), len(nm) // 2, *levels[:-1])
+                  + bytes([levels[-1]]) + nm)
+    else:
+        ladder = b'\0\0'
     body = (bytes([(4 + len(ref)) // 2, len(items) // 2])
-            + struct.pack('>HH', lat, lon) + ref + items
-            + (bytes([len(levels)])
-               + struct.pack('<%dH' % len(levels), len(nm) // 2, *levels[:-1])
-               + bytes([levels[-1]]) + nm if levels else b'\0\0'))
+            + struct.pack('>HH', lat, lon) + ref + items + ladder)
     total = 2 + len(body)
     assert total % 2 == 0 and total // 2 < 0x800, (name, total)
     return struct.pack('>H', flags << 11 | total // 2) + body
 
 
-def parse_name_record(r):
+def parse_name_record(r, fmt=None):
     """name_record read back: dict(flags, lat, lon, refs [(tag, flag, v)], items, levels,
     name). A record with no ladder continues the previous street; name is None then."""
     refw, itw = r[2], r[3]
@@ -394,6 +499,12 @@ def parse_name_record(r):
     items = r[p:p + itw * 2]; p += itw * 2
     nl = r[p]
     out = dict(flags=u16(r, 0) >> 11, lat=lat, lon=lon, refs=refs, items=items, levels=(), name=None)
+    if _v5(fmt):
+        if nl:
+            out['levels'] = struct.unpack_from('>%dH' % nl, r, p + 4)
+            q = p + 4 + 2 * nl
+            out['name'] = r[q:q + r[p + 1] * 2].rstrip(b'\0').decode(fmt.codec)
+        return out
     if nl:
         lv = struct.unpack_from('<%dH' % nl, r, p + 1)
         q = p + 1 + 2 * nl

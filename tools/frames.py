@@ -37,6 +37,13 @@ ADDRE_DF = _t(0x100, {0x000: 'ffff0010ffffffff', 0x00c: 'ffffffff', 0x020: 'ffff
                       0x052: '09006172656120636f646500ffff', 0x064: '60',
                       0x06b: '010b00737472656574206e616d65', 0x082: '01f4',
                       0x08c: '0600535452454554'})
+# the V05 (X08-02) pair: Andorra, Finland, Liechtenstein, Monaco, San Marino, Vatican
+ADDRE_FH_V5 = _t(0x100, {0x000: 'ffff', 0x004: '0201', 0x010: '4f40', 0x039: '01'})
+ADDRE_DF_V5 = _t(0x100, {0x000: 'ffff0010ffffffff', 0x00c: 'ffffffff', 0x020: 'ffff0049',
+                         0x039: '1200030600535452454554001f', 0x04a: '80',
+                         0x052: '09006172656120636f6465', 0x05f: '2d', 0x064: '60',
+                         0x06b: '010b00737472656574206e616d6500ffff', 0x080: '20',
+                         0x087: '020700646e64632d6964', 0x09a: '01f4', 0x0a4: '0600535452454554'})
 ZCODE_FH = _t(0x100, {0x000: 'ffff', 0x004: '0201', 0x010: '4d80', 0x01b: '08', 0x030: 'ffff',
                       0x036: '08', 0x039: '025a49502d434f4445', 0x044: 'ffff'})
 POINT_FH = _t(0x100, {0x000: 'ffff', 0x004: '0201', 0x010: '4c02', 0x01b: '14', 0x030: 'ffff',
@@ -71,8 +78,13 @@ def up(n):
     return n + (-n) % ALIGN
 
 
-def addre_prefix(bounds, version):
-    return refer_header.header({6: (addr(0x1000), 1), 7: (0, 1)}, bounds, version) + ADDRE_FH
+def addre_prefix(bounds, version, fmt=None):
+    v5 = fmt is not None and fmt.refer_v5
+    return refer_header.header({6: (addr(0x1000), 1), 7: (0, 1)}, bounds, version, fmt=fmt) + (ADDRE_FH_V5 if v5 else ADDRE_FH)
+
+
+def addre_df(fmt=None):
+    return ADDRE_DF_V5 if fmt is not None and fmt.refer_v5 else ADDRE_DF
 
 
 def addre_hints(names):
@@ -85,7 +97,7 @@ def addre_hints(names):
         p = 8 + (n[2] * 2 - 4) + n[3] * 2
         nl = n[p]
         if nl:
-            w = max(w, struct.unpack_from('<H', n, p + 1)[0])
+            w = max(w, n[p + 1])        # the low byte in X08-03, the whole length in V05
     return d, w
 
 

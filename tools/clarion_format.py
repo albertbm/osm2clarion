@@ -51,7 +51,7 @@ class Format:
     def __init__(self, name, unit, ident, consts, zero, table_fill, sect_slots, levels, zmagic, wbits, pad, x_base,
                  codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
                  ferry_style=0x001e, tail_runs=True, area_items=False, label_flags=0x2000, coarse_unnamed=(0x3000, 0x4000), l3_points=0, marker_shift=0,
-                 level_count=True):
+                 level_count=True, refer_v5=False):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -77,6 +77,7 @@ class Format:
         self.l3_points = l3_points      # bit set beside the point count of a level-3 coarse shape
         self.marker_shift = marker_shift  # added to the rotating selector of a coarse graph's part B
         self.level_count = level_count  # a link's w4 bits 1-2 and a level-2 node's flag count the levels above; else 1 for any
+        self.refer_v5 = refer_v5        # REFER files in the V05 layout: see addre_io
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -129,7 +130,7 @@ X08_02 = Format(
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
     shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000, marker_shift=1,
-    level_count=False)
+    level_count=False, refer_v5=True)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03
