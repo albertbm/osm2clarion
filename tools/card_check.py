@@ -1142,12 +1142,12 @@ def main(argv):
         report['factory'] = dict(checks=fchecks)
 
     if args.prev and args.card:
-        print('== diff: whole card, %s vs %s ==' % (args.card, args.prev))
+        print('== diff: whole card, %s -> %s ==' % (args.prev, args.card))
         only_a, only_b, diff, common_count = whole_card_diff(args.card, args.prev)
         print('only in %s: %r' % (args.card, only_a))
         print('only in %s: %r' % (args.prev, only_b))
         for path, sa, sb, ma, mb in diff:
-            print('  DIFFERS %-26s size %s -> %s  md5 %s -> %s' % (path, sa, sb, ma, mb))
+            print('  DIFFERS %-26s size %s -> %s  md5 %s -> %s' % (path, sb, sa, mb, ma))
 
         # identical here is whole-card: common_count minus the DIFFERS above, not scoped to
         # extract_card()'s MAPAL001/LEV3456R-only subset (that mismatch used to make this
