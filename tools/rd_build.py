@@ -122,18 +122,37 @@ def off_parcel_lines(ways):
     for w in ways: w['nodes'] = [moved.get(tuple(q), q) for q in w['nodes']]
     return moved
 
+def split_keys(runs, force=frozenset()):
+    """{(key, point): free key next to it} for the junctions of one parcel that round to a
+    key another junction has. Two or three metres apart they are one level-2 unit, and merged
+    into one node the links from the second have no level-1 shape at the node's level-1
+    twin. Factory B50R068R keeps them apart: 154 of 41,875 level-2 nodes share a place."""
+    seen = collections.Counter(tuple(p) for q, _ in runs for _, p in q)
+    ends = {tuple(q[i][1]) for q, _ in runs for i in (0, -1)}
+    at = collections.defaultdict(set); used = set()
+    for q, _ in runs:
+        for key, p in q:
+            used.add(key); p = tuple(p)
+            if (p in ends or seen[p] > 1 or p in force) and 0 < key[0] < 2047 and 0 < key[1] < 2047: at[key].add(p)
+    out = {}
+    for key in sorted(k for k, pts in at.items() if len(pts) > 1):
+        for p in sorted(at[key])[1:]:
+            nk = next((k for d in range(1, 2046) for dx in range(-d, d + 1) for dy in range(-d, d + 1)
+                       for k in [(key[0] + dx, key[1] + dy)]
+                       if max(abs(dx), abs(dy)) == d and 0 < k[0] < 2047 and 0 < k[1] < 2047 and k not in used), None)
+            if nk: used.add(nk); out[key, p] = nk
+    return out
+
 def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
     """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)].
     force: points that become nodes wherever a way passes them (level 1: the level-2 nodes)."""
     yb, xb = tile_cell(cell)
     def inside(pc): return yb <= pc[0] < yb + 8 and xb <= pc[1] < xb + 8
-    parcels = {}
+    parcels = {}; raw = collections.defaultdict(list)
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
             # parcels just outside the cell are built too, so a border edge node finds its twin
             if not inside(pc) and not any(inside(neighbour(pc, sd, level)) for sd in SIDES): continue
-            P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
-                                             touch_pts=collections.defaultdict(list)))
             q = []
             lon0, lat0, w, h = parcel_geo(level, *pc)
             for p in run:
@@ -145,6 +164,16 @@ def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
                     # rounds onto it stays one unit inside, or it merges with the cut node and that
                     # gets two real links, which the factory never has
                     key = (min(2046, max(1, key[0])), min(2046, max(1, key[1])))
+                q.append((key, p))
+            raw[pc].append((q, wy))
+    for pc, runs in raw.items():
+        P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
+                                         touch_pts=collections.defaultdict(list)))
+        moved = split_keys(runs, force)
+        for full, wy in runs:
+            q = []
+            for key, p in full:
+                key = moved.get((key, tuple(p)), key)
                 if not q or q[-1][0] != key: q.append((key, p))
             if len(q) < 2: continue
             P['runs'].append((q, wy))
