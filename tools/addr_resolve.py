@@ -14,12 +14,13 @@ own tile, finds that record, and checks every group:
     hops       a tag 0x40/0x50/0x60/0x70 moves one parcel N/E/S/W and v counts there
 
 Reads tiles with clarion_tile.read_tile, so it is for our own cards: whole parcels only.
+--only checks the named files, for a card that keeps factory address files beside ours.
 
-    addr_resolve.py CARD.img [--verbose]
+    addr_resolve.py CARD.img [--verbose] [--only ADDRE007.DAT ...]
 """
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import addre_io, clarion_bg, fatread, shape_index
+import addre_io, clarion_bg, clarion_format, fatread, shape_index
 
 HOPS = {0x40: (1, 0), 0x50: (0, 1), 0x60: (-1, 0), 0x70: (0, -1)}
 
@@ -47,16 +48,18 @@ class Card:
         self.fs = fatread.Fat32(img).__enter__()
         self.files = {p.strip('/'): (sz, c) for p, sz, c, _ in self.fs.walk() if sz is not None}
         self.tiles = {}
+        self.codec = {}
 
     def read(self, path):
         sz, c = self.files[path]
         return self.fs.f.read_clusters(c, sz) if sz else b''
 
-    def addre(self):
+    def addre(self, only=()):
         out = {}
         for p in sorted(self.files):
             d, n = os.path.split(p)
             if d != 'REFER001' or not n.startswith('ADDRE'): continue
+            if only and n.split('.DAT')[0] + '.DAT' not in only: continue
             if n.endswith('.DAT'): out[n] = self.read(p)
             elif n.endswith('.DAT.cmp'): out[n[:-4]] = unpack_cmp(self.read(p), self.read(p[:-4] + '.ind'))
         return out
@@ -69,7 +72,10 @@ class Card:
             if d != 'MAPAL001' or len(n) != 12 or n[0] != 'B' or n[3] != 'R': continue
             yb, xb = clarion_bg.tile_cell(n[:8])
             if yb <= y < yb + 8 and xb <= x < xb + 8:
-                if n not in self.tiles: self.tiles[n] = shape_index.tile_records(self.read(p))
+                if n not in self.tiles:
+                    d = self.read(p)
+                    self.tiles[n] = shape_index.tile_records(d)
+                    self.codec[n] = clarion_format.of_header(d).codec
                 return n, self.tiles[n]
         return None, {}
 
@@ -88,7 +94,7 @@ def resolve(card, rec, street):
         code = clarion_bg.parcel_code(1, row, col)
         if code not in recs:
             bad.append('group %s: no 0x00fa record %04x %04x' % (g, *code)); continue
-        _, unit, shapes = shape_index.shapes_of(*recs[code])
+        _, unit, shapes = shape_index.shapes_of(*recs[code], card.codec[tile])
         w = unit + v
         s = next((s for s in shapes if s['at'] <= w < s['at'] + s['length']), None)
         role = s['points'].get(w) if s else None
@@ -112,11 +118,12 @@ def resolve(card, rec, street):
 def main(argv):
     if not argv: sys.exit(__doc__)
     card = Card(argv[0]); verbose = '--verbose' in argv
+    only = argv[argv.index('--only') + 1:] if '--only' in argv else ()
     total = ok = 0
-    for fn, d in card.addre().items():
+    for fn, d in card.addre(only).items():
         a = addre_io.Addre(d); last = None; n = good = 0
         for r in a.names:
-            rec = addre_io.parse_name_record(r)
+            rec = addre_io.parse_name_record(r, a.fmt)
             street = rec['name'] if rec['name'] is not None else last
             last = street
             out, bad = resolve(card, rec, street)
