@@ -171,8 +171,11 @@ Limits of the Finland card:
 
 - Roads exist only inside the built area. Elsewhere in Europe the card draws the map but no
   roads, and cannot route.
-- Address search still reads the factory data, which points at roads that are now gone. It is
-  likely to crash.
+- Street search works for the built area only: Finland's street file is rewritten from the
+  OSM addresses inside it, under the municipality `[addr] municipality` names. Not yet
+  confirmed on a unit.
+- Postcode, intersection and POI search, and every other country's address search, still
+  read the factory data, which points at roads that are now gone. They are likely to crash.
 - Guidance has not been tried on a unit.
 
 ## Try a card before the car

@@ -15,7 +15,9 @@ picks the chain:
             CARDS/builds/<prefix>-<number>-<unit>-<slug>.img; the unit and slug are read from
             that name, and CARDS is the directory two levels up.
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
-            rebuilt from OSM. --base is the card image, only read. The factory step clears
+            rebuilt from OSM. With [addr] municipality set, the country's street search is
+            rewritten for that municipality (build_addr_country.py); every other address
+            file stays the card's. --base is the card image, only read. The factory step clears
             the work dir's copies of an earlier base; later steps refuse to run on them.
 
 The card is written as OUT.partial (in generate mode with its manifest as MANIFEST.partial),
@@ -37,7 +39,7 @@ import cardcopy
 import clarion_profile
 
 GENERATE_STEPS = ['prep', 'cards', 'poi', 'icons', 'addr', 'consent', 'check']
-AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'master', 'card', 'check']
+AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'addr', 'master', 'card', 'check']
 
 
 def run(*args, env=None):
@@ -161,6 +163,8 @@ def area_steps(P, prof, base, out, work, area, osm):
     roads, turns_all, turns = j('roads.json'), j('turns_all.json'), j('turns.json')
     lev_out = os.path.join(outmap, 'LEV3456R.DAT')
     mmain = j('MMAIN001.DAT')
+    shapes, addr_dir = j(cell + '.shapes.json'), j('addr')
+    has_addr = bool(P.raw.get('addr', {}).get('municipality'))
 
     def need_osm():
         path = osm or P.osm
@@ -213,6 +217,7 @@ def area_steps(P, prof, base, out, work, area, osm):
         args = ['--keep-names'] * bool(B.get('keep_names')) + ['--upper-names'] * bool(B.get('upper_names'))
         if B.get('turn_restrictions'): args += ['--turn-restrictions', turns]
         if B.get('coarse_graph'): args += ['--coarse-words']   # the coarse step fills them
+        if has_addr: args += ['--shape-index', shapes]
         run(tool('rd_build.py'), '--profile', prof, *args, tile_src, tile_roads, cell, roads)
 
     def coarse():
@@ -227,6 +232,29 @@ def area_steps(P, prof, base, out, work, area, osm):
         else:
             shutil.copyfile(tile_roads, dest)
 
+    def addr():
+        if os.path.isdir(addr_dir):
+            shutil.rmtree(addr_dir)
+        if not has_addr:
+            print('the profile sets no [addr] municipality; the card keeps its address files')
+            return
+        same_base()
+        # the coarse and section-4 steps rewrote the tile; the address words must still land
+        run(tool('shape_index.py'), 'verify', shapes, os.path.join(outmap, cell + '.DAT'))
+        run(tool('addr/build_addr_country.py'), addr_dir, '--profile', prof, '--area', area, '--card', base,
+            '--shapes', shapes, '--pbf', need_osm())
+
+    def addr_card():
+        """What the addr step left for the card: {card path: file} and {DIR:NAME: plain size}."""
+        try:
+            with open(os.path.join(addr_dir, 'card.json')) as f:
+                m = json.load(f)
+        except OSError:
+            if has_addr:
+                raise SystemExit('no address files in %s; run from the addr step' % addr_dir)
+            return {}, {}
+        return {p: os.path.join(addr_dir, n) for p, n in m['files'].items()}, m['index']
+
     def tiles():
         names = sorted(n for n in os.listdir(outmap) if n.startswith('B') and n.endswith('.DAT'))
         return [os.path.join(outmap, n) for n in names if n != cell + '.DAT'] + [os.path.join(outmap, cell + '.DAT')]
@@ -237,8 +265,9 @@ def area_steps(P, prof, base, out, work, area, osm):
             '--lev', lev_out)
 
     part = out + '.partial'
-    written = lambda: [('MAPAL001/' + os.path.basename(t), t) for t in tiles()] + \
+    map_files = lambda: [('MAPAL001/' + os.path.basename(t), t) for t in tiles()] + \
         [('MAPAL001/LEV3456R.DAT', lev_out), ('MMAIN001.DAT', mmain)]
+    written = lambda: map_files() + sorted(addr_card()[0].items())
 
     def card_step():
         if not os.path.isfile(base):
@@ -253,9 +282,12 @@ def area_steps(P, prof, base, out, work, area, osm):
         os.environ.setdefault('SOURCE_DATE_EPOCH', '946684800')
         cardcopy.clone(base, part)
         run(tool('fatwrite.py'), part, '--write', *['%s=%s' % (p.replace('/', ':') if '/' in p else ':' + p, f)
-                                                    for p, f in written()])
+                                                    for p, f in map_files()])
+        packed = sorted(addr_card()[0].items())
+        if packed:      # NAME.DAT.cmp is a long name, which fatwrite.py does not match
+            run(tool('fatedit.py'), part, '--write', *['%s=%s' % (p.replace('/', ':'), f) for p, f in packed])
         run(tool('drstr_refresh.py'), part, *['MAPAL001:' + os.path.basename(t) for t in tiles()],
-            'MAPAL001:LEV3456R.DAT')
+            'MAPAL001:LEV3456R.DAT', *['%s=%d' % e for e in sorted(addr_card()[1].items())])
 
     def check():
         """The card is renamed to OUT only when every file reads back as built, the rebuilt
@@ -279,6 +311,9 @@ def area_steps(P, prof, base, out, work, area, osm):
         # the roads of our own rebuilt cell and coarse file; the factory tiles are never parsed
         run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out, '--roads', roads)
         run(tool('drive_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out)
+        for name in sorted(addr_card()[1]):
+            # every street record of the rewritten file lands on a point of its own road
+            run(tool('addr_resolve.py'), part, '--only', name.split(':')[1])
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()
@@ -291,7 +326,8 @@ def area_steps(P, prof, base, out, work, area, osm):
         print('checked; card renamed to', out)
 
     return [('factory', factory), ('osm', osm_step), ('strip', strip), ('roads', roads_step),
-            ('coarse', coarse), ('sec4', sec4), ('master', master), ('card', card_step), ('check', check)]
+            ('coarse', coarse), ('sec4', sec4), ('addr', addr), ('master', master), ('card', card_step),
+            ('check', check)]
 
 
 def consent_ok(code, output):

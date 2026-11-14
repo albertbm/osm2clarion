@@ -52,6 +52,9 @@ speed_unit = "km/h"
 # (Syke, Ryhti, CC BY 4.0) for testing; see examples/finland.local.toml.
 format = "osm"
 box = [61.84, 62.43, 25.26, 26.06]   # lat_min, lat_max, lon_min, lon_max; the Jyvaskyla area
+# Area mode rewrites Finland's street search for the addresses inside the build area, under
+# this municipality's row of the card's own area tree. Without it the card keeps its file.
+municipality = "JYVÄSKYLÄ"
 
 [targets]
 default = "v2014"
