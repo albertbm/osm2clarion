@@ -1125,7 +1125,11 @@ def main():
         bydir = {(D['y'], (D['x'] + FMT.x_base) & 0xffff): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
         was_stale = merge_names.stale_replaced
         was_untouched = place_shapes.untouched
-        placed = place_shapes(recs, bydir)
+        was_blank, was_lost = place_shapes.blank, place_shapes.lost
+        placed = place_shapes(recs, bydir, level)
+        if place_shapes.blank > was_blank or place_shapes.lost > was_lost:
+            report.append(f'level {level}: {place_shapes.blank - was_blank} parcels with no background record given a blank one, '
+                          f'{place_shapes.lost - was_lost} with no directory slot left without roads')
         if place_shapes.untouched > was_untouched:
             report.append(f'level {level}: {place_shapes.untouched - was_untouched} background records with an '
                           f'unreferenced block left whole, no road labels there')
@@ -1337,14 +1341,45 @@ def replace_names(plain, section):
     return struct.pack('>22H', *w) + out
 
 
-def place_shapes(recs, bydir):
-    """Road-shape records into the even pairs of the background directories, names merged in."""
+def blank_background(level, y, x, row, col, bydir):
+    """A background record for a parcel the source tile has none for (all land, nothing on
+    it): the header of a factory record of our country, sections cleared, this parcel's code.
+    The header's other words are one value per level on every QY7 record. None where the
+    tile has no record of ours to copy."""
+    if level not in blank_background.header:
+        blank_background.header[level] = None
+        for D in bydir.values():
+            for s in D['slots'].values():
+                for r in s['recs']:
+                    if r['k'] % 2 == 0 or blank_background.header[level]: continue
+                    pl = FMT.inflate(r['raw'])
+                    if len(pl) < 44: continue
+                    w = list(struct.unpack_from('>22H', pl))
+                    if w[20] == COUNTRY and w[21] == 0:
+                        for i in (7, 9, 11, 13, 15, 17): w[i], w[i + 1] = 0xffff, 0
+                        blank_background.header[level] = w
+    w = blank_background.header[level]
+    if w is None: return None
+    per = 32 // DIRM[level]
+    w = list(w); w[0], w[1] = clarion_bg.parcel_code(level, y * per + row, x * per + col)
+    return struct.pack('>22H', *w)
+blank_background.header = {}
+
+def place_shapes(recs, bydir, level=1):
+    """Road-shape records into the even pairs of the background directories, names merged in.
+    A parcel with no background record gets a blank one, so its roads are not lost."""
     placed = 0
     for (y, x, row, col), (plain, comp, fplain, fcomp, section) in recs.items():
         D = bydir.get((y, x))
-        if D is None or row not in D['slots']: continue
+        if D is None or row not in D['slots']: place_shapes.lost += 1; continue
         s = D['slots'][row]
-        if not any(r['k'] == 2 * col + 1 for r in s['recs']): continue
+        if not any(r['k'] == 2 * col + 1 for r in s['recs']):
+            blank = blank_background(level, y, x, row, col, bydir)
+            if blank is None: place_shapes.lost += 1; continue
+            raw = FMT.deflate(blank)
+            s['recs'] = sorted(s['recs'] + [dict(k=2 * col + 1, raw=raw, words=len(blank) // 2)], key=lambda r: r['k'])
+            body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col + 1), len(raw) // 2, len(blank) // 2); s['body'] = bytes(body2)
+            place_shapes.blank += 1
         s['recs'] = [r for r in s['recs'] if r['k'] != 2 * col]
         bi = [i for i, r in enumerate(s['recs']) if r['k'] == 2 * col + 1][0]
         if section is None:   # shapes only, background record untouched
@@ -1366,7 +1401,7 @@ def place_shapes(recs, bydir):
         body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2)
         struct.pack_into('>II', body2, 8 * (2 * col + 1), len(newc) // 2, len(newpl) // 2); s['body'] = bytes(body2); placed += 1
     return placed
-place_shapes.untouched = 0
+place_shapes.untouched = place_shapes.blank = place_shapes.lost = 0
 
 if __name__ == '__main__':
     main()
