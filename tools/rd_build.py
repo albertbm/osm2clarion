@@ -1027,6 +1027,10 @@ def main():
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
     derive_dir(ways)
     for w in ways: w['hw'] = fa_encode.road_kind(w['hw'], w.get('ref'))
+    if coarse:
+        # from every way, before any cell is cut out, so all cells pick the same routes
+        km5, km4 = fa_encode.pick_level5(ways)
+        report.append(f'level 5: {len(fa_encode.LEVEL5_ROUTES)} routes, {km5:.0f} of {km4:.0f} level-4 km')
     l2 = set(l2) | {fa_encode.UNNUMBERED[h] for h in l2 if h in fa_encode.UNNUMBERED}
     signs = {w['id']: w['dest'] for w in ways if w.get('dest')} if signs_path else None
     if signs_path and not signs:

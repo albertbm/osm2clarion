@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The road-shape record (kind 0x00fa) in the even pair of a level-1 background directory:
 header, a geometry unit of twelve layer pairs, then the shapes, one per drawn link chain."""
-import collections, os, struct, sys
+import collections, math, os, re, struct, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_bg
 import clarion_format
@@ -161,6 +161,10 @@ COARSE_CLASSES = {4: set(range(16)) - {7}, 5: set(range(7)) | {10, 11, 12}}
 NUMBERED = {1, 3, 4, 5}
 JUNCTIONS = ('roundabout', 'circular')
 
+# Level 5 is whole routes, about 40% of the level-4 km (39-45% on the factory cards).
+LEVEL5_SHARE = 0.40
+LEVEL5_ROUTES = None   # pick_level5 sets it; None puts every level-4 road on level 5
+
 def coarse_levels(hw, ref=None, junction=None):
     """The coarse levels that carry a level-2 link of this way, highest first. Class 6, a
     main street with no number, stays off. Ramps and roundabouts with no number go in, so a
@@ -168,8 +172,46 @@ def coarse_levels(hw, ref=None, junction=None):
     cls = CLASSES.get(hw, DEFAULT)[1]
     if cls == 10: return (5, 4)
     if cls not in NUMBERED: return ()
-    if not ref and not (hw.endswith('_link') or junction in JUNCTIONS): return ()
-    return tuple(lv for lv in (5, 4) if cls in COARSE_CLASSES[lv])
+    if not ref:
+        return (5, 4) if hw.endswith('_link') or junction in JUNCTIONS else ()
+    if LEVEL5_ROUTES is None or LEVEL5_ROUTES & set(routes(ref)): return (5, 4)
+    return (4,)
+
+def routes(ref):
+    """The route numbers of one ref tag ('4;13' is on two routes)."""
+    return [re.sub(r'^E\s+', 'E', t.strip()) for t in ref.split(';') if t.strip()]
+
+def route_rank(route):
+    """E-roads first, then numbers by tier, fewest digits first."""
+    m = re.fullmatch(r'E(\d+)', route)
+    if m: return (0, 0, int(m.group(1)), route)
+    if route.isdigit(): return (1, len(str(int(route))), int(route), route)
+    return (2, 0, 0, route)
+
+def way_km(nodes):
+    return sum(math.hypot((b[0] - a[0]) * math.cos(math.radians((a[1] + b[1]) / 2)), b[1] - a[1])
+               for a, b in zip(nodes, nodes[1:])) * 111.32
+
+def pick_level5(ways, share=LEVEL5_SHARE):
+    """Set LEVEL5_ROUTES: whole routes by route_rank until level 5 has `share` of the level-4
+    km. Ramps, roundabouts and ferries count on both levels. Returns (level-5 km, level-4 km)."""
+    global LEVEL5_ROUTES
+    LEVEL5_ROUTES = set()
+    km4 = km5 = 0.0; per = collections.defaultdict(list)
+    for w in ways:
+        lv = coarse_levels(w['hw'], w.get('ref'), w.get('junction'))
+        if not lv: continue
+        km = way_km(w['nodes']); km4 += km
+        if 5 in lv and not w.get('ref'): km5 += km
+        elif w.get('ref'):
+            for r in routes(w['ref']): per[r].append((id(w), km))
+    taken = set()
+    for r in sorted(per, key=route_rank):
+        if km5 >= share * km4: break
+        LEVEL5_ROUTES.add(r)
+        for k, km in per[r]:
+            if k not in taken: taken.add(k); km5 += km
+    return km5, km4
 
 def coarse_words(hw, ref=None, junction=None):
     """Header words for the level-5 and level-4 links over a level-2 link of this way, highest

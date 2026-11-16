@@ -240,6 +240,19 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual(w[S['at'] + 6:S['at'] + 9], (0x8003, 0x6015, 0x2007))
         self.assertEqual(len(buf), len(rec), 'the record keeps its size')
 
+    def test_level5_takes_whole_routes_by_tier(self):
+        road = lambda ref, lon, hw='primary': dict(hw=hw, ref=ref, nodes=[[lon, 64.0], [lon, 64.1]])
+        ways = [road('E8;8', 0), road('8', 1), road('12', 2), road('345', 3), road('346', 4), road(None, 5, 'trunk_link')]
+        try:
+            km5, km4 = fa_encode.pick_level5(ways, share=0.4)
+            self.assertEqual(fa_encode.LEVEL5_ROUTES, {'E8', '8'}, 'the E-road, then its number, whole')
+            self.assertAlmostEqual(km5 / km4, 3 / 6, places=2)
+            self.assertEqual(fa_encode.coarse_levels('primary', '345'), (4,))
+            self.assertEqual(fa_encode.coarse_levels('primary', '12;8'), (5, 4))
+            self.assertEqual(fa_encode.coarse_levels('trunk_link'), (5, 4), 'a ramp stays on both levels')
+        finally:
+            fa_encode.LEVEL5_ROUTES = None
+
     def test_pin_crossings_and_forced_nodes(self):
         # a way over the level-2 parcel line at lon -22.0: the crossing becomes a point of the way
         w = dict(id=1, hw='primary', nodes=[[-22.001, 64.01], [-21.999, 64.0105]])
