@@ -241,19 +241,29 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual(len(buf), len(rec), 'the record keeps its size')
 
     def test_level5_takes_whole_routes_by_tier(self):
-        road = lambda ref, lon, hw='primary': dict(hw=hw, ref=ref, nodes=[[lon, 64.0], [lon, 64.1]])
-        ways = [road('E8;8', 0), road('8', 1), road('12', 2), road('345', 3), road('346', 4), road(None, 5, 'trunk_link')]
+        road = lambda i, ref, x, hw='primary': dict(id=i, hw=hw, ref=ref, nodes=[[x, 64.0], [x, 64.1]])
+        piece = lambda i, hw, *pts: dict(id=i, hw=hw, nodes=[list(p) for p in pts])
+        ways = [road(1, 'E8;8', 0), road(2, '8', 0.01), road(3, '12', 0.02), road(4, '345', 0.03), road(5, '346', 0.04),
+                piece(10, 'primary', (0, 64.1), (0.005, 64.1)), piece(11, 'primary', (0.005, 64.1), (0.01, 64.1)),
+                piece(12, 'trunk_link', (0.03, 64.0), (0.04, 64.0)),
+                piece(13, 'primary', (0.04, 64.1), (0.05, 64.2)), piece(14, 'primary', (0.05, 64.2), (0.06, 64.2))]
         try:
-            km5, km4 = fa_encode.pick_level5(ways, share=0.4)
+            km5, km4 = fa_encode.pick_level5(ways, share=0.35)
             self.assertEqual(fa_encode.LEVEL5_ROUTES, {'E8', '8'}, 'the E-road, then its number, whole')
-            self.assertAlmostEqual(km5 / km4, 3 / 6, places=2)
+            self.assertTrue(0.35 <= km5 / km4 < 0.45)
             self.assertEqual(fa_encode.coarse_levels('primary', '345'), (4,))
             self.assertEqual(fa_encode.coarse_levels('primary', '12;8'), (5, 4))
-            self.assertEqual(fa_encode.coarse_levels('trunk_link'), (5, 4), 'a ramp stays on both levels')
+            self.assertEqual([fa_encode.coarse_levels(w['hw'], None, None, w['id']) for w in ways[5:]],
+                             [(5, 4), (5, 4), (4,), (), ()], 'a chain between level-5 roads, a ramp between level-4 ones, a dead end')
             self.assertEqual(fa_encode.coarse_levels('ferry', '345'), (4,), 'a numbered ferry goes with its route')
             self.assertEqual(fa_encode.coarse_levels('ferry'), (5, 4))
         finally:
-            fa_encode.LEVEL5_ROUTES = None
+            fa_encode.LEVEL5_ROUTES = fa_encode.PIECES = None
+
+    def test_a_roundabout_is_held_at_two_points(self):
+        ring = dict(id=1, hw='primary', nodes=[[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]])
+        self.assertEqual(fa_encode.bridging([ring], [dict(nodes=[[1, 0], [5, 0]]), dict(nodes=[[0, 1], [0, 5]])]), [ring])
+        self.assertEqual(fa_encode.bridging([ring], [dict(nodes=[[1, 0], [5, 0]])]), [], 'held at one point it goes nowhere')
 
     def test_pin_crossings_and_forced_nodes(self):
         # a way over the level-2 parcel line at lon -22.0: the crossing becomes a point of the way

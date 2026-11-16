@@ -374,7 +374,7 @@ def chain_links(links):
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
     # a shape carries one set of coarse words, so a roundabout the coarse levels keep stays apart
-    def key(c): return (c[0][5], c[0][4], c[0][6], fa_encode.coarse_levels(c[0][5], c[0][6], c[0][11]))
+    def key(c): return (c[0][5], c[0][4], c[0][6], fa_encode.coarse_levels(c[0][5], c[0][6], c[0][11], c[0][3]))
     ends = collections.defaultdict(list)
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -590,7 +590,7 @@ def levels_above(links, level, up):
     """Per link, how many upper-link words its shape carries with --coarse-words: the levels
     above that have the link."""
     return [0 if level == 1 and (not up or up[k] is None) else
-            len(fa_encode.coarse_words(l[5], l[6], l[11])) + (level == 1) for k, l in enumerate(links)]
+            len(fa_encode.coarse_words(l[5], l[6], l[11], l[3])) + (level == 1) for k, l in enumerate(links)]
 
 def coarse_runs(parcels):
     """Per level-2 parcel, a number per link that changes where the level-4 graph can keep a
@@ -859,7 +859,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         chains = chains_of(P['links'], idx, chain, ids, groups)
         L = P['links']
         def words(g):
-            above = fa_encode.coarse_words(L[g[0]][5], L[g[0]][6], L[g[0]][11]) if coarse else []
+            above = fa_encode.coarse_words(L[g[0]][5], L[g[0]][6], L[g[0]][11], L[g[0]][3]) if coarse else []
             if level == 2: return above
             return above + [fa_encode.UPPER_LEVEL[2] | up[g[0]]] if up and up[g[0]] is not None else []
         uppers = [words(g) for g in groups]
@@ -1030,7 +1030,8 @@ def main():
     if coarse:
         # from every way, before any cell is cut out, so all cells pick the same routes
         km5, km4 = fa_encode.pick_level5(ways)
-        report.append(f'level 5: {len(fa_encode.LEVEL5_ROUTES)} routes, {km5:.0f} of {km4:.0f} level-4 km')
+        report.append(f'level 5: {len(fa_encode.LEVEL5_ROUTES)} routes, {km5:.0f} of {km4:.0f} level-4 km; '
+                      f'{len(fa_encode.PIECES)} unnumbered pieces between numbered roads')
     l2 = set(l2) | {fa_encode.UNNUMBERED[h] for h in l2 if h in fa_encode.UNNUMBERED}
     signs = {w['id']: w['dest'] for w in ways if w.get('dest')} if signs_path else None
     if signs_path and not signs:

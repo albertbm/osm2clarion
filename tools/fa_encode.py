@@ -164,15 +164,18 @@ JUNCTIONS = ('roundabout', 'circular')
 # Level 5 is whole routes, about 40% of the level-4 km (39-45% on the factory cards).
 LEVEL5_SHARE = 0.40
 LEVEL5_ROUTES = None   # pick_level5 sets it; None puts every level-4 road on level 5
+PIECES = None          # pick_level5 sets it: {way id: levels} of the unnumbered pieces kept
 
-def coarse_levels(hw, ref=None, junction=None):
+def coarse_levels(hw, ref=None, junction=None, wid=None):
     """The coarse levels that carry a level-2 link of this way, highest first. Class 6, a
-    main street with no number, stays off. Ramps and roundabouts with no number go in, so a
-    numbered road stays joined through its junctions; ferries go in as the factory's do."""
+    main street with no number, stays off. An unnumbered motorway, trunk or primary way goes
+    in where it joins numbered roads (PIECES); ferries go in as the factory's do."""
     cls = CLASSES.get(hw, DEFAULT)[1]
     if cls not in NUMBERED and cls != 10: return ()
     if not ref:
-        return (5, 4) if cls == 10 or hw.endswith('_link') or junction in JUNCTIONS else ()
+        if cls == 10: return (5, 4)
+        if PIECES is not None: return PIECES.get(wid, ())
+        return (5, 4) if hw.endswith('_link') or junction in JUNCTIONS else ()
     # a numbered ferry is part of its route: level 5 only with the rest of it
     if LEVEL5_ROUTES is None or LEVEL5_ROUTES & set(routes(ref)): return (5, 4)
     return (4,)
@@ -192,31 +195,59 @@ def way_km(nodes):
     return sum(math.hypot((b[0] - a[0]) * math.cos(math.radians((a[1] + b[1]) / 2)), b[1] - a[1])
                for a, b in zip(nodes, nodes[1:])) * 111.32
 
+def bridging(pieces, roads):
+    """The pieces whose two ends each touch a road or another piece kept, after dead ends are
+    taken off one by one until none is left, so a chain of pieces between two roads stays."""
+    on_road = {tuple(p) for w in roads for p in w['nodes']}
+    at = collections.defaultdict(set)
+    for k, w in enumerate(pieces):
+        for p in w['nodes']: at[tuple(p)].add(k)
+    alive = set(range(len(pieces)))
+    def held(k, p): return p in on_road or any(j != k and j in alive for j in at[p])
+    todo = list(alive)
+    while todo:
+        k = todo.pop()
+        if k not in alive: continue
+        pts = [tuple(p) for p in pieces[k]['nodes']]
+        if pts[0] == pts[-1]:
+            # a closed way (a roundabout) has no ends: two of its points must be held
+            if len({p for p in pts if held(k, p)}) >= 2: continue
+        elif held(k, pts[0]) and held(k, pts[-1]): continue
+        alive.discard(k)
+        for p in pieces[k]['nodes']: todo += at[tuple(p)] & alive
+    return [pieces[k] for k in sorted(alive)]
+
 def pick_level5(ways, share=LEVEL5_SHARE):
-    """Set LEVEL5_ROUTES: whole routes by route_rank until level 5 has `share` of the level-4
-    km. Ramps, roundabouts and ferries count on both levels. Returns (level-5 km, level-4 km)."""
-    global LEVEL5_ROUTES
-    LEVEL5_ROUTES = set()
-    km4 = km5 = 0.0; per = collections.defaultdict(list)
-    for w in ways:
-        lv = coarse_levels(w['hw'], w.get('ref'), w.get('junction'))
-        if not lv: continue
-        km = way_km(w['nodes']); km4 += km
-        if 5 in lv and not w.get('ref'): km5 += km
-        elif w.get('ref'):
-            for r in routes(w['ref']): per[r].append((id(w), km))
+    """Set PIECES and LEVEL5_ROUTES. Level 4 keeps the unnumbered pieces between its roads;
+    level 5 takes whole routes by route_rank until it has `share` of the level-4 km, then the
+    pieces between its own roads. Returns (level-5 km, level-4 km)."""
+    global LEVEL5_ROUTES, PIECES
+    LEVEL5_ROUTES, PIECES = set(), {}
+    numbered = [w for w in ways if w.get('ref') and coarse_levels(w['hw'], w['ref'])]
+    ferries = [w for w in ways if not w.get('ref') and w['hw'] == 'ferry']
+    pieces = [w for w in ways if not w.get('ref') and CLASSES.get(w['hw'], DEFAULT)[1] in NUMBERED]
+    pieces4 = bridging(pieces, numbered + ferries)
+    km4 = sum(way_km(w['nodes']) for w in numbered + ferries + pieces4)
+    km5 = sum(way_km(w['nodes']) for w in ferries)
+    per = collections.defaultdict(list)
+    for w in numbered:
+        for r in routes(w['ref']): per[r].append(w)
     taken = set()
     for r in sorted(per, key=route_rank):
         if km5 >= share * km4: break
         LEVEL5_ROUTES.add(r)
-        for k, km in per[r]:
-            if k not in taken: taken.add(k); km5 += km
+        for w in per[r]:
+            if id(w) not in taken: taken.add(id(w)); km5 += way_km(w['nodes'])
+    pieces5 = bridging(pieces4, [w for w in numbered if id(w) in taken] + ferries)
+    km5 += sum(way_km(w['nodes']) for w in pieces5)
+    PIECES = {w['id']: (4,) for w in pieces4}
+    PIECES.update({w['id']: (5, 4) for w in pieces5})
     return km5, km4
 
-def coarse_words(hw, ref=None, junction=None):
+def coarse_words(hw, ref=None, junction=None, wid=None):
     """Header words for the level-5 and level-4 links over a level-2 link of this way, highest
     level first, ids left 0: lev_graph.fill_coarse_words writes them once the coarse graph exists."""
-    return [UPPER_LEVEL[lv] for lv in coarse_levels(hw, ref, junction)]
+    return [UPPER_LEVEL[lv] for lv in coarse_levels(hw, ref, junction, wid)]
 
 def header_words(fresh, has_g):
     """Words of one link header: [style] key [G] lid."""
