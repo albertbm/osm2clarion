@@ -1118,8 +1118,11 @@ def road_pieces(roads):
 
 
 def road_breaks(D, ref, tol=2):
-    """(roads both have, [(gap in units, road key, point, point)]) of the roads this level
-    draws in pieces that the reference roads, in their own units, join."""
+    """(roads both have, [(gap in units, road key, point, point)]) of roads drawn in pieces the reference joins.
+
+    The reference joins its own pieces only where they share a point. One of our points within
+    tol of two of them goes to the nearest, so a gap the reference has is not ours: the Finland
+    card had 32 places where two OSM ways of one name end a unit or two apart."""
     mine, below = road_pieces(D['roads']), road_pieces(ref['roads'])
     fx, fy = D['scale'][0] / ref['scale'][0], D['scale'][1] / ref['scale'][1]
     breaks = []
@@ -1133,10 +1136,13 @@ def road_breaks(D, ref, tol=2):
         sets = Joined()
         for n, pts in enumerate(ps):
             for x, y in pts:
+                near = {}
                 for dx in range(-tol, tol + 1):
                     for dy in range(-tol, tol + 1):
                         for m in at.get((x + dx, y + dy), ()):
-                            sets.join(('piece', n), ('below', m))
+                            near[m] = min(near.get(m, tol + 1), max(abs(dx), abs(dy)))
+                for m, d in near.items():
+                    if d == min(near.values()): sets.join(('piece', n), ('below', m))
         groups = collections.defaultdict(list)
         for n in range(len(ps)):
             if ('piece', n) in sets.up:

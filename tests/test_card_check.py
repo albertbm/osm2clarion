@@ -160,6 +160,19 @@ class TestRoadContinuity(unittest.TestCase):
         self.assertFalse(r['passed'])
         self.assertEqual(r['counts']['L1 breaks against OSM'], 1)
 
+    def test_a_gap_osm_has_is_not_our_break(self):
+        # two OSM ways of one name end two units apart without sharing a node; ours copy them
+        apart = [('1=VARAKATU', [(0, 64), (1000, 64)]), ('1=VARAKATU', [(1002, 64), (2000, 64)])]
+        osm = self.level(apart, parcels=[(0, c) for c in range(4)])
+        drawn = {1: self.level(apart, parcels=[(0, c) for c in range(4)]), 'osm': osm}
+        r = card_check.check_road_continuity(drawn, {}, {}, {}, {})
+        self.assertTrue(r['passed'], r)
+        self.assertEqual(r['counts']['L1 breaks against OSM'], 0)
+        # one OSM way, ours cut two units short of where it goes on: still a break
+        osm = self.level([('1=VARAKATU', [(0, 64), (1000, 64), (2000, 64)])], parcels=[(0, c) for c in range(4)])
+        drawn = {1: self.level(apart, parcels=[(0, c) for c in range(4)]), 'osm': osm}
+        self.assertEqual(card_check.check_road_continuity(drawn, {}, {}, {}, {})['counts']['L1 breaks against OSM'], 1)
+
     def test_a_road_level_1_has_in_two_pieces_may_be_in_two(self):
         apart = [('2=54', [(0, 64), (2560, 64)]), ('2=54', [(3840, 64), (6400, 64)])]
         r = self.check([('2=54', [(0, 1), (40, 1)]), ('2=54', [(60, 1), (100, 1)])], apart)
