@@ -450,6 +450,28 @@ class TestQY7Roads(unittest.TestCase):
         self.assertEqual((v[9], v[10], v[11], v[12], v[15], v[16]), (11, 2, 13, 2, 15, 1))
         self.assertEqual(out[44:], b'G' * 8 + b'M' * 8 + b'P' * 4)
 
+    def test_replace_names_keeps_country_list(self):
+        w = [1, 2, 0xfa, 0xffff, 0xffff, 0, 0] + [0xffff, 0] * 6 + [0, 0, 0]
+        w[9], w[10] = 12, 2
+        w[11], w[12] = 14, 1
+        w[20], w[21] = 246, 578
+        countries = struct.pack('>2H', 752, 0)
+        rec = struct.pack('>22H', *w) + countries + b'G' * 8 + b'N' * 4
+        self.assertEqual(rd_build.sections_start(rec), 12)
+        self.assertTrue(rd_build.sections_back_to_back(rec))
+        out = rd_build.replace_names(rec, b'M' * 8)
+        v = struct.unpack_from('>22H', out)
+        self.assertEqual((v[9], v[10], v[11], v[12], v[20], v[21]), (12, 2, 14, 2, 246, 578))
+        self.assertEqual(out[44:], countries + b'G' * 8 + b'M' * 8)
+
+    def test_unknown_leading_block_is_not_a_country_list(self):
+        w = [1, 2, 0xfa, 0xffff, 0xffff, 0, 0] + [0xffff, 0] * 6 + [0, 0, 0]
+        w[9], w[10] = 12, 2
+        w[20], w[21] = 246, 578
+        rec = struct.pack('>22H', *w) + struct.pack('>2H', 0x1234, 7) + b'G' * 8
+        self.assertIsNone(rd_build.sections_start(rec))
+        self.assertFalse(rd_build.sections_back_to_back(rec))
+
 
 @unittest.skipUnless(os.environ.get('OSM2CLARION_QY7_TILE'), 'set OSM2CLARION_QY7_TILE to a factory QY7 tile')
 class TestFactoryQY7(unittest.TestCase):

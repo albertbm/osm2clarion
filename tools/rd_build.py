@@ -1282,10 +1282,26 @@ def area_of(level, pc, reach=8):
 area_of.grid = None
 
 
+def sections_start(plain):
+    """The unit a record's first section starts at: 11, or past the rising ISO codes a border
+    record lists after w20 and w21, zero-padded to a unit. None if those units hold anything else."""
+    w = struct.unpack_from('>22H', plain)
+    offs = [w[i] for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff]
+    first = min(offs) if offs else 11
+    if first <= 11: return 11
+    extra = list(struct.unpack_from('>%dH' % (2 * (first - 11)), plain, 44))
+    if extra[-1] == 0: extra.pop()
+    codes = [w[20], w[21]] + extra
+    if 0 < codes[0] and all(a < b for a, b in zip(codes, codes[1:])) and codes[-1] < 1000:
+        return first
+    return None
+
+
 def sections_back_to_back(plain):
     """Whether a background record's sections follow each other with no block between."""
     w = struct.unpack_from('>22H', plain)
-    p = 11
+    p = sections_start(plain)
+    if p is None: return False
     for off, ln in sorted((w[i], w[i + 1]) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff):
         if off != p: return False
         p += ln
@@ -1298,14 +1314,15 @@ def replace_names(plain, section):
     place, water and POI names (--keep-names)."""
     w = list(struct.unpack_from('>22H', plain))
     secs = sorted((w[i], w[i + 1], i) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff)
-    p = 11
+    p = start = sections_start(plain)
+    assert start is not None, 'units 11 to %s hold no country list: %s' % (secs[0][0], w[7:22])
     for off, ln, i in secs:
         assert off == p, 'sections are not back to back: %s' % w[7:19]
         p += ln
     assert 4 * p == len(plain), 'record does not end with its last section'
     if w[11] == 0xffff:
         secs.append((p, 0, 11))
-    out = b''; p = 11
+    out = plain[44:4 * start]; p = start
     for off, ln, i in secs:
         blk = section if i == 11 else plain[4 * off:4 * (off + ln)]
         assert len(blk) % 4 == 0
