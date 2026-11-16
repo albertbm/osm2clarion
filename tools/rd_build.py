@@ -1118,7 +1118,11 @@ def main():
             lv['dirs'].append(rd_encode.make_dir(level, *tile_cell(cell), {}, FMT))   # a tile declaring none hangs the first draw
         bydir = {(D['y'], (D['x'] + FMT.x_base) & 0xffff): D for L in sec1['levels'] if L['level'] == level for D in L['dirs']}
         was_stale = merge_names.stale_replaced
+        was_untouched = place_shapes.untouched
         placed = place_shapes(recs, bydir)
+        if place_shapes.untouched > was_untouched:
+            report.append(f'level {level}: {place_shapes.untouched - was_untouched} background records with an '
+                          f'unreferenced block left whole, no road labels there')
         if merge_names.stale_replaced > was_stale:
             report.append(f'level {level}: {merge_names.stale_replaced - was_stale} stale road labels '
                           f'from an earlier pass replaced, not kept')
@@ -1278,6 +1282,16 @@ def area_of(level, pc, reach=8):
 area_of.grid = None
 
 
+def sections_back_to_back(plain):
+    """Whether a background record's sections follow each other with no block between."""
+    w = struct.unpack_from('>22H', plain)
+    p = 11
+    for off, ln in sorted((w[i], w[i + 1]) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff):
+        if off != p: return False
+        p += ln
+    return True
+
+
 def replace_names(plain, section):
     """A background record with its names section swapped for section and every other section
     kept byte for byte, in its place. The new section already starts with the record's own
@@ -1316,6 +1330,12 @@ def place_shapes(recs, bydir):
             continue
         bgrec = s['recs'][bi]
         old = FMT.inflate(bgrec['raw'])
+        if KEEP_BASE is not None and not sections_back_to_back(old):
+            # some factory records hold a block no header word points at; leave them whole
+            place_shapes.untouched += 1
+            s['recs'].insert(bi, dict(k=2 * col, raw=fcomp, words=len(fplain) // 2))
+            body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2); s['body'] = bytes(body2); placed += 1
+            continue
         newpl = replace_names(old, section) if KEEP_BASE is not None else merge_names(old, section)
         newc = FMT.deflate(newpl)
         bgrec['raw'] = newc; bgrec['words'] = len(newpl) // 2
@@ -1323,6 +1343,7 @@ def place_shapes(recs, bydir):
         body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2)
         struct.pack_into('>II', body2, 8 * (2 * col + 1), len(newc) // 2, len(newpl) // 2); s['body'] = bytes(body2); placed += 1
     return placed
+place_shapes.untouched = 0
 
 if __name__ == '__main__':
     main()
