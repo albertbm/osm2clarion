@@ -1307,12 +1307,26 @@ def sections_start(plain):
     return None
 
 
+def section_spans(plain):
+    """(offset, units, header word) of a background record's sections, in order. A names
+    section whose header points at a table just past its stated length spans that table too:
+    16 factory records of B58R050R keep an item table there (names header words 6 and 7)."""
+    w = struct.unpack_from('>22H', plain)
+    secs = sorted([w[i], w[i + 1], i] for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff)
+    for k, sec in enumerate(secs):
+        if sec[2] != 11 or k + 1 == len(secs): continue
+        end, nxt = sec[0] + sec[1], secs[k + 1][0]
+        h = struct.unpack_from('>12H', plain, 4 * sec[0]) if sec[1] >= 6 else ()
+        if nxt > end and any(sec[0] + h[j] == end for j in (2, 4, 6, 8, 10) if j < len(h) and h[j] != 0xffff):
+            sec[1] = nxt - sec[0]
+    return [tuple(sec) for sec in secs]
+
+
 def sections_back_to_back(plain):
     """Whether a background record's sections follow each other with no block between."""
-    w = struct.unpack_from('>22H', plain)
     p = sections_start(plain)
     if p is None: return False
-    for off, ln in sorted((w[i], w[i + 1]) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff):
+    for off, ln, i in section_spans(plain):
         if off != p: return False
         p += ln
     return True
@@ -1323,7 +1337,7 @@ def replace_names(plain, section):
     kept byte for byte, in its place. The new section already starts with the record's own
     place, water and POI names (--keep-names)."""
     w = list(struct.unpack_from('>22H', plain))
-    secs = sorted((w[i], w[i + 1], i) for i in (7, 9, 11, 13, 15, 17) if w[i] != 0xffff)
+    secs = section_spans(plain)
     p = start = sections_start(plain)
     assert start is not None, 'units 11 to %s hold no country list: %s' % (secs[0][0], w[7:22])
     for off, ln, i in secs:
