@@ -1341,6 +1341,13 @@ def replace_names(plain, section):
     return struct.pack('>22H', *w) + out
 
 
+def unnamed(plain, level):
+    """A road-shape record with every shape's name word (word 4) set to none."""
+    out = bytearray(plain)
+    for S in fa_encode.parse_record(bytes(plain), level)[2]:
+        struct.pack_into('>H', out, 2 * (S['at'] + 4), 0xffff)
+    return bytes(out)
+
 def blank_background(level, y, x, row, col, bydir):
     """A background record for a parcel the source tile has none for (all land, nothing on
     it): the header of a factory record of our country, sections cleared, this parcel's code.
@@ -1389,8 +1396,9 @@ def place_shapes(recs, bydir, level=1):
         bgrec = s['recs'][bi]
         old = FMT.inflate(bgrec['raw'])
         if KEEP_BASE is not None and not sections_back_to_back(old):
-            # some factory records hold a block no header word points at; leave them whole
+            # a block no header word points at: keep the record whole, and the shapes unnamed
             place_shapes.untouched += 1
+            fplain = unnamed(fplain, level); fcomp = FMT.deflate(fplain)
             s['recs'].insert(bi, dict(k=2 * col, raw=fcomp, words=len(fplain) // 2))
             body2 = bytearray(s['body']); struct.pack_into('>II', body2, 8 * (2 * col), len(fcomp) // 2, len(fplain) // 2); s['body'] = bytes(body2); placed += 1
             continue
