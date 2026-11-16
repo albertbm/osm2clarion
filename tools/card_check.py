@@ -964,10 +964,11 @@ def check_coarse_shapes(lev4, lev5, coarse):
                    'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
 
 
-GAP = 8                   # level units between two pieces of a road before it counts as a break
-NAMED_BREAKS = 0.002      # share of a level's roads broken where level 1 names the level's links, or OSM has the way
-CLASS_BREAKS = {2: 0.002, 4: 0.015, 5: 0.015}   # the same where level 1 has the road in the level's classes
-OPEN_ENDS = 0.001         # share of the shape ends on a parcel line that may have nothing across
+GAP = 8                   # level units between two pieces of a road before it counts as a break; at level 1 any gap does
+# The limits are none, or the factory's own share on B50R068R where it has some.
+NAMED_BREAKS = {1: 0, 2: 3 / 7044, 4: 0, 5: 0}          # roads broken where level 1 names the level's links, or OSM has the way
+CLASS_BREAKS = {2: 0, 4: 0, 5: 0}                       # factory 6 of 7,046, 2 of 254, 1 of 91: it picks links one by one, we take whole classes
+OPEN_ENDS = {1: 3 / 162392, 2: 0, 4: 4 / 11124, 5: 0}   # shape ends on a parcel line with nothing across
 UPPER_CODE = {code: level for level, code in fa_encode.UPPER_LEVEL.items()}
 
 Road = collections.namedtuple('Road', 'label cls points parcel above')    # above: the levels a level-1 shape names a link of
@@ -1179,17 +1180,16 @@ def graph_dead_ends(recs, base=(0, 0)):
 
 
 def check_road_continuity(drawn, L1, L2, lev4, lev5):
-    """A road is drawn whole at every level. A shape end on a parcel line has a shape across
-    it. A road's shapes at levels 2, 4 and 5 fall into separate pieces only where level 1
-    has it in pieces, read two ways: the level-1 shapes that name a link of the level, and
-    the level-1 shapes of the classes the level carries. Level 1 is held the same way
-    against the OSM ways when they are given, so a break is a gap in a road OSM has whole.
-    Factory B50R068R under the factory coarse file: 1,711 of 1,725 gaps are 8 units or less
-    (a slip road or a crossing left out). Wider ones by name: 3 of 7,044 roads at level 2,
-    none of 223 at level 4, none of 49 at level 5. By class: 6 of 7,046, 2 of 254 and 1 of
-    91, because the factory picks a level's links one by one where we take whole classes.
-    Ends with nothing across: 3 of 162,392 at level 1, none at level 2, 4 of 11,124 at
-    level 4, none at level 5."""
+    """A road is drawn whole at every level.
+
+    A shape end on a parcel line needs a shape across it. At levels 2, 4 and 5 a road may fall
+    into pieces only where level 1 has it in pieces, read both from the level-1 shapes that
+    name a link of the level and from those of the classes it carries. Level 1 is held against
+    the OSM ways the same way when they are given. At level 1 any gap is a break: each one on
+    our Iceland card was a road cut in the graph beside a parcel corner. Above it a gap of GAP
+    units passes, as 1,711 of the 1,725 gaps on factory B50R068R are that narrow (a slip road
+    or a crossing left out). By name the factory has no wider break in 223 roads at level 4 or
+    49 at level 5; its other shares are in the limits above."""
     st, notes, ok = collections.Counter(), [], True
     if not drawn or not drawn[1]['roads']:
         return result('road_continuity', True, st, ['no road shapes loaded, nothing to check'])
@@ -1209,24 +1209,23 @@ def check_road_continuity(drawn, L1, L2, lev4, lev5):
         st['L%d links too long to draw' % level] = D['long']
         notes += ['level %d: %s ends on a parcel line at %s with no shape across' % (level, label or 'an unnamed road', where(level, a))
                   for label, a in bad[:20]]
-        ok = ok and len(bad) <= OPEN_ENDS * ends
+        ok = ok and len(bad) <= OPEN_ENDS[level] * ends
         classes = {r.cls for r in D['roads']}
-        refs = ([('against OSM', 'OSM has whole', drawn['osm']['roads'], NAMED_BREAKS)] if 'osm' in drawn else []) if level == 1 else [
-            ('by name', 'level 1 names whole', [r for r in drawn[1]['roads'] if level in r.above], NAMED_BREAKS),
+        refs = ([('against OSM', 'OSM has whole', drawn['osm']['roads'], NAMED_BREAKS[1])] if 'osm' in drawn else []) if level == 1 else [
+            ('by name', 'level 1 names whole', [r for r in drawn[1]['roads'] if level in r.above], NAMED_BREAKS[level]),
             ('by class', 'level 1 has whole in these classes', [r for r in drawn[1]['roads'] if r.cls in classes], CLASS_BREAKS[level])]
         told = set()
         for tag, what, roads, share in refs:
             n, breaks = road_breaks(D, dict(drawn[1], roads=roads))
-            wide = [b for b in breaks if b[0] > GAP]
+            wide = [b for b in breaks if b[0] > GAP * (level > 1)]
             for key, v in (('roads', n), ('gaps', len(breaks)), ('breaks', len(wide))):
                 st['L%d %s %s' % (level, key, tag)] = v
             notes += ['level %d: %s is broken between %s and %s (%d units), a road %s' % (level, k, where(level, p), where(level, q), gap, what)
                       for gap, k, p, q in wide[:20] if (k, p, q) not in told]
             told.update((k, p, q) for gap, k, p, q in wide)
             ok = ok and len(wide) <= share * n
-    notes.append('a break is a gap of more than %d units; pass at %.1f%% of the roads level 1 names or OSM has, %s by class, '
-                 'and %.1f%% of the ends on a parcel line with nothing across'
-                 % (GAP, 100 * NAMED_BREAKS, ', '.join('%.1f%% at level %d' % (100 * v, k) for k, v in CLASS_BREAKS.items()), 100 * OPEN_ENDS))
+    notes.append('a break is a gap of more than %d units, at level 1 any gap; pass at none, or the factory share where it has some: '
+                 '3 of 7,044 roads by name at level 2, 3 of 162,392 ends with nothing across at level 1 and 4 of 11,124 at level 4' % GAP)
     return result('road_continuity', ok, st, notes)
 
 

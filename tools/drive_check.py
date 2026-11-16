@@ -22,16 +22,15 @@ the two links must meet at a node, or the level's own links between them are dri
 their place; with neither, the unit cannot plan the way the road runs. And a long route
 with no link of a level at all means level 1 names none.
 
-Every miss is listed with its place. Exit status 1 when a driven link is not drawn, when
-more than 0.1% of the level-2 links driven or 0.5% of the level-4 or level-5 links do not
-expand, or when a tenth of the routes use no link of a level the card has.
+Every miss is listed with its place. Exit status 1 when a driven link is not drawn or does
+not expand, or when a tenth of the routes use no link of a level the card has.
 
-The limits sit just over what our Iceland card has left, each one listed in the output: 4
-of 5,595 at level 2, 5 of 1,505 at level 4. An earlier card, with its roundabout stop, had
-10 of 5,665 at level 2. Factory B50R068R under the factory coarse file has all 41,347
-driven links drawn and 11 of 5,043 not expanding at level 2. At levels 4 and 5 its walks
-stop short far more often (1.5% and 11%), which this reader does not explain, so the
-factory is no guide there.
+No link may fail to expand because every one that did was a fault: our Iceland card had 4
+of 5,595 at level 2 and 5 of 1,505 at level 4, from junctions sharing a level-2 unit,
+crossings beside a parcel corner and dips over a level-2 parcel line. Factory B50R068R
+under the factory coarse file has all 41,347 driven links drawn and 11 of 5,043 not
+expanding at level 2. At levels 4 and 5 its walks stop short far more often (1.5% and
+11%), which this reader does not explain, so the factory is no guide there.
 """
 import argparse
 import collections
@@ -50,7 +49,6 @@ import rd_check
 import rd_encode
 from tile_scan import TileScan
 
-STUCK = {2: 0.001, 4: 0.005, 5: 0.005}    # share of a level's driven links that may not expand
 JUNCTION = 3                          # level-1 links a junction may hide from a level; more is a route on other roads
 OFF_LEVEL = 0.1                       # share of the routes that may use no link of a level the card has
 
@@ -329,9 +327,8 @@ def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
         ok = ok and not st['L%d not drawn' % level]
         if level > 1:
             st['L%d not expanding' % level] = stuck
-            ok = ok and stuck <= STUCK[level] * len(seen[level]) and st['L%d routes with no link' % level] <= OFF_LEVEL * st['routes']
-    notes.append('pass at every driven link drawn, %s of the links driven not expanding, and %d%% of the routes using no link of a level'
-                 % (', '.join('%.1f%% at level %d' % (100 * v, k) for k, v in STUCK.items()), 100 * OFF_LEVEL))
+            ok = ok and not stuck and st['L%d routes with no link' % level] <= OFF_LEVEL * st['routes']
+    notes.append('pass at every driven link drawn and expanding, and %d%% of the routes using no link of a level' % (100 * OFF_LEVEL))
     return card_check.result('drives', ok, st, notes)
 
 

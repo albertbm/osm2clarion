@@ -72,15 +72,24 @@ def pin_crossings(ways):
     """Give each way the points where it crosses a level-2 parcel line, as level 1 cuts them, and
     return those points. Level 2 simplifies harder, so it would cut the line a little off the
     level-1 node; kept through its simplify, the two levels share the node. Factory B50R068R:
-    41,875 of 41,875 level-2 nodes sit on a level-1 node."""
+    41,875 of 41,875 level-2 nodes sit on a level-1 node. Where a way dips over a line and
+    comes back, its farthest point over the line is returned too: without one the level-2
+    simplify flattens the dip onto the line and level 2 has no link in that parcel for the
+    level-1 links there to name."""
     def above(pc): return (pc[0] * 32 + pc[2]) // 4, (pc[1] * 32 + pc[3]) // 4
     pinned = set()
     for w in ways:
         runs = cut(w['nodes'], 1)
         if len(runs) < 2: continue
-        nodes = list(runs[0][1])
+        nodes = list(runs[0][1]); visit = None
         for (prev, _), (pc, run) in zip(runs, runs[1:]):
-            if above(prev) != above(pc): pinned.add(tuple(run[0]))
+            if above(prev) != above(pc):
+                if visit is not None:
+                    a, b = nodes[visit], run[0]; inner = nodes[visit + 1:]
+                    axis = 0 if abs(a[0] - b[0]) < abs(a[1] - b[1]) else 1
+                    if inner and abs(a[axis] - b[axis]) < ON_POINT:
+                        pinned.add(tuple(max(inner, key=lambda p: abs(p[axis] - a[axis]))))
+                pinned.add(tuple(run[0])); visit = len(nodes) - 1
             nodes += run[1:]
         w['nodes'] = nodes
     return pinned
@@ -122,29 +131,56 @@ def off_parcel_lines(ways):
     for w in ways: w['nodes'] = [moved.get(tuple(q), q) for q in w['nodes']]
     return moved
 
+def split_keys(runs, force=frozenset()):
+    """{(key, point): free key next to it} for the junctions of one parcel that round to a
+    key another junction has. Two or three metres apart they are one level-2 unit, and merged
+    into one node the links from the second have no level-1 shape at the node's level-1
+    twin. Factory B50R068R keeps them apart: 154 of 41,875 level-2 nodes share a place."""
+    seen = collections.Counter(tuple(p) for q, _ in runs for _, p in q)
+    ends = {tuple(q[i][1]) for q, _ in runs for i in (0, -1)}
+    at = collections.defaultdict(set); used = set()
+    for q, _ in runs:
+        for key, p in q:
+            used.add(key); p = tuple(p)
+            if (p in ends or seen[p] > 1 or p in force) and 0 < key[0] < 2047 and 0 < key[1] < 2047: at[key].add(p)
+    out = {}
+    for key in sorted(k for k, pts in at.items() if len(pts) > 1):
+        for p in sorted(at[key])[1:]:
+            nk = next((k for d in range(1, 2046) for dx in range(-d, d + 1) for dy in range(-d, d + 1)
+                       for k in [(key[0] + dx, key[1] + dy)]
+                       if max(abs(dx), abs(dy)) == d and 0 < k[0] < 2047 and 0 < k[1] < 2047 and k not in used), None)
+            if nk: used.add(nk); out[key, p] = nk
+    return out
+
 def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
     """Per parcel: nodes {key: ...} and links [(from, to, length, way id, name, hw, ref, maxspeed, inner points, chain id, one-way)].
     force: points that become nodes wherever a way passes them (level 1: the level-2 nodes)."""
     yb, xb = tile_cell(cell)
     def inside(pc): return yb <= pc[0] < yb + 8 and xb <= pc[1] < xb + 8
-    parcels = {}
+    parcels = {}; raw = collections.defaultdict(list)
     for wy in ways:
         for pc, run in cut(wy['nodes'], level):
             # parcels just outside the cell are built too, so a border edge node finds its twin
             if not inside(pc) and not any(inside(neighbour(pc, sd, level)) for sd in SIDES): continue
-            P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
-                                             touch_pts=collections.defaultdict(list)))
             q = []
             lon0, lat0, w, h = parcel_geo(level, *pc)
             for p in run:
                 key = quant(p, pc, level)
                 ux, uy = (p[0] - lon0) / w * 2048, (p[1] - lat0) / h * 2048
-                on_line = min(abs(ux), abs(ux - 2048), abs(uy), abs(uy - 2048)) < 1e-3
-                if not on_line:
-                    # only a cut point sits on the parcel line; a vertex or junction that merely
-                    # rounds onto it stays one unit inside, or it merges with the cut node and that
-                    # gets two real links, which the factory never has
-                    key = (min(2046, max(1, key[0])), min(2046, max(1, key[1])))
+                # only a cut point sits on a parcel line, and only on the line it was cut at. Anything
+                # else stays a unit inside, or it merges with the cut node into two real links (never
+                # on factory tiles), or beside a corner its twin is sought across the wrong line
+                key = tuple(k if min(abs(u), abs(u - 2048)) < 1e-3 else min(2046, max(1, k)) for k, u in zip(key, (ux, uy)))
+                q.append((key, p))
+            raw[pc].append((q, wy))
+    for pc, runs in raw.items():
+        P = parcels.setdefault(pc, dict(nodes={}, links=[], runs=[], touch=collections.Counter(),
+                                         touch_pts=collections.defaultdict(list)))
+        moved = split_keys(runs, force)
+        for full, wy in runs:
+            q = []
+            for key, p in full:
+                key = moved.get((key, tuple(p)), key)
                 if not q or q[-1][0] != key: q.append((key, p))
             if len(q) < 2: continue
             P['runs'].append((q, wy))

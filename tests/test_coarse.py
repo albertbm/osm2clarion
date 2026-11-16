@@ -144,6 +144,31 @@ class TestLevel2Chains(unittest.TestCase):
         self.assertEqual(sorted(l[3] for l in links), [1, 2, 2], 'the side simplify left no point is cut at one it took')
 
 
+    def test_level2_keeps_junctions_of_one_unit_apart(self):
+        a, b, c, d = (-21.9020, 64.1300), (-21.90000, 64.13000), (-21.899995, 64.13001), (-21.8980, 64.1310)
+        pc = rd_build.parcel_of(*b, 2)
+        self.assertEqual(rd_build.quant(b, pc, 2), rd_build.quant(c, pc, 2))
+        ways = [dict(id=1, hw='trunk', name='A', ref='1', nodes=[a, b]),
+                dict(id=2, hw='primary', name='B', ref='47', nodes=[b, c]),
+                dict(id=3, hw='trunk', name='A', ref='1', nodes=[c, d]),
+                dict(id=4, hw='primary', name='B', ref='47', nodes=[c, (-21.8990, 64.1290)]),
+                dict(id=5, hw='primary', name='B', ref='47', nodes=[b, (-21.9010, 64.1310)])]
+        P = next(iter(rd_build.build_graphs(ways, 'B60R080R', 2, True).values()))
+        geos = sorted(tuple(nd['geo']) for nd in P['nodes'].values())
+        self.assertEqual(len(geos), 6, 'two junctions 2 m apart are two level-2 nodes')
+        self.assertIn(b, geos); self.assertIn(c, geos)
+        self.assertEqual(sorted(l[3] for l in P['links']), [1, 2, 3, 4, 5], 'the link between them is kept')
+
+    def test_level2_keeps_a_dip_over_its_parcel_line(self):
+        line = 772 / 12
+        w = dict(id=1, hw='primary', name='A', ref='47',
+                 nodes=[(-21.720, line - 0.0003), (-21.717, line + 0.00001), (-21.714, line - 0.0003)])
+        pinned = rd_build.pin_crossings([w])
+        self.assertIn((-21.717, line + 0.00001), pinned)
+        w['nodes'] = rd_build.simplify(w['nodes'], 5, pinned)
+        parcels = rd_build.build_graphs([w], 'B60R080R', 2, True)
+        self.assertEqual(sorted(len(P['links']) for P in parcels.values()), [1, 2], 'a level-2 link over the line too')
+
     def test_a_secondary_without_a_number_is_class_6(self):
         self.assertEqual(fa_encode.road_kind('secondary', '34'), 'secondary')
         self.assertEqual(fa_encode.road_kind('primary', None), 'primary')
@@ -169,6 +194,16 @@ class TestEdgeTwins(unittest.TestCase):
         n, bad = rd_check.edge_joins([zlib_plain(r) for r in recs.values()], 1)
         self.assertGreater(n, 0)
         self.assertEqual(bad, [])
+
+    def test_a_crossing_beside_a_corner_keeps_its_twin(self):
+        lon, lat, u = -22.0 + 1.875 / 60 * 3, 64.125, 1.875 / 60 / 2048
+        w = dict(id=1, hw='secondary', name='A', ref='26',
+                 nodes=[(lon - 0.3 * u - 0.001, lat - 0.002), (lon - 0.3 * u + 0.001, lat + 0.002)])
+        parcels = rd_build.build_graphs([w], 'B60R080R', 1, True)
+        self.assertEqual(sum(len(P['links']) for P in parcels.values()), 3, 'the clipped parcel keeps its piece')
+        import rd_check
+        n, bad = rd_check.edge_joins([zlib_plain(r) for r in rd_build.encode_parcels(parcels, 1).values()], 1)
+        self.assertEqual((n, bad), (4, []))
 
     def test_ring_parcels_are_built_but_not_written(self):
         x0 = -28.0
