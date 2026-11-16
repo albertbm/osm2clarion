@@ -151,20 +151,21 @@ def area_steps(P, prof, base, out, work, area, osm):
     if area not in areas:
         raise SystemExit('pass --area NAME, one of: %s' % (', '.join(areas) or 'none, the profile defines no areas'))
     A = areas[area]
-    if len(A['cells']) != 1:
-        raise SystemExit('area %s lists %d cells; area mode rebuilds exactly one' % (area, len(A['cells'])))
-    cell = A['cells'][0]
+    cells = A['cells']
+    if not cells:
+        raise SystemExit('area %s lists no cells' % area)
     B = P.build
     outmap = os.path.join(work, 'MAPAL001')
     fac = os.path.join(work, 'factory')
     j = lambda *a: os.path.join(work, *a)
     levs = j('LEV3456R.stripped.DAT')
-    tile_src, tile_roads = j(cell + '.stripped.DAT'), j(cell + '.roads.DAT')
+    tile_src = {c: j(c + '.stripped.DAT') for c in cells}
+    tile_roads = {c: j(c + '.roads.DAT') for c in cells}
     roads, turns_all, turns = j('roads.json'), j('turns_all.json'), j('turns.json')
     lev_out = os.path.join(outmap, 'LEV3456R.DAT')
     mmain = j('MMAIN001.DAT')
-    shapes, addr_dir = j(cell + '.shapes.json'), j('addr')
-    has_addr = bool(P.raw.get('addr', {}).get('municipality'))
+    shapes, addr_dir = {c: j(c + '.shapes.json') for c in cells}, j('addr')
+    has_addr = bool(P.raw.get('addr', {}).get('municipality')) and A.get('addr', True)
 
     def need_osm():
         path = osm or P.osm
@@ -209,7 +210,7 @@ def area_steps(P, prof, base, out, work, area, osm):
         pairs = []
         for n in sorted(os.listdir(fac)):
             if not n.endswith('.DAT') or n == 'MMAIN001.DAT': continue
-            dest = levs if n == 'LEV3456R.DAT' else tile_src if n == cell + '.DAT' else os.path.join(outmap, n)
+            dest = levs if n == 'LEV3456R.DAT' else tile_src.get(n[:-4], os.path.join(outmap, n))
             pairs += [os.path.join(fac, n), dest]
         run(tool('road_strip.py'), '--profile', prof, *pairs)
 
@@ -217,20 +218,23 @@ def area_steps(P, prof, base, out, work, area, osm):
         args = ['--keep-names'] * bool(B.get('keep_names')) + ['--upper-names'] * bool(B.get('upper_names'))
         if B.get('turn_restrictions'): args += ['--turn-restrictions', turns]
         if B.get('coarse_graph'): args += ['--coarse-words']   # the coarse step fills them
-        if has_addr: args += ['--shape-index', shapes]
-        run(tool('rd_build.py'), '--profile', prof, *args, tile_src, tile_roads, cell, roads)
+        for cell in cells:     # one roads.json for all cells, so the edge nodes of neighbours meet
+            run(tool('rd_build.py'), '--profile', prof, *args,
+                *(['--shape-index', shapes[cell]] if has_addr else []),
+                tile_src[cell], tile_roads[cell], cell, roads)
 
     def coarse():
         # With the graph on, this also writes hierarchy flags into the roads tile.
-        graph = ['--l2-tile', tile_roads] if B.get('coarse_graph') else []
+        graph = [x for c in cells for x in ('--l2-tile', tile_roads[c])] if B.get('coarse_graph') else []
         run(tool('lev_add_roads.py'), '--profile', prof, *graph, levs, lev_out, roads)
 
     def sec4():
-        dest = os.path.join(outmap, cell + '.DAT')
-        if B.get('sec4'):
-            run(tool('sec4_write.py'), tile_roads, dest, '--country', P.country)
-        else:
-            shutil.copyfile(tile_roads, dest)
+        for cell in cells:
+            dest = os.path.join(outmap, cell + '.DAT')
+            if B.get('sec4'):
+                run(tool('sec4_write.py'), tile_roads[cell], dest, '--country', P.country)
+            else:
+                shutil.copyfile(tile_roads[cell], dest)
 
     def addr():
         if os.path.isdir(addr_dir):
@@ -240,9 +244,10 @@ def area_steps(P, prof, base, out, work, area, osm):
             return
         same_base()
         # the coarse and section-4 steps rewrote the tile; the address words must still land
-        run(tool('shape_index.py'), 'verify', shapes, os.path.join(outmap, cell + '.DAT'))
+        for cell in cells:
+            run(tool('shape_index.py'), 'verify', shapes[cell], os.path.join(outmap, cell + '.DAT'))
         run(tool('addr/build_addr_country.py'), addr_dir, '--profile', prof, '--area', area, '--card', base,
-            '--shapes', shapes, '--pbf', need_osm())
+            '--shapes', *[shapes[c] for c in cells], '--pbf', need_osm())
 
     def addr_card():
         """What the addr step left for the card: {card path: file} and {DIR:NAME: plain size}."""
@@ -257,7 +262,8 @@ def area_steps(P, prof, base, out, work, area, osm):
 
     def tiles():
         names = sorted(n for n in os.listdir(outmap) if n.startswith('B') and n.endswith('.DAT'))
-        return [os.path.join(outmap, n) for n in names if n != cell + '.DAT'] + [os.path.join(outmap, cell + '.DAT')]
+        ours = [c + '.DAT' for c in cells]
+        return [os.path.join(outmap, n) for n in names if n not in ours] + [os.path.join(outmap, n) for n in ours]
 
     def master():
         same_base()
@@ -309,8 +315,9 @@ def area_steps(P, prof, base, out, work, area, osm):
             raise SystemExit('check failed: %s do not read back as built' % ', '.join(bad))
         print('%d written files read back as built' % len(want))
         # the roads of our own rebuilt cell and coarse file; the factory tiles are never parsed
-        run(tool('card_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out, '--roads', roads)
-        run(tool('drive_check.py'), '--tiles', os.path.join(outmap, cell + '.DAT'), '--lev', lev_out)
+        ours = [os.path.join(outmap, c + '.DAT') for c in cells]
+        run(tool('card_check.py'), '--tiles', *ours, '--lev', lev_out, '--roads', roads)
+        run(tool('drive_check.py'), '--tiles', *ours, '--lev', lev_out)
         for name in sorted(addr_card()[1]):
             # every street record of the rewritten file lands on a point of its own road
             run(tool('addr_resolve.py'), part, '--only', name.split(':')[1])
