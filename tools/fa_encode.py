@@ -170,10 +170,10 @@ def coarse_levels(hw, ref=None, junction=None):
     main street with no number, stays off. Ramps and roundabouts with no number go in, so a
     numbered road stays joined through its junctions; ferries go in as the factory's do."""
     cls = CLASSES.get(hw, DEFAULT)[1]
-    if cls == 10: return (5, 4)
-    if cls not in NUMBERED: return ()
+    if cls not in NUMBERED and cls != 10: return ()
     if not ref:
-        return (5, 4) if hw.endswith('_link') or junction in JUNCTIONS else ()
+        return (5, 4) if cls == 10 or hw.endswith('_link') or junction in JUNCTIONS else ()
+    # a numbered ferry is part of its route: level 5 only with the rest of it
     if LEVEL5_ROUTES is None or LEVEL5_ROUTES & set(routes(ref)): return (5, 4)
     return (4,)
 

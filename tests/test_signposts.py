@@ -250,6 +250,8 @@ class TestGuidanceWords(unittest.TestCase):
             self.assertEqual(fa_encode.coarse_levels('primary', '345'), (4,))
             self.assertEqual(fa_encode.coarse_levels('primary', '12;8'), (5, 4))
             self.assertEqual(fa_encode.coarse_levels('trunk_link'), (5, 4), 'a ramp stays on both levels')
+            self.assertEqual(fa_encode.coarse_levels('ferry', '345'), (4,), 'a numbered ferry goes with its route')
+            self.assertEqual(fa_encode.coarse_levels('ferry'), (5, 4))
         finally:
             fa_encode.LEVEL5_ROUTES = None
 
