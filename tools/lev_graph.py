@@ -15,8 +15,6 @@ import rd_build
 import rd_encode
 from tile_scan import TileScan
 
-FACTORY_CLASSES = fa_encode.COARSE_CLASSES
-
 
 def part_a(raw):
     units = [struct.unpack_from('>II', raw, 12 + 8 * i) for i in range(5)]
@@ -36,8 +34,9 @@ def l2_geo(pc, x, y):
 
 
 def l2_drawn(tile):
-    """{(parcel, class, link id): (points, route number, shape)} of a tile's level-2 road
-    shapes, the points as (lon, lat) in drawn order and the shape as (parcel, word offset)."""
+    """{(parcel, class, link id): (points, route number, shape, coarse levels)} of a tile's
+    level-2 road shapes, the points as (lon, lat) in drawn order, the shape as (parcel, word
+    offset) and the levels as the upper-link words rd_build left in its header."""
     shapes, names, out = {}, {}, {}
     for r in tile.records(section=1, level=2):
         pl = r.plain()
@@ -55,11 +54,13 @@ def l2_drawn(tile):
                 o = 2 * S['name']; n = struct.unpack_from('>H', sec, o + 8)[0]
                 text = sec[o + 10:o + 10 + n].rstrip(b'\0').decode(tile.fmt.codec, 'replace')
                 ref = dict(part.split('=', 1) for part in text.split(';') if '=' in part).get('2')
+            q = S['at'] + 6 + (w[S['at'] + 3] & 3)
+            up = frozenset(lv for u in w[q:q + (w[S['at']] >> 13)] for lv in (4, 5) if u & 0xe000 == fa_encode.UPPER_LEVEL[lv])
             run = []
             for at, (kind, lid) in sorted(S['points'].items()):
                 run.append(l2_geo(pc, w[at] & 0x7ff, w[at + 1] & 0x7ff))
                 if kind == 'end':
-                    out[pc, S['cls'], lid & 0x1fff] = (run, ref, (pc, S['at'])); run = run[-1:]
+                    out[pc, S['cls'], lid & 0x1fff] = (run, ref, (pc, S['at']), up); run = run[-1:]
     return out
 
 
@@ -107,12 +108,12 @@ def emitted_l2_layer(paths):
             direction = 1 if bits == (0x4000, 0x8000) else -1 if bits == (0x8000, 0x4000) else 0
             assert ei['w4'] == ej['w4'], (pc, cls, lid, ei['w4'], ej['w4'])
             ends = [l2_geo(pc, rec['nodes'][k]['x'], rec['nodes'][k]['y']) for k in (i, j)]
-            path, ref, shape = drawn.get((pc, cls, lid), (ends, None, None))
+            path, ref, shape, up = drawn.get((pc, cls, lid), (ends, None, None, frozenset()))
             if path[0] != ends[0] and path[-1] == ends[0]: path = path[::-1]
             links.append(dict(a=gids[i], b=gids[j], length=length, cls=cls, speed=speed,
                               direction=direction, w4=ei['w4'], parcel=pc, child=(pc, lid),
                               next_a=gids[j], next_b=gids[i], pa=pc, pb=pc, path=path, ref=ref,
-                              members=[(pc, cls, lid)], shape=shape))
+                              members=[(pc, cls, lid)], shape=shape, up=up))
     return dict(nodes=nodes, links=links, level=2, records=records, paths=list(paths))
 
 
@@ -188,7 +189,7 @@ def collapse(per):
             for node, at in inc.items():
                 if len(at) != 2 or len(owners[node]) != 1: continue
                 p, q = at; a, b = links[p], links[q]
-                if a['cls'] != b['cls']: continue
+                if a['cls'] != b['cls'] or a.get('up') != b.get('up'): continue
                 if shapes and (a.get('shape') is None or a.get('shape') != b.get('shape')): continue
                 # only two links that run the same way join: the shapes under the merged link
                 # all run its way then, as the unit takes them to (Navi.exe 0x3605a0)
@@ -212,7 +213,7 @@ def collapse(per):
                               shape=a.get('shape') if shapes else None,
                               path=pa + pb[1:], ref=(a if a['length'] >= b['length'] else b).get('ref'),
                               direction=0 if fwd and back else 1 if fwd else -1,
-                              w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'],
+                              w4=a.get('w4', 0), parcel=a['parcel'], child=a['child'], up=a.get('up'),
                               next_a=a['next_a' if a['a'] == x else 'next_b'],
                               pa=a['pa' if a['a'] == x else 'pb'],
                               next_b=b['next_b' if b['b'] == y else 'next_a'],
@@ -262,7 +263,7 @@ def encode_level(child, records, level, origin, country, occurrences, hierarchy=
         classes = [l['cls'] for l in R['links']]; speeds = [l['speed'] for l in R['links']]
         dirs = [l['direction'] for l in R['links']]
         # bits 1-2 count the levels above that have the link: level 5 for a level-4 link of its classes
-        w4 = [l.get('w4', 0) & ~0x6 | (0x2 if level == 4 and l['cls'] in FACTORY_CLASSES[5] else 0) for l in R['links']]
+        w4 = [l.get('w4', 0) & ~0x6 | (0x2 if level == 4 and 5 in l['up'] else 0) for l in R['links']]
         counts = collections.Counter(); ids = []
         for cls in classes:
             counts[cls] += 1; ids.append(counts[cls])
@@ -326,11 +327,12 @@ def link_shapes(level, records, origin, upper=None):
     return out
 
 
-def build_level(child, level, origin, country, allowed=None):
-    """Reparcel one child graph, retaining its topology and adding resolving down-pointers."""
+def build_level(child, level, origin, country):
+    """Reparcel one child graph, retaining its topology and adding resolving down-pointers.
+    A link goes in where its level-2 shape's header has a word for the level."""
     per = collections.defaultdict(list)
     for link in child['links']:
-        if allowed is not None and link['cls'] not in allowed: continue
+        if level not in link['up']: continue
         per[parent_of(level, link['parcel'])].append(dict(link))
     collapse(per)
     occurrences = collections.defaultdict(list); records = {}
@@ -507,8 +509,8 @@ def build(ways, profile, l2_tiles, bbox=None):
             return lon0 <= lon <= lon1 and lat0 <= lat <= lat1
         child['links'] = [l for l in child['links'] if inside(l['a']) and inside(l['b'])]
     origin = profile.mesh_origin
-    r4, layer4, occ4 = build_level(child, 4, origin, profile.country, FACTORY_CLASSES[4])
-    r5, layer5, _ = build_level(layer4, 5, origin, profile.country, FACTORY_CLASSES[5])
+    r4, layer4, occ4 = build_level(child, 4, origin, profile.country)
+    r5, layer5, _ = build_level(layer4, 5, origin, profile.country)
     upper5 = set(layer5['nodes'])
     encode_level(child, r4, 4, origin, profile.country, occ4, upper5)
     flags = {}

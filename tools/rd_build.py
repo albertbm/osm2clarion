@@ -373,7 +373,8 @@ def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
     chains = {}
     for l in links: chains.setdefault(l[9], []).append(l)
-    def key(c): return (c[0][5], c[0][4], c[0][6])
+    # a shape carries one set of coarse words, so a roundabout the coarse levels keep stays apart
+    def key(c): return (c[0][5], c[0][4], c[0][6], fa_encode.coarse_levels(c[0][5], c[0][6], c[0][11]))
     ends = collections.defaultdict(list)
     for cid, c in chains.items(): ends[c[0][0]].append((cid, 'a')); ends[c[-1][1]].append((cid, 'b'))
     for node in sorted(ends):
@@ -589,7 +590,7 @@ def levels_above(links, level, up):
     """Per link, how many upper-link words its shape carries with --coarse-words: the levels
     above that have the link."""
     return [0 if level == 1 and (not up or up[k] is None) else
-            len(fa_encode.coarse_words(fa_encode.layer_class(l[5], 2)[1])) + (level == 1) for k, l in enumerate(links)]
+            len(fa_encode.coarse_words(l[5], l[6], l[11])) + (level == 1) for k, l in enumerate(links)]
 
 def coarse_runs(parcels):
     """Per level-2 parcel, a number per link that changes where the level-4 graph can keep a
@@ -858,7 +859,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         chains = chains_of(P['links'], idx, chain, ids, groups)
         L = P['links']
         def words(g):
-            above = fa_encode.coarse_words(fa_encode.layer_class(L[g[0]][5], 2)[1]) if coarse else []
+            above = fa_encode.coarse_words(L[g[0]][5], L[g[0]][6], L[g[0]][11]) if coarse else []
             if level == 2: return above
             return above + [fa_encode.UPPER_LEVEL[2] | up[g[0]]] if up and up[g[0]] is not None else []
         uppers = [words(g) for g in groups]

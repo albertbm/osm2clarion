@@ -220,11 +220,15 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual([S['links'] for S in shapes], [[1, 2], [3]])
 
     def test_coarse_words_are_filled_in_place(self):
-        self.assertEqual(fa_encode.coarse_words(4), [0x8000, 0x6000], 'highest level first, ids left for lev_graph')
-        self.assertEqual(fa_encode.coarse_words(7), [], 'class 7 stays at level 2')
-        self.assertEqual(fa_encode.coarse_words(12), [0x8000, 0x6000])
+        self.assertEqual(fa_encode.coarse_words('primary', '1'), [0x8000, 0x6000], 'highest level first, ids left for lev_graph')
+        self.assertEqual(fa_encode.coarse_words('tertiary', '1'), [], 'class 7 stays at level 2')
+        self.assertEqual(fa_encode.coarse_words('ferry'), [0x8000, 0x6000])
+        self.assertEqual(fa_encode.coarse_words('primary'), [], 'a primary with no number stays off')
+        self.assertEqual(fa_encode.coarse_words('primary', None, 'roundabout'), [0x8000, 0x6000], 'its roundabout joins numbered roads')
+        self.assertEqual(fa_encode.coarse_words('trunk_link'), [0x8000, 0x6000])
+        self.assertEqual(fa_encode.coarse_words('secondary_unnumbered', None, 'roundabout'), [], 'class 6 stays off')
         rec, _ = fa_encode.build_record(1, 96, 898, 7, 9, self.NODES, [self.CHAIN], hws=['primary'], styles=[[0x101e, 0x101e]],
-                                        country=352, uppers=[fa_encode.coarse_words(4) + [0x2007]])
+                                        country=352, uppers=[fa_encode.coarse_words('primary', '1') + [0x2007]])
         import lev_graph
         pc = (96 * 32 + 7, 898 * 32 + 9)
         buf = bytearray(rec); st = collections.Counter()
@@ -248,7 +252,7 @@ class TestGuidanceWords(unittest.TestCase):
         self.assertEqual(len(w['nodes']), 3)
 
     def test_coarse_runs_end_at_junctions(self):
-        link = lambda a, b, chain, d=0: (a, b, 10.0, 1, None, 'primary', None, None, [], chain, d, None)
+        link = lambda a, b, chain, d=0: (a, b, 10.0, 1, None, 'primary', '1', None, [], chain, d, None)
         L = [link(0, 1, 0), link(1, 2, 0), link(2, 3, 0), link(3, 4, 0, 1), link(2, 9, 1)]
         runs = rd_build.coarse_runs({'p': dict(links=L)})['p']
         self.assertEqual(runs, [0, 0, 2, 3, 4], 'a new run past the junction at node 2 and where the one-way sense changes')
