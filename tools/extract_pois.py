@@ -87,6 +87,12 @@ def chain_code(brand):
     return CHAINS.get(b) or next((code for name, code in CHAINS.items() if b.startswith(name + ' ')), CHAIN_OTHERS)
 
 
+def phone_text(phone):
+    """The first number of a phone tag, if it is plain ASCII digits, spaces and + - ( )."""
+    p = (phone or '').split(';')[0].strip()
+    return p if p and len(p) <= 24 and all(c.isdigit() or c in ' +-()' for c in p) else None
+
+
 DUP_M = 50     # two objects of one category this close with matching names are one facility
 CLEAN = {'\u2018': "'", '\u2019': "'", '\u00b4': "'", '`': "'", '\u201c': '"', '\u201d': '"', '\u00d7': 'x',
          '\xa0': ' ', '\u2013': '-', '\u2014': '-', '\u200b': ''}   # typographic characters the keyboard cannot reach
@@ -153,8 +159,12 @@ def main(argv):
             else:
                 dropped[cs[0]] = dropped.get(cs[0], 0) + 1
                 return
-        out.append(dict(id='%s%d' % (kind, oid), name=clean_name(name), cat=cs[0], sub=cs[1],
-                        lat=round(lat, 7), lon=round(lon, 7)))
+        poi = dict(id='%s%d' % (kind, oid), name=clean_name(name), cat=cs[0], sub=cs[1],
+                   lat=round(lat, 7), lon=round(lon, 7))
+        phone = phone_text(tags.get('phone') or tags.get('contact:phone'))
+        if phone:
+            poi['phone'] = phone
+        out.append(poi)
 
     class H(osmium.SimpleHandler):
         def node(self, n):

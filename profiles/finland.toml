@@ -18,6 +18,7 @@ turn_restrictions = true
 coarse_graph = true        # level-2 graph in the coarse file, so long routes can be planned
 sec4 = true                # section-4 country records on the rebuilt tile
 inter = true               # intersection search written from the rebuilt roads
+point = true               # POI search: OSM facilities and the card's settlements, on the rebuilt roads
 
 [source]
 osm = "build/finland-latest.osm.pbf"

@@ -17,8 +17,9 @@ picks the chain:
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
             rebuilt from OSM. With [addr] municipality set, the country's street search is
             rewritten for that municipality (build_addr_country.py). With [build] inter, the
-            country's intersection search is written from the rebuilt roads (build_inter.py).
-            Every other address file stays the card's. --base is the card image, only read.
+            country's intersection search is written from the rebuilt roads (build_inter.py),
+            and with [build] point its POI search from OSM (build_point.py). Every other
+            address file stays the card's. --base is the card image, only read.
             The factory step clears the work dir's copies of an earlier base; later steps
             refuse to run on them.
 
@@ -41,7 +42,8 @@ import cardcopy
 import clarion_profile
 
 GENERATE_STEPS = ['prep', 'cards', 'poi', 'icons', 'addr', 'consent', 'check']
-AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'addr', 'inter', 'master', 'card', 'check']
+AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'addr', 'inter', 'point', 'master', 'card',
+              'check']
 
 
 def run(*args, env=None):
@@ -166,7 +168,8 @@ def area_steps(P, prof, base, out, work, area, osm):
     roads, turns_all, turns = j('roads.json'), j('turns_all.json'), j('turns.json')
     lev_out = os.path.join(outmap, 'LEV3456R.DAT')
     mmain = j('MMAIN001.DAT')
-    shapes, addr_dir, inter_dir = {c: j(c + '.shapes.json') for c in cells}, j('addr'), j('inter')
+    shapes = {c: j(c + '.shapes.json') for c in cells}
+    addr_dir, inter_dir, point_dir = j('addr'), j('inter'), j('point')
     has_addr = bool(P.raw.get('addr', {}).get('municipality')) and A.get('addr', True)
 
     def need_osm():
@@ -261,10 +264,24 @@ def area_steps(P, prof, base, out, work, area, osm):
         run(tool('addr/build_inter.py'), inter_dir, '--profile', prof, '--card', base,
             '--tiles', *[os.path.join(outmap, c + '.DAT') for c in cells])
 
+    def point():
+        if os.path.isdir(point_dir):
+            shutil.rmtree(point_dir)
+        if not B.get('point'):
+            print('the profile sets no [build] point; the card keeps its POI files')
+            return
+        same_base()
+        os.makedirs(point_dir)
+        pois = os.path.join(point_dir, 'pois.json')
+        run(tool('extract_pois.py'), need_osm(), pois)
+        run(tool('addr/build_point.py'), point_dir, '--profile', prof, '--card', base, '--pois', pois,
+            '--tiles', *[os.path.join(outmap, c + '.DAT') for c in cells])
+
     def addr_card():
-        """What the addr and inter steps left for the card: {card path: file} and {DIR:NAME: plain size}."""
+        """What the addr, inter and point steps left for the card: {card path: file} and {DIR:NAME: plain size}."""
         files, index = {}, {}
-        for d, wanted, step in ((addr_dir, has_addr, 'addr'), (inter_dir, B.get('inter'), 'inter')):
+        for d, wanted, step in ((addr_dir, has_addr, 'addr'), (inter_dir, B.get('inter'), 'inter'),
+                                (point_dir, B.get('point'), 'point')):
             try:
                 with open(os.path.join(d, 'card.json')) as f:
                     m = json.load(f)
@@ -342,6 +359,9 @@ def area_steps(P, prof, base, out, work, area, osm):
             elif fn.startswith('INTER'):
                 # every crossing lands on a node both streets' shapes share
                 run(tool('inter_resolve.py'), part, '--only', fn)
+            elif fn.startswith('POINT'):
+                # every place lands on a link of our roads, and the search frames hold every place
+                run(tool('point_resolve.py'), part, '--only', fn)
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()
@@ -354,8 +374,8 @@ def area_steps(P, prof, base, out, work, area, osm):
         print('checked; card renamed to', out)
 
     return [('factory', factory), ('osm', osm_step), ('strip', strip), ('roads', roads_step),
-            ('coarse', coarse), ('sec4', sec4), ('addr', addr), ('inter', inter), ('master', master),
-            ('card', card_step), ('check', check)]
+            ('coarse', coarse), ('sec4', sec4), ('addr', addr), ('inter', inter), ('point', point),
+            ('master', master), ('card', card_step), ('check', check)]
 
 
 def consent_ok(code, output):
