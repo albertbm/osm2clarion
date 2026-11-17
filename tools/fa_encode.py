@@ -154,9 +154,6 @@ UPPER_LEVEL = {2: 0x2000, 4: 0x6000, 5: 0x8000}   # level code, top three bits o
 # table. The traffic module lists only such shapes (Navi.exe 0x4de924). Never written here:
 # factory shapes in a country with no table (Belarus, Albania) have it clear too.
 TRAFFIC = 0x4000
-# the level-2 classes the level-4 and level-5 graphs carry.
-# Class 7 stays at level 2: none of 33,432 entries on QY8 B50R068R or 69,400 on QY7 B58R050R is in level 4.
-COARSE_CLASSES = {4: set(range(16)) - {7}, 5: set(range(7)) | {10, 11, 12}}
 # Level 4 takes numbered roads only: every level-4 link of classes 3-5 is numbered on QY7 (210,300 of 210,300).
 NUMBERED = {1, 3, 4, 5}
 JUNCTIONS = ('roundabout', 'circular')

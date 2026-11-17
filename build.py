@@ -16,9 +16,11 @@ picks the chain:
             that name, and CARDS is the directory two levels up.
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
             rebuilt from OSM. With [addr] municipality set, the country's street search is
-            rewritten for that municipality (build_addr_country.py); every other address
-            file stays the card's. --base is the card image, only read. The factory step clears
-            the work dir's copies of an earlier base; later steps refuse to run on them.
+            rewritten for that municipality (build_addr_country.py). With [build] inter, the
+            country's intersection search is written from the rebuilt roads (build_inter.py).
+            Every other address file stays the card's. --base is the card image, only read.
+            The factory step clears the work dir's copies of an earlier base; later steps
+            refuse to run on them.
 
 The card is written as OUT.partial (in generate mode with its manifest as MANIFEST.partial),
 and renamed, with the cards log row, only once the check step passes. A run that starts the card again
@@ -39,7 +41,7 @@ import cardcopy
 import clarion_profile
 
 GENERATE_STEPS = ['prep', 'cards', 'poi', 'icons', 'addr', 'consent', 'check']
-AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'addr', 'master', 'card', 'check']
+AREA_STEPS = ['factory', 'osm', 'strip', 'roads', 'coarse', 'sec4', 'addr', 'inter', 'master', 'card', 'check']
 
 
 def run(*args, env=None):
@@ -164,7 +166,7 @@ def area_steps(P, prof, base, out, work, area, osm):
     roads, turns_all, turns = j('roads.json'), j('turns_all.json'), j('turns.json')
     lev_out = os.path.join(outmap, 'LEV3456R.DAT')
     mmain = j('MMAIN001.DAT')
-    shapes, addr_dir = {c: j(c + '.shapes.json') for c in cells}, j('addr')
+    shapes, addr_dir, inter_dir = {c: j(c + '.shapes.json') for c in cells}, j('addr'), j('inter')
     has_addr = bool(P.raw.get('addr', {}).get('municipality')) and A.get('addr', True)
 
     def need_osm():
@@ -249,16 +251,30 @@ def area_steps(P, prof, base, out, work, area, osm):
         run(tool('addr/build_addr_country.py'), addr_dir, '--profile', prof, '--area', area, '--card', base,
             '--shapes', *[shapes[c] for c in cells], '--pbf', need_osm())
 
+    def inter():
+        if os.path.isdir(inter_dir):
+            shutil.rmtree(inter_dir)
+        if not B.get('inter'):
+            print('the profile sets no [build] inter; the card keeps its intersection files')
+            return
+        same_base()
+        run(tool('addr/build_inter.py'), inter_dir, '--profile', prof, '--card', base,
+            '--tiles', *[os.path.join(outmap, c + '.DAT') for c in cells])
+
     def addr_card():
-        """What the addr step left for the card: {card path: file} and {DIR:NAME: plain size}."""
-        try:
-            with open(os.path.join(addr_dir, 'card.json')) as f:
-                m = json.load(f)
-        except OSError:
-            if has_addr:
-                raise SystemExit('no address files in %s; run from the addr step' % addr_dir)
-            return {}, {}
-        return {p: os.path.join(addr_dir, n) for p, n in m['files'].items()}, m['index']
+        """What the addr and inter steps left for the card: {card path: file} and {DIR:NAME: plain size}."""
+        files, index = {}, {}
+        for d, wanted, step in ((addr_dir, has_addr, 'addr'), (inter_dir, B.get('inter'), 'inter')):
+            try:
+                with open(os.path.join(d, 'card.json')) as f:
+                    m = json.load(f)
+            except OSError:
+                if wanted:
+                    raise SystemExit('no files in %s; run from the %s step' % (d, step))
+                continue
+            files.update({p: os.path.join(d, n) for p, n in m['files'].items()})
+            index.update(m['index'])
+        return files, index
 
     def tiles():
         names = sorted(n for n in os.listdir(outmap) if n.startswith('B') and n.endswith('.DAT'))
@@ -319,8 +335,13 @@ def area_steps(P, prof, base, out, work, area, osm):
         run(tool('card_check.py'), '--tiles', *ours, '--lev', lev_out, '--roads', roads)
         run(tool('drive_check.py'), '--tiles', *ours, '--lev', lev_out)
         for name in sorted(addr_card()[1]):
-            # every street record of the rewritten file lands on a point of its own road
-            run(tool('addr_resolve.py'), part, '--only', name.split(':')[1])
+            fn = name.split(':')[1]
+            if fn.startswith('ADDRE'):
+                # every street record of the rewritten file lands on a point of its own road
+                run(tool('addr_resolve.py'), part, '--only', fn)
+            elif fn.startswith('INTER'):
+                # every crossing lands on a node both streets' shapes share
+                run(tool('inter_resolve.py'), part, '--only', fn)
         versions = set()
         for n in os.listdir(fac):
             st = card_verify.Stamps()
@@ -333,8 +354,8 @@ def area_steps(P, prof, base, out, work, area, osm):
         print('checked; card renamed to', out)
 
     return [('factory', factory), ('osm', osm_step), ('strip', strip), ('roads', roads_step),
-            ('coarse', coarse), ('sec4', sec4), ('addr', addr), ('master', master), ('card', card_step),
-            ('check', check)]
+            ('coarse', coarse), ('sec4', sec4), ('addr', addr), ('inter', inter), ('master', master),
+            ('card', card_step), ('check', check)]
 
 
 def consent_ok(code, output):

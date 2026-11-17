@@ -17,6 +17,7 @@ upper_names = true         # and writes it in capitals, as the factory tiles do
 turn_restrictions = true
 coarse_graph = true        # level-2 graph in the coarse file, so long routes can be planned
 sec4 = true                # section-4 country records on the rebuilt tile
+inter = true               # intersection search written from the rebuilt roads
 
 [source]
 osm = "build/finland-latest.osm.pbf"
@@ -33,7 +34,7 @@ bbox = [25.26, 61.84, 26.06, 62.43]   # lon_min, lat_min, lon_max, lat_max
 relations = [54224]
 cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R", "B68R050R"]
 bbox = [19.0, 59.7, 31.6, 70.1]
-# Roads only: the card keeps its factory address files. Whole-country addresses are a later job.
+# No street search: the card keeps its factory ADDRE file. Whole-country addresses are a later job.
 addr = false
 
 [grid]

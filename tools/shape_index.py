@@ -7,7 +7,7 @@ An address record names a point by its word offset from the record's geometry un
 tiles against. Link ids restart at 1 per class, so (cls, id) names a link within a record."""
 import json, os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import clarion_bg, clarion_format, clarion_tile, fa_encode
+import clarion_format, clarion_tile, fa_encode
 
 ZLIB = {f.zmagic for f in clarion_format.FORMATS.values()}
 
@@ -23,10 +23,12 @@ def label_name(label):
 
 
 def bg_labels(bg, codec='utf-8'):
-    r = clarion_bg.parse_record(bg)
-    s = r['sections'].get('names')
+    # only the names section: some factory backgrounds have a layer table parse_record refuses
+    w = struct.unpack_from('>22H', bg)
+    assert w[2] in (0x19, 0x3e8, 0xfa, 0xfa0), 'not a background record (w2=%#x)' % w[2]
     out = {}
-    if not s: return out
+    if w[11] == 0xffff or not w[12]: return out
+    s = bg[4 * w[11]:4 * w[11] + 4 * w[12]]
     nl = struct.unpack_from('>H', s, 2)[0]; p = 24
     for _ in range(nl):
         if p + 10 > len(s): break
