@@ -184,10 +184,10 @@ def parse_name_record(r):
 
 
 def search_key(name):
-    """The folded name POI keys are cut from: INTER's fold with commas dropped and full stops
-    as word breaks (AJANVAUNU OY, MIKKELI keys OY MIKKELI). All but 126 of POINT007's 68,847
-    records have a whole-name key that this fold starts with."""
-    return inter_io.search_key(name.replace(',', '').replace('.', ' '))
+    """The folded name POI keys are cut from: INTER's fold with commas and full stops as word
+    breaks (AJANVAUNU OY, MIKKELI keys OY MIKKELI; a QY8 card's APOTEKA 36,6 keys 36 6). All
+    but 116 of POINT007's 68,847 records have a whole-name key that this fold starts with."""
+    return inter_io.search_key(name.replace(',', ' ').replace('.', ' '))
 
 
 def text(name):
