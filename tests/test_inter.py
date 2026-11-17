@@ -90,6 +90,17 @@ class Layout(unittest.TestCase):
         self.assertEqual(I.df[inter_io.DF_N1[4]], max(r[9] for r in firsts))
         self.assertEqual(struct.unpack_from('>H', I.df, inter_io.DF_N2[2])[0], max(len(r) for r in seconds) // 2)
 
+    def test_plain_rows(self):
+        levels = (39, 0, 1)
+        firsts = [inter_io.first_record('PIAZZA', levels, 0, 1, 'utf-8')]
+        seconds = [inter_io.second_record('SALITA', levels, 0x9f4f, 0xd45c, 1722, 1472, False, 'utf-8')]
+        rows = [inter_io.row(levels, 0)]
+        out = inter_io.assemble(prefix(), bytes(inter_io.DF_LEN), [(b'PIAZZA', 0, 1)], rows, firsts, seconds, 39,
+                                addre_io.deflate_block, packed=False)
+        I = inter_io.Inter(out)
+        self.assertFalse(I.packed)
+        self.assertEqual((I.rows, I.first, I.second), (rows, firsts, seconds))
+
     def test_many_blocks(self):
         out, _keys, _rows, firsts, seconds = self.build(1700)
         I = inter_io.Inter(out)

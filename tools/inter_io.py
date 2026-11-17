@@ -1,8 +1,11 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Read and write INTER<nnn>.DAT, the Clarion intersection search (X08-02, QY7).
+"""Read and write INTER<nnn>.DAT, the Clarion intersection search.
 
-Measured on INTER007 (Finland) of the 2014 QY7 card. The file has ADDRE's shape, with
-POINT's two-block definition region and two name frames:
+Measured on INTER007 (Finland) of the 2014 QY7 card and checked on eight more of its files
+and four of a QY8 card's, which all rebuild byte for byte. The file has ADDRE's shape, with
+POINT's two-block definition region and two name frames. An X08-03 (QY8) file differs only
+in its rows, stored plain with their width at 0x101a, in UTF-8 text and in its name-block
+deflate (addre_io.deflate_block):
 
 * the trie (cr 12, kw 1) over the first street's folded name, one key per word start,
   as ADDRE cuts them; a record index counts 9-halfword rows.
@@ -81,14 +84,18 @@ class Inter:
         self.area = u16(d, 0x103a)
         self.nrow = u32(d, 0x1016) // ROW_W
         o = unaddr(u32(d, 0x1012))
-        assert u16(d, o) == V5_PER, hex(u16(d, o))
-        n = -(-self.nrow // V5_PER)
-        p = o + 4 + 4 * n
-        rows = b''
-        for i in range(n):
-            size = u32(d, o + 4 + 4 * i) * 2
-            rows += zlib.decompress(d[p:p + size])
-            p += size
+        self.packed = u16(d, 0x101a) == 0
+        if self.packed:
+            assert u16(d, o) == V5_PER, hex(u16(d, o))
+            n = -(-self.nrow // V5_PER)
+            p = o + 4 + 4 * n
+            rows = b''
+            for i in range(n):
+                size = u32(d, o + 4 + 4 * i) * 2
+                rows += zlib.decompress(d[p:p + size])
+                p += size
+        else:
+            rows = d[o:o + self.nrow * ROW]
         assert len(rows) == self.nrow * ROW, (len(rows), self.nrow)
         self.rows = [rows[i:i + ROW] for i in range(0, len(rows), ROW)]
         dfr = unaddr(u32(d, 0x800 + 6 * 7))
@@ -119,9 +126,10 @@ def _tail(blocks, per):
     return bytes(t)
 
 
-def assemble(prefix, df, keys, rows, first, second, area, deflate, per1=PER1, per2=PER2):
+def assemble(prefix, df, keys, rows, first, second, area, deflate, per1=PER1, per2=PER2, packed=True):
     """Bytes of an INTER file; prefix and df are templates, every size and address is set here.
-    deflate is the card format's (clarion_format.X08_02.deflate)."""
+    deflate compresses a name block as the card's format does. packed rows are X08-02's zlib
+    streams; X08-03 stores them plain and their width at 0x101a."""
     node, first_word, _ = build_trie(keys, CR, KW, ROW_W)
     out = bytearray(prefix)
     struct.pack_into('>I', out, 0x1006, len(node) // 2)
@@ -133,9 +141,13 @@ def assemble(prefix, df, keys, rows, first, second, area, deflate, per1=PER1, pe
     struct.pack_into('>I', out, 0x1012, addr(len(out)))
     plain = b''.join(rows)
     assert len(plain) == len(rows) * ROW
-    parts = [deflate(plain[i:i + V5_PER * ROW]) for i in range(0, len(plain), V5_PER * ROW)]
-    out += struct.pack('>HH', V5_PER, 0) + b''.join(struct.pack('>I', len(c) // 2) for c in parts)
-    out += b''.join(parts)
+    if packed:
+        parts = [deflate(plain[i:i + V5_PER * ROW]) for i in range(0, len(plain), V5_PER * ROW)]
+        out += struct.pack('>HH', V5_PER, 0) + b''.join(struct.pack('>I', len(c) // 2) for c in parts)
+        out += b''.join(parts)
+    else:
+        struct.pack_into('>H', out, 0x101a, ROW_W)
+        out += plain
     out += b'\0' * (-len(out) % ALIGN)
     dfr = len(out)
     struct.pack_into('>I', out, 0x824 + 6, addr(dfr))      # slot 7
