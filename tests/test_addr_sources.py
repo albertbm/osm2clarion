@@ -96,7 +96,7 @@ class TestRyhti(unittest.TestCase):
         r = self.rows(box=BOX)
         self.assertEqual([x['street'] for x in r], ['Kauppakatu', 'Muurametie'])
         self.assertEqual(r[0], dict(street='Kauppakatu', dative='', svf='179', num='12', letter='A', post=40100,
-                                    lat=62.24, lon=25.75, town='JYVÄSKYLÄ'))
+                                    lat=62.24, lon=25.75, town='JYVÄSKYLÄ', street_swe=''))
 
     def test_box_and_municipalities(self):
         self.assertEqual([x['street'] for x in self.rows(box=(62.2, 62.3, 25.0, 26.0))], ['Kauppakatu'])

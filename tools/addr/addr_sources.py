@@ -11,9 +11,9 @@ Address data: Syke, Ryhti, CC BY 4.0, https://www.syke.fi/fi/ymparistotieto/kayt
 """
 import csv
 import re
+import sys
 
 _NUM = re.compile(r'^\s*(\d+)\s*([^\W\d_])?\s*(?:[-–/].*)?$')
-
 
 REGISTERS = ('stadfangaskra', 'ryhti')     # the CSV layouts a register file can have
 
@@ -54,10 +54,10 @@ def split_housenumber(text):
     return m.group(1), (m.group(2) or '').upper()
 
 
-def _row(street, num, letter, post, lat, lon, svf='', town=''):
+def _row(street, num, letter, post, lat, lon, svf='', town='', **more):
     return dict(street=street, dative='', svf=svf, num=num, letter=letter,
                 post=int(post) if str(post or '').strip().isdigit() else 0,
-                lat=lat, lon=lon, town=town)
+                lat=lat, lon=lon, town=town, **more)
 
 
 def _inside(lat, lon, box):
@@ -77,8 +77,10 @@ def ryhti_addresses(path, box=None, municipalities=None):
                     continue
             elif box is not None and not _inside(float(r['lat']), float(r['lon']), box):
                 continue
-            yield _row(street, num, (r['letter'] or '').strip().upper(), r['postcode'],
-                       float(r['lat']), float(r['lon']), r['municipality'], (r['town'] or '').strip())
+            # interned: the whole country is 3.9 million rows sharing a few hundred thousand names
+            yield _row(sys.intern(street), num, (r['letter'] or '').strip().upper(), r['postcode'],
+                       float(r['lat']), float(r['lon']), sys.intern(r['municipality']),
+                       sys.intern((r['town'] or '').strip()), street_swe=sys.intern((r['street_swe'] or '').strip()))
 
 
 def _osm_row(tags, lat, lon, box):
@@ -111,3 +113,16 @@ def osm_addresses(pbf, box):
         row = _osm_row(o.tags, lat, lon, box)
         if row:
             yield row
+
+
+def osm_municipalities(pbf, admin_level='8'):
+    """{ref: [name, name:fi, name:sv]} of the administrative boundary relations at one level
+    that carry a ref; in Finland the ref is the municipality number."""
+    import osmium
+    out = {}
+    fp = osmium.FileProcessor(pbf, osmium.osm.RELATION).with_filter(osmium.filter.KeyFilter('admin_level'))
+    for o in fp:
+        t = o.tags
+        if t.get('boundary') == 'administrative' and t.get('admin_level') == admin_level and (t.get('ref') or '').isdigit():
+            out.setdefault(int(t['ref']), []).extend(t.get(k) for k in ('name', 'name:fi', 'name:sv') if t.get(k))
+    return out
