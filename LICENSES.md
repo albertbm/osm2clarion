@@ -16,6 +16,16 @@ it. If you distribute a card or an image you built, the ODbL's attribution and s
 terms apply to you: credit OpenStreetMap contributors, and offer the derived database under
 the same terms. See <https://www.openstreetmap.org/copyright>.
 
+## Addresses from a national register
+
+A card built with `[addr] source = "register"` also holds that register's addresses, under
+the register's own terms, which apply when you distribute the card:
+
+- Finland, Ryhti (`register = "ryhti"`): Syke's building-address register, Creative Commons
+  Attribution 4.0 International. Credit it as "Lähde: Syke Ryhti" (Source: Syke Ryhti). See
+  <https://creativecommons.org/licenses/by/4.0/> and
+  <https://www.syke.fi/fi/ymparistotieto/kayttolupa-ja-vastuut>.
+
 ## The navigation database on a factory card
 
 Licensed commercial data, NAVTEQ 14Q2 or 17Q2 packaged by Zenrin for Clarion. No licence in

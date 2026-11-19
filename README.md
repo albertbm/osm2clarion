@@ -226,6 +226,7 @@ tools will read. The keys are explained in comments in `profiles/iceland.toml` a
 
 ## Licence
 
-Code: GPL-3.0-or-later ([LICENSE](LICENSE)). Maps built from OSM: ODbL 1.0. Factory card
-data: commercial, not covered. Details in [LICENSES.md](LICENSES.md); tests and what not to
+Code: GPL-3.0-or-later ([LICENSE](LICENSE)). Maps built from OSM: ODbL 1.0. Finnish
+addresses from Ryhti: CC BY 4.0, "Lähde: Syke Ryhti". Factory card data: commercial, not
+covered. Details in [LICENSES.md](LICENSES.md); tests and what not to
 commit in [CONTRIBUTING.md](CONTRIBUTING.md).
