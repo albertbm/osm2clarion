@@ -910,6 +910,7 @@ def shape_index_record(level, pc, ix, groups, ids, links, label_of, no_names):
         keys = [links[g[0]][0]] + [key for k in g for key in links[k][8] + [links[k][1]]]
         assert len(keys) == len(S['points'])
         lab = '' if no_names else (label_of[S['chain']] or '')
+        lab = FMT.text(lab).decode(FMT.codec)    # as the tile spells it: QY7 Latin-1 has no en dash
         shapes.append(dict(name=links[g[0]][4], label=lab, layer=S['layer'], cls=S['cls'], at=S['at'],
                            links=[dict(id=ids[k], way=links[k][3]) for k in g],
                            points=[dict(word=wd, link=lid, role=role, lon=pt[0], lat=pt[1])
