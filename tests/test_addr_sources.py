@@ -166,7 +166,8 @@ class TestProfiles(unittest.TestCase):
         self.assertEqual(addr_sources.source(raw['addr']), ('register', 'ryhti'))
         self.assertTrue(raw['data']['addresses'].startswith('build/'))
         self.assertNotIn('municipality', raw['addr'])
-        self.assertEqual(raw['areas']['jyvaskyla']['municipality'], 'JYVÄSKYLÄ')
+        # both areas place addresses by the factory street file
+        self.assertNotIn('municipality', raw['areas']['jyvaskyla'])
         self.assertNotIn('municipality', raw['areas']['finland'])
         local = self.raw('examples/finland.local.toml')
         self.assertEqual(addr_sources.source(local['addr']), ('osm', None))

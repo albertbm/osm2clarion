@@ -28,9 +28,9 @@ osm = "build/finland-latest.osm.pbf"
 relations = [569407]
 cells = ["B58R050R"]
 bbox = [25.26, 61.84, 26.06, 62.43]   # lon_min, lat_min, lon_max, lat_max
-# Street search under this municipality's row of the card's own area tree, the settlement
-# from each address's town.
-municipality = "JYVÄSKYLÄ"
+# Street search: each address goes to the kunta and settlement the card's factory street
+# file points to (tools/addr/settle.py). `municipality = "JYVÄSKYLÄ"` here would put every
+# address under that row instead, the settlement from its postal town.
 
 [areas.finland]
 # The whole country: every cell below, rebuilt together so roads join at their edges. Land
@@ -38,8 +38,8 @@ municipality = "JYVÄSKYLÄ"
 relations = [54224]
 cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R", "B68R050R"]
 bbox = [19.0, 59.7, 31.6, 70.1]
-# Street search for the whole country. No municipality: each address goes to the kunta and
-# settlement the card's factory street file points to (tools/addr/settle.py).
+# Street search for the whole country, placed as above. build.py --addr-area jyvaskyla keeps
+# these roads and writes street search for that area alone.
 
 [grid]
 # The cells holding Finland, as the card names them.

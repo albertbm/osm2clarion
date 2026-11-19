@@ -33,7 +33,7 @@ today only the emptied stage dirs keep one out.
 | `roads` | `rd_build.py`: the area's roads into its one cell |
 | `coarse` | `lev_add_roads.py`: coarse roads, and the level-2 graph when `coarse_graph` is set |
 | `sec4` | `sec4_write.py`: section-4 country records on the rebuilt tile |
-| `addr` | with `[addr] municipality` set: checks the shape index against the finished tile, then `addr/build_addr_country.py` writes the country's street search from the OSM addresses inside the area |
+| `addr` | with an `[addr]` table: checks the shape index against the finished tile, then `addr/build_addr_country.py` writes the country's street search from the addresses inside the area, or inside `--addr-area` when that names a smaller one |
 | `master` | `make_mmain.py`: MMAIN001.DAT from the tile headers |
 | `card` | a copy of the base card with the tiles, the coarse file, MMAIN and the street-search file written on |
 | `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cell, the coarse file and the area's `roads.json` (never on a factory tile), `drive_check.py` on the same files, `addr_resolve.py` on the rewritten street-search file (every record must land on a point of its own road), then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |

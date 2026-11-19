@@ -3,7 +3,7 @@
 """Build a card from a profile.
 
     ./build.py --profile NAME --base CARD --out OUT.img [--work DIR] [--osm PBF] [--area NAME,...]
-               [--addresses CSV] [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR]
+               [--addr-area NAME] [--addresses CSV] [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR]
                [--map-from CARD | --restamp-from CARD] [--only STEP | --from STEP] [--list]
 
 Everything specific to a region, a unit or a data source is in profiles/NAME.toml. [build] mode
@@ -16,10 +16,13 @@ picks the chain:
             that name, and CARDS is the directory two levels up.
   area      The base card keeps its own map. Its roads are stripped and one area's roads are
             rebuilt from OSM. With an [addr] table, the country's street search is rewritten
-            for the area (build_addr_country.py): one municipality when the area names one,
-            else the whole country; --addresses overrides the register CSV at [data]
-            addresses. An area with addr = false keeps the card's. With [build] inter, the
-            country's intersection search is written from the rebuilt roads (build_inter.py),
+            from the addresses inside the area (build_addr_country.py), each placed in the
+            settlement the card's factory street file points to, or under one municipality
+            when the area names one. --addr-area takes the addresses of a smaller area than
+            the roads, for a card with a whole country's roads and one town's street search;
+            --addresses overrides the register CSV at [data] addresses. An area with
+            addr = false keeps the card's. With [build] inter, the country's intersection
+            search is written from the rebuilt roads (build_inter.py),
             and with [build] point its POI search from OSM (build_point.py). Every other
             address file stays the card's. --base is the card image, only read.
             The factory step clears the work dir's copies of an earlier base; later steps
@@ -150,7 +153,7 @@ def profile_with_cells(P, prof, base, work):
     return clarion_profile.load(path), path
 
 
-def area_steps(P, prof, base, out, work, area, osm, addresses=None):
+def area_steps(P, prof, base, out, work, area, osm, addresses=None, addr_area=None):
     """The steps for a profile in area mode: factory tiles stay, one area's roads are rebuilt."""
     areas = P.areas
     if area is None and len(areas) == 1: area = next(iter(areas))
@@ -172,7 +175,13 @@ def area_steps(P, prof, base, out, work, area, osm, addresses=None):
     mmain = j('MMAIN001.DAT')
     shapes = {c: j(c + '.shapes.json') for c in cells}
     addr_dir, inter_dir, point_dir = j('addr'), j('inter'), j('point')
-    has_addr = 'addr' in P.raw and A.get('addr', True)
+    addr_area = addr_area or area
+    if addr_area not in areas:
+        raise SystemExit('--addr-area %s: the profile has no such area' % addr_area)
+    addr_cells = [c for c in areas[addr_area]['cells'] if c in cells]
+    if len(addr_cells) != len(areas[addr_area]['cells']):
+        raise SystemExit('--addr-area %s has cells outside the roads of area %s' % (addr_area, area))
+    has_addr = 'addr' in P.raw and areas[addr_area].get('addr', True)
 
     def need_osm():
         path = osm or P.osm
@@ -253,8 +262,8 @@ def area_steps(P, prof, base, out, work, area, osm, addresses=None):
         # the coarse and section-4 steps rewrote the tile; the address words must still land
         for cell in cells:
             run(tool('shape_index.py'), 'verify', shapes[cell], os.path.join(outmap, cell + '.DAT'))
-        run(tool('addr/build_addr_country.py'), addr_dir, '--profile', prof, '--area', area, '--card', base,
-            '--shapes', *[shapes[c] for c in cells], '--pbf', need_osm(),
+        run(tool('addr/build_addr_country.py'), addr_dir, '--profile', prof, '--area', addr_area, '--card', base,
+            '--shapes', *[shapes[c] for c in addr_cells], '--pbf', need_osm(),
             *(['--addresses', addresses] if addresses else []))
 
     def inter():
@@ -640,7 +649,7 @@ def main():
     argv = sys.argv[1:]
     P = clarion_profile.take_arg(argv)
     args = {}
-    flags = ('--base', '--out', '--work', '--osm', '--addresses', '--area', '--local', '--what', '--prev', '--stage',
+    flags = ('--base', '--out', '--work', '--osm', '--addresses', '--addr-area', '--area', '--local', '--what', '--prev', '--stage',
              '--write', '--map-from', '--restamp-from', '--from', '--only')
     for flag in flags:
         if flag in argv:
@@ -667,7 +676,8 @@ def main():
     before = None
     if mode == 'area':
         plan = area_steps(P, prof, base, out, work, args.get('area'), args.get('osm'),
-                          args.get('addresses') and os.path.abspath(expand(args['addresses'])))
+                          args.get('addresses') and os.path.abspath(expand(args['addresses'])),
+                          args.get('addr-area'))
     else:
         local = {}
         lp = args.get('local') or P.build.get('local')

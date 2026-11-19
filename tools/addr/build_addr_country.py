@@ -95,7 +95,8 @@ def rows(P, pbf, area, addresses=None):
     elif layout == 'ryhti':
         if not addresses or not os.path.exists(addresses):
             raise SystemExit('[addr] register "ryhti" needs the CSV ([data] addresses or --addresses): %s' % addresses)
-        found = list(addr_sources.ryhti_addresses(addresses))
+        box = area.get('bbox')      # lon_min, lat_min, lon_max, lat_max: skips most of a country's rows
+        found = list(addr_sources.ryhti_addresses(addresses, box and (box[1], box[3], box[0], box[2])))
     else:
         raise SystemExit('[addr] register %r: area mode reads "ryhti" or OSM' % layout)
     g = osm_roads.region(pbf, relations=set(area['relations']))
@@ -247,7 +248,8 @@ def main():
             e['ladder'] = path + (settlements.get(e['town'], none),)
         reach, links = None, addr_links.Links([R for p in a.shapes for R in json.load(open(p))['records']])
     else:
-        print('%s: ordinal %d, the whole country, %d levels, DATA VERSION %s' % (name, ordinal, len(labels), version))
+        print('%s: ordinal %d, area %s placed by the factory street file, %d levels, DATA VERSION %s'
+              % (name, ordinal, a.area, len(labels), version))
         town_of, names, lines = by_settlement(P, a, ic, old, labels, found, fmt)
         print('\n'.join(lines))
         ents, odd = group(found, town_of, text, names)

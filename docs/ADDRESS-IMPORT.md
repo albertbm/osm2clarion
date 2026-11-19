@@ -138,13 +138,13 @@ addresses inside the area's relations:
   deepest tier of the card's own `ICODE001.DAT`, plus the settlement under it that the
   address's town names. An address whose town is no settlement row goes to the settlement
   named like the municipality;
-- without one, the whole country. Each address goes to the kunta its municipality number
-  names (the OSM boundary with that `ref`, on its Finnish or Swedish name; a kunta merged
-  away since the card was made is picked by the nearest factory record), then to the
-  settlement where the factory file has the street: the only one, or the one of the nearest
-  record of that name. A street the factory never had takes the settlement of the nearest
-  factory record in the kunta, which gives the factory's answer for 92.7% of a held-out
-  sample. `tools/addr/settle.py` has the rules;
+- without one, as both areas of the Finland profile are, each address goes to the kunta its
+  municipality number names (the OSM boundary with that `ref`, on its Finnish or Swedish
+  name; a kunta merged away since the card was made is picked by the nearest factory
+  record), then to the settlement where the factory file has the street: the only one, or
+  the one of the nearest record of that name. A street the factory never had takes the
+  settlement of the nearest factory record in the kunta, which gives the factory's answer
+  for 92.7% of a held-out sample. `tools/addr/settle.py` has the rules;
 - a Ryhti row with a Swedish name as well is found under both names, as the factory file
   lists MANNERHEIMINTIE and MANNERHEIMVÄGEN. The factory labels such a road
   `MANNERHEIMINTIE:MANNERHEIMVÄGEN`; ours carry OSM's `name` alone, so the name not on the
@@ -154,5 +154,6 @@ addresses inside the area's relations:
 - a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
 - the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.
 
-With a municipality, street search for the rest of that country then finds nothing, where
-the factory file pointed at roads the build removed.
+Street search outside the area then finds nothing, where the factory file pointed at roads
+the build removed. `build.py --area finland --addr-area jyvaskyla` builds the whole country's
+roads with one town's street search, for testing the search on a small file.
