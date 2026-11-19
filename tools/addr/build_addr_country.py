@@ -200,7 +200,7 @@ def by_settlement(P, a, ic, factory, labels, found, fmt):
         return names[k].get(s, k), tree[k][0] + (s,)
     lines = ['factory: %d kunta rows, %d name records (%d with no parcel position); %d municipality numbers matched'
              % (len(tree), len(recs), sum(r[3] is None for r in recs), len(S.kunta_of)),
-             'merged away since the card: %s' % ', '.join('%s (now %d)' % kv for kv in sorted(home.items()))]
+             'merged away since the card: %s' % (', '.join('%s (now %d)' % kv for kv in sorted(home.items())) or 'none in these rows')]
     lines += ['  %-32s %8d addresses %7d streets' % (p, *n) for p, n in settle.counts(found, out, fold).items()]
     return town_of, (lambda r: names_of(r, fold)), lines
 

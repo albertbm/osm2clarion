@@ -32,6 +32,7 @@ import addre_io  # noqa: E402
 import clarion_bg  # noqa: E402
 import icode_io  # noqa: E402
 
+MERGED_REACH = 0.1     # degrees of latitude, about 11 km, from a merged kunta's record to an address
 KUNTA_PATHS = ('a: municipality number', 'a: merged kunta by position', 'a: kunta by position only')
 PATHS = ('b: one factory settlement', 'c: nearest same-name record', 'd: nearest factory record',
          'd: no factory record, marker')
@@ -155,8 +156,11 @@ class Settler:
             pts = sorted({(la, lo) for la, lo, _ in self.located.get(k, ())})
             if not pts:
                 continue
-            got = tree.query_nearest(shapely.points(*xy([p[0] for p in pts], [p[1] for p in pts])))[1]
-            out[k] = best(collections.Counter(int(num[j]) for j in got))
+            # no address that near: the rows cover an area the kunta is not in
+            got = tree.query_nearest(shapely.points(*xy([p[0] for p in pts], [p[1] for p in pts])),
+                                     max_distance=MERGED_REACH)[1]
+            if len(got):
+                out[k] = best(collections.Counter(int(num[j]) for j in got))
         return out
 
     def assign(self, rows):

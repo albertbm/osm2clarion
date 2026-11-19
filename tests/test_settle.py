@@ -76,6 +76,11 @@ class Rules(unittest.TestCase):
         self.assertEqual(out, [('NASTOLA', 1, 'a: merged kunta by position', 'd: nearest factory record'),
                                ('LAHTI', 0, 'a: municipality number', 'b: one factory settlement')])
 
+    def test_a_merged_kunta_far_from_every_row_has_no_home(self):
+        # rows of Tampere alone, 130 km from Nastola
+        out, home = self.assign(row('Hämeenkatu', '837', 61.5, 23.76))
+        self.assertEqual((home, out[0][:3]), ({}, ('TAMMERFORS', 0, 'a: municipality number')))
+
     def test_marker_and_unlocated_records_count_where_the_name_is(self):
         out, _ = self.assign(row('Metsätie', '398', 61.0, 25.6), row('Vanhatie', '398', 61.0, 25.6))
         self.assertEqual([s for _, s, _, _ in out], [2, 1])
