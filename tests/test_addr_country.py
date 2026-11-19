@@ -163,6 +163,14 @@ class Sides(unittest.TestCase):
         (r,) = self.ranges([(1, 20, 'N'), (2, 60, 'N'), (3, 100, 'N'), (4, 140, 'N'), (5, 140, 'S'), (6, 100, 'S')])
         self.assertEqual(self.items(r), [(0x64, 6, 5), (0x68, 1, 4)])
 
+    def test_a_number_on_two_buildings_is_placed_once(self):
+        # the register lists each building: 4 again, farther from the road and on the other side
+        rows = [dict(street='Katu', num=n, letter=le, post=40100, town='', lat=62.2401 + dlat, lon=25.7401 + east / 51800)
+                for n, le, east, dlat in (('2', '', 20, -0.0001), ('4', 'A', 60, -0.0001), ('4', 'B', 150, 0.0004))]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        (e,), _ = build_addr_country.place(self.links(), ents)
+        self.assertEqual([self.items(r) for r in e['ranges']], [[(0x54, 2, 4)]])
+
     def test_file_has_one_record_and_row_per_link(self):
         houses = [(1, 20, 'N'), (3, 60, 'N'), (2, 20, 'S'), (4, 60, 'S')]
         for fmt in (clarion_format.X08_02, None):

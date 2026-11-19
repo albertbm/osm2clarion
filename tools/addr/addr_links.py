@@ -178,11 +178,16 @@ def address_ranges(links, e, reach=None):
         matched, unmatched = match_near(cands, adr, reach)
         if not matched:
             return [], unmatched
+    # a number is one place on its street: of several buildings, the one nearest the road
+    nearest = {}
+    for m in matched:
+        num = m[4]['num']
+        if num.isdigit() and int(num) and (int(num) not in nearest or m[3] < nearest[int(num)][3]):
+            nearest[int(num)] = m
     grouped = collections.defaultdict(list)
-    for c, side, along, dist, a in matched:
-        if a['num'].isdigit() and int(a['num']):
-            R, S, L, run = c
-            grouped[(R['code'][0], R['code'][1], S['at'], L['id'])].append((along, dist, int(a['num']), a, side, c))
+    for num, (c, side, along, dist, a) in nearest.items():
+        R, S, L, run = c
+        grouped[(R['code'][0], R['code'][1], S['at'], L['id'])].append((along, dist, num, a, side, c))
     out = []
     for rows in grouped.values():
         R, S, L, run = rows[0][5]
