@@ -11,9 +11,11 @@ sys.path.insert(0, str(ROOT / 'tools'))
 sys.path.insert(0, str(ROOT / 'tools' / 'addr'))
 
 import addr_links
+import addr_resolve
 import addre_io
 import build_addr_country
 import clarion_format
+import frames
 import icode_io
 import settle
 
@@ -113,6 +115,99 @@ class Place(unittest.TestCase):
         self.assertEqual([e['name'] for e in placed], ['KATU'])
         self.assertEqual([(r['lo'], r['hi'], r['link']) for r in placed[0]['ranges']], [(3, 7, 1), (31, 35, 2)])
         self.assertEqual([(s['street'], s['addresses']) for s in skipped], [('POLKU', 1)])
+
+
+class Sides(unittest.TestCase):
+    """One range per link with both sides of the road, as a factory record holds them."""
+
+    def links(self):
+        """KATU as one link running east for 220 m, digitised west to east."""
+        lat, lon = 62.2401, 25.7401
+        pts = [dict(word=55 + 5 * i, link=1, role=r, lon=lon + 0.002 * i, lat=lat)
+               for i, r in enumerate(('start', 'vertex', 'end'))]
+        rec = dict(code=list(addre_io.parcel_words(lat, lon + 0.001)), unit=22,
+                   shapes=[dict(label='1=KATU', at=48, links=[dict(id=1, way=7)], points=pts)])
+        return addr_links.Links([rec])
+
+    def ranges(self, houses):
+        """houses: (number, metres east along the road, 'N' or 'S' of it)."""
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town='', lat=62.2401 + (0.0001 if ns == 'N' else -0.0001),
+                     lon=25.7401 + east / 51800) for n, east, ns in houses]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(self.links(), ents)
+        return placed[0]['ranges']
+
+    def items(self, r):
+        return [(it['flag'], it['first'], it['last']) for it in r['items']]
+
+    def test_both_sides_in_one_range(self):
+        # numbers rise eastwards: north is left of the record, south right, and right goes first
+        (r,) = self.ranges([(1, 20, 'N'), (3, 60, 'N'), (5, 100, 'N'), (2, 20, 'S'), (4, 60, 'S'), (8, 150, 'S')])
+        self.assertEqual((r['lo'], r['hi'], r['refs']), (1, 8, ((2, 0x40, 33), (3, 0x40, 43))))
+        self.assertEqual(self.items(r), [(0x54, 2, 8), (0x58, 1, 5)])
+
+    def test_numbers_falling_along_the_shape_turn_the_record(self):
+        # numbers rise westwards: the record runs end to start, so north is now its right
+        (r,) = self.ranges([(5, 20, 'N'), (3, 60, 'N'), (1, 100, 'N'), (6, 20, 'S'), (2, 100, 'S')])
+        self.assertEqual(r['refs'], ((4, 0x40, 43), (5, 0x40, 33)))
+        self.assertEqual(self.items(r), [(0x54, 1, 5), (0x58, 2, 6)])
+
+    def test_houses_on_one_side_only(self):
+        (r,) = self.ranges([(2, 20, 'S'), (4, 60, 'S')])
+        self.assertEqual(self.items(r), [(0x54, 2, 4)])
+        (r,) = self.ranges([(7, 20, 'N')])
+        self.assertEqual(self.items(r), [(0x58, 7, 7)])
+
+    def test_a_side_that_runs_against_the_link(self):
+        # up the north side and back down the south, as a loop road is numbered
+        (r,) = self.ranges([(1, 20, 'N'), (2, 60, 'N'), (3, 100, 'N'), (4, 140, 'N'), (5, 140, 'S'), (6, 100, 'S')])
+        self.assertEqual(self.items(r), [(0x64, 6, 5), (0x68, 1, 4)])
+
+    def test_file_has_one_record_and_row_per_link(self):
+        houses = [(1, 20, 'N'), (3, 60, 'N'), (2, 20, 'S'), (4, 60, 'S')]
+        for fmt in (clarion_format.X08_02, None):
+            e = dict(name='KATU', ladder=(6, 6, 2, 4, 11), ranges=self.ranges(houses) + self.ranges([(9, 200, 'N')]))
+            out, keys, _ = addr_links.addre_mixed([e], lambda e: e['ladder'], addr_links.word_keys,
+                                                  frames.addre_prefix((4800, 1280, -1200, 4080), '14/04/12/01', fmt),
+                                                  frames.addre_df(fmt), 6, 3, fmt=fmt)
+            a = addre_io.Addre(out)
+            recs = [addre_io.parse_name_record(n, a.fmt) for n in a.names]
+            self.assertEqual([(r['flags'], r['name'], addre_io.parse_items(r['items'])) for r in recs],
+                             [(0x18, 'KATU', [(0x54, 2, 4), (0x58, 1, 3)]), (0x19, None, [(0x58, 9, 9)])])
+            rows = [addre_io.parse_range_record(a.srec(i)) for i in range(a.nsrec)]
+            self.assertEqual([(r['rel'], r['flags'], r['lo'], r['hi'], r['name_idx']) for r in rows],
+                             [(0, 0, 1, 4, 0), (0, 0x8000, 9, 9, 1)])
+
+    def test_a_street_with_no_numbers_is_a_plain_row(self):
+        rows = [dict(street='Katu', num='B', letter='', post=40100, town='', lat=62.2402, lon=25.7405)]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        (e,), _ = build_addr_country.place(self.links(), ents)
+        self.assertNotIn('ranges', e)
+        e['ladder'] = (6, 6, 2, 4, 11)
+        fmt = clarion_format.X08_02
+        out, _, _ = addr_links.addre_mixed([e], lambda e: e['ladder'], addr_links.word_keys,
+                                           frames.addre_prefix((4800, 1280, -1200, 4080), '14/04/12/01', fmt),
+                                           frames.addre_df(fmt), 6, 3, fmt=fmt)
+        a = addre_io.Addre(out)
+        self.assertEqual(addre_io.parse_name_record(a.names[0], fmt)['items'], b'')
+        self.assertEqual(a.srec(0)[:8], bytes.fromhex('7f7f0000ffffffff'))
+
+
+class Layout(unittest.TestCase):
+    """addr_resolve's checks of a record's items and rows."""
+
+    def rec(self, *items):
+        return dict(items=b''.join(addre_io.house_item(first, last, side) for side, first, last in items))
+
+    def test_factory_shapes_pass(self):
+        row = dict(rel=0, lo=1, hi=8)
+        self.assertEqual(addr_resolve.layout(self.rec((0x54, 2, 8), (0x58, 1, 5)), [row]), [])
+        self.assertEqual(addr_resolve.layout(self.rec((0x68, 8, 1)), [row]), [])
+        self.assertEqual(addr_resolve.layout(self.rec(), [dict(rel=0x7f7f, lo=0xffff, hi=0xffff)]), [])
+
+    def test_wrong_order_and_wrong_row(self):
+        self.assertEqual(addr_resolve.layout(self.rec((0x58, 1, 5), (0x54, 2, 8)), []), ['items for sides 0x58 0x54'])
+        self.assertEqual(addr_resolve.layout(self.rec((0x54, 2, 8)), [dict(rel=0, lo=2, hi=6)]), ['row 2-6 over items 2-8'])
 
 
 class Colon(unittest.TestCase):

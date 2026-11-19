@@ -3,7 +3,8 @@
 
 An entry is one street of one town: dict(street, name, town, addresses, anchor, low, lat, lon).
 `pick` finds the link its record points at, `address_ranges` splits its house numbers into
-one range per link and side, and `link_refs` writes the reference words.
+one range per link, holding both sides of the road as the factory does, and `link_refs`
+writes the reference words.
 """
 import collections
 import math
@@ -156,8 +157,10 @@ def match_near(cands, addresses, reach):
 
 
 def address_ranges(links, e, reach=None):
-    """(ranges, unmatched addresses). With `reach`, only roads of the name within that many
-    metres of an address count, and an address farther from all of them is unmatched."""
+    """(ranges, unmatched addresses): one range per link with a house on it, its items the
+    right and left side seen along its references. With `reach`, only roads of the name
+    within that many metres of an address count, and an address farther from all of them
+    is unmatched."""
     unmatched = []
     if reach is None:
         cands = links.byname.get(e['name'], ())
@@ -179,23 +182,38 @@ def address_ranges(links, e, reach=None):
     for c, side, along, dist, a in matched:
         if a['num'].isdigit() and int(a['num']):
             R, S, L, run = c
-            grouped[(R['code'][0], R['code'][1], S['at'], L['id'], side)].append((along, dist, int(a['num']), a, c))
+            grouped[(R['code'][0], R['code'][1], S['at'], L['id'])].append((along, dist, int(a['num']), a, side, c))
     out = []
-    for key, rows in grouped.items():
-        R, S, L, run = rows[0][4]
-        nums = [r[2] for r in rows]
-        mean_n = sum(nums) / len(nums); mean_a = sum(r[0] for r in rows) / len(rows)
-        reverse = sum((r[2] - mean_n) * (r[0] - mean_a) for r in rows) < 0
-        first, last = (run[-1], run[0]) if reverse else (run[0], run[-1])
+    for rows in grouped.values():
+        R, S, L, run = rows[0][5]
+        # the record runs the way the link's numbers rise; a side may still fall
+        turn = -1 if falls([(r[0], r[2]) for r in rows]) else 1
+        first, last = (run[0], run[-1])[::turn]
         k, i = first['word'] - R['unit'], last['word'] - R['unit']
-        side = -key[-1] if reverse else key[-1]
-        flag = 0x54 if side > 0 else 0x58
         refs = addre_io.street_refs(k, i, first['role'] != 'vertex', last['role'] != 'vertex')
-        out.append(dict(lo=min(nums), hi=max(nums), side='left' if side > 0 else 'right', side_flag=flag,
+        items = []
+        for left in (False, True):       # the factory holds the right side first
+            part = [r for r in rows if (r[4] * turn > 0) == left]
+            if not part:
+                continue
+            nums = [r[2] for r in part]
+            ends = (min(nums), max(nums))[::-1 if falls([(r[0] * turn, r[2]) for r in part]) else 1]
+            items.append(dict(side='left' if left else 'right', flag=addre_io.side_byte(left, nums),
+                              first=ends[0], last=ends[1], addresses=len(part)))
+        nums = [r[2] for r in rows]
+        out.append(dict(lo=min(nums), hi=max(nums), items=items,
                         la=R['code'][0], lo_word=R['code'][1], refs=refs, shape_at=S['at'], link=L['id'],
                         way=L['way'], label=S['label'], addresses=len(rows), max_metres=round(max(r[1] for r in rows), 1),
-                        points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0]) for r in rows]))
-    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'], r['side_flag'], r['lo'])), unmatched
+                        points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0],
+                                     side='left' if r[4] * turn > 0 else 'right') for r in rows]))
+    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'])), unmatched
+
+
+def falls(rows):
+    """True when the numbers of [(metres along, number)] get smaller along the way."""
+    mean_a = sum(a for a, _ in rows) / len(rows)
+    mean_n = sum(n for _, n in rows) / len(rows)
+    return sum((n - mean_n) * (a - mean_a) for a, n in rows) < 0
 
 
 def pick(links, e, local=False):
@@ -266,23 +284,24 @@ def ladder_first(srecs):
 
 
 def house_items(nums):
-    """A street's odd and even numbers as two whole-street ranges."""
+    """A street's odd and even numbers as two whole-street ranges, for a row that names no
+    link per number; which side each lies on is not known."""
     odd = sorted(n for n in nums if n % 2)
     even = sorted(n for n in nums if not n % 2)
     out = b''
     if odd:
-        out += addre_io.house_item(odd[0], odd[-1], addre_io.SIDE_ODD)
+        out += addre_io.house_item(odd[0], odd[-1], addre_io.SIDE_RIGHT)
     if even:
-        out += addre_io.house_item(even[0], even[-1], addre_io.SIDE_EVEN)
+        out += addre_io.house_item(even[0], even[-1], addre_io.SIDE_LEFT)
     return out
 
 
 def addre_mixed(ents, ladder_of, word_keys, prefix, df, area, ntier, kw=1, fmt=None, shorten=False):
     """(file, keys, name blocks) of an ADDRE file of entries sorted by key.
 
-    An entry with e['ranges'] gets one row per range (continuation flag 0x8000 past the
-    first), any other a generic row to e['link']. word_keys(name) gives [(key, is a later
-    word)]. `shorten` cuts the keys as shortest_keys does."""
+    An entry with e['ranges'] gets one row and one name record per range (continuation flag
+    0x8000 past the first), any other a generic row to e['link']. word_keys(name) gives
+    [(key, is a later word)]. `shorten` cuts the keys as shortest_keys does."""
     cr = 8 + kw + (4 if kw == 2 else 3)
     names, idx_of, range_idx_of = [], {}, {}
     for i, e in enumerate(ents):
@@ -292,7 +311,8 @@ def addre_mixed(ents, ladder_of, word_keys, prefix, df, area, ntier, kw=1, fmt=N
                 idxs.append(len(names))
                 names.append(addre_io.name_record(e['name'] if j == 0 else '', r['la'], r['lo_word'],
                                                   ladder_of(e) if j == 0 else (),
-                                                  addre_io.house_item(r['lo'], r['hi'], r['side_flag']),
+                                                  b''.join(addre_io.house_item(it['first'], it['last'], it['flag'])
+                                                           for it in r['items']),
                                                   refs=r['refs'], flags=0x18 if j == 0 else 0x19, fmt=fmt))
             range_idx_of[i] = idxs
         else:

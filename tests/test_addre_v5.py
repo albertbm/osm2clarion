@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The V05 ADDRE layout of an X08-02 (QY7) card: records, the compressed street block and the header."""
+import os
 import struct
 import sys
 import unittest
@@ -61,6 +62,84 @@ class NameRecord(unittest.TestCase):
     def test_x08_03_record_unchanged(self):
         r = addre_io.name_record('ÞING', 1, 2, (0, 3, 1))
         self.assertEqual(r[-14:], bytes([3, 3, 0, 0, 0, 3, 0, 1]) + 'ÞING'.encode('utf-8') + b'\0')
+
+
+class FactoryItems(unittest.TestCase):
+    """Name records of ADDRE007 on the 2014 QY7 card, items and all."""
+
+    # AAKUNTIE: both sides of one link, the numbers falling along it
+    BOTH = bytes.fromhex('c01f060caeafdaee024001fa03400209065400003a31303a3b3a323a065800003a333a3b3a313a00'
+                         '050400ff0006000600020004000a41414b554e544945')
+    # YLIOPISTONKATU's first two records: a link with houses on its left only, then one on its right
+    LEFT = bytes.fromhex('c01c0606aeafdadf02400e7303400e78065800003a313a3b3a313a00'
+                         '050700ff0006000600020004000b594c494f504953544f4e4b415455')
+    RIGHT = bytes.fromhex('c8100606aeafdadf02400f7003400f75065400003a323a3b3a343a00000000ff')
+    # AALLONHARJA, numbered 1, 2, 3 without an odd and an even side
+    MIXED = bytes.fromhex('c816060caf6cdb3c024002a0034002a5066400003a333a3b3a333a00066800003a343a3b3a343a00000000ff')
+    ROWS = [('0006000600020004000a000000000001000a00000100', BOTH),
+            ('0006000600020004000b00000000000100010013c19b', LEFT),
+            ('0006000600020004000b00008000000200040013c19c', RIGHT)]
+
+    def test_items(self):
+        got = {n: addre_io.parse_items(addre_io.parse_name_record(getattr(self, n), V5)['items'])
+               for n in ('BOTH', 'LEFT', 'RIGHT', 'MIXED')}
+        self.assertEqual(got, dict(BOTH=[(0x54, 10, 2), (0x58, 3, 1)], LEFT=[(0x58, 1, 1)], RIGHT=[(0x54, 2, 4)],
+                                   MIXED=[(0x64, 3, 3), (0x68, 4, 4)]))
+
+    def test_records_rebuild(self):
+        for raw in (self.BOTH, self.LEFT, self.RIGHT, self.MIXED):
+            f = addre_io.parse_name_record(raw, V5)
+            items = b''.join(addre_io.house_item(first, last, side) for side, first, last in addre_io.parse_items(f['items']))
+            self.assertEqual(addre_io.name_record(f['name'] or '', f['lat'], f['lon'], f['levels'], items, f['refs'],
+                                                  f['flags'], fmt=V5), raw)
+
+    def test_a_row_spans_both_sides(self):
+        # the stored row opens on its ladder; its numbers are the lowest and highest of the items
+        for row, raw in self.ROWS:
+            ladder, rel, flags, lo, hi = struct.unpack_from('>10s4H', bytes.fromhex(row))
+            nums = [n for _, first, last in addre_io.parse_items(addre_io.parse_name_record(raw, V5)['items'])
+                    for n in (first, last)]
+            self.assertEqual((rel, lo, hi), (0, min(nums), max(nums)))
+
+    def test_side_byte(self):
+        self.assertEqual([addre_io.side_byte(left, nums) for left, nums in
+                          ((False, [2, 4]), (True, [1]), (False, [3, 4]), (True, [1, 2, 3]))], [0x54, 0x58, 0x64, 0x68])
+
+
+@unittest.skipUnless(os.environ.get('OSM2CLARION_FACTORY_ADDRE'), 'set OSM2CLARION_FACTORY_ADDRE to an inflated factory ADDRE file')
+class FactoryFile(unittest.TestCase):
+    """The layout the writer follows, on every record of a factory file of either format."""
+
+    def test_layout(self):
+        a = addre_io.Addre(Path(os.environ['OSM2CLARION_FACTORY_ADDRE']).read_bytes())
+        rows = {}
+        for i in range(a.nsrec):
+            r = addre_io.parse_range_record(a.srec(i))
+            rows.setdefault(r['name_idx'], []).append(r)
+        street, plain = [], 0
+        for i, raw in enumerate(a.names):
+            f = addre_io.parse_name_record(raw, a.fmt)
+            items = addre_io.parse_items(f['items'])
+            self.assertEqual(b''.join(addre_io.house_item(first, last, side) for side, first, last in items), f['items'])
+            self.assertIn([side & 0x0c for side, _, _ in items], ([], [4], [8], [4, 8]))
+            self.assertEqual(f['flags'], 0x19 if f['name'] is None else 0x18)
+            if f['name'] is not None:
+                self.assertEqual(street, sorted(street))     # a street's records run in number order
+                street = []
+            nums = [n for _, first, last in items for n in (first, last)]
+            for side, first, last in items:
+                if side & 0x30 == 0x10:
+                    self.assertEqual(first % 2, last % 2)
+            for r in rows[i]:
+                if items:
+                    self.assertEqual((r['rel'], r['lo'], r['hi']), (0, min(nums), max(nums)))
+                    self.assertEqual(r['flags'] & 0x8000, 0 if f['name'] is not None else 0x8000)
+                else:
+                    self.assertEqual((r['rel'], r['lo'], r['hi'], f['name'] is None), (0x7f7f, 0xffff, 0xffff, False))
+                    plain += 1
+            if items:
+                street.append((min(nums), max(nums)))
+        self.assertTrue(plain)
 
 
 class File(unittest.TestCase):

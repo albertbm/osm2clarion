@@ -149,8 +149,11 @@ addresses inside the area's relations:
   lists MANNERHEIMINTIE and MANNERHEIMVÄGEN. The factory labels such a road
   `MANNERHEIMINTIE:MANNERHEIMVÄGEN`; ours carry OSM's `name` alone, so the name not on the
   label is left out and listed in `addr_other_language.json`;
-- a street gets one row per road link and side with the house numbers along it, as
-  `--house-ranges ALL` writes for Iceland, or a plain row when it has no numbers;
+- a street gets one row per road link with the house numbers along it, as
+  `--house-ranges ALL` writes for Iceland, or a plain row when it has no numbers. A row
+  holds both sides of its link, the right side first, each as the number at the link's
+  first end and the number at its last. That is the factory's layout, read off the Finnish
+  files of the 2014 QY7 and QY8 cards;
 - a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
 - the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.
 

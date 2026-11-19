@@ -414,21 +414,42 @@ def assemble(prefix, keys, srecs, names, df, srec_pre, cr, kw, area, ntier,
     return bytes(out), blocks
 
 
-SIDE_ODD = 0x54        # 'T' in the factory's own side byte
-SIDE_EVEN = 0x58       # 'X'
+SIDE_RIGHT = 0x54      # of the record's own direction, first reference to last
+SIDE_LEFT = 0x58
+SIDE_MIXED = 0x30      # xor, giving 0x64 and 0x68: a side that holds odd and even numbers
 
 
-def house_item(lo, hi, side=SIDE_ODD):
-    """One house-number range. The factory writes them as plain text, ':13:;:5:'.
+def house_item(first, last, side=SIDE_RIGHT):
+    """One side's house numbers along a record, as the factory's plain text ':13:;:5:'.
 
-    KIWI 11.A.2.4.4.4 packs a range as a binary (st_adrs, ed_adrs) pair under 'STAD';
-    Clarion writes the decimal text instead, so this follows the file. `side` is KIWI's
-    Street Address Flag: bits 3-2 the left side and bits 1-0 the right, 1 odd, 2 even,
-    3 both. The factory uses 0x54 and 0x58, left-odd and left-even.
+    `first` is the number at the record's first reference and `last` the one at its last,
+    so a side can run downwards. Measured on the Finnish files of the 2014 QY7 and QY8
+    cards against register house positions: 0x54 lies right of the direction the
+    references run in and 0x58 left (97%), and the first number is the one nearer the
+    first reference (99%). A record with both sides holds the 0x54 item first. Neither
+    byte says odd or even. 0x64 and 0x68 are rare (4,267 of 2.5 million items) and every
+    item that runs from an odd number to an even one has them.
     """
-    s = (':%d:;:%d:' % (lo, hi)).encode('ascii')
+    s = (':%d:;:%d:' % (first, last)).encode('ascii')
     s += b'\0' * (len(s) % 2)
     return bytes([(4 + len(s)) // 2, side, 0, 0]) + s
+
+
+def side_byte(left, numbers):
+    """The side byte of the numbers on one side of a record."""
+    mixed = len({n % 2 for n in numbers}) > 1
+    return (SIDE_LEFT if left else SIDE_RIGHT) ^ (SIDE_MIXED if mixed else 0)
+
+
+def parse_items(items):
+    """[(side, first, last)] of a name record's house-number items."""
+    out, p = [], 0
+    while p < len(items) and items[p]:
+        n = items[p] * 2
+        first, last = items[p + 4:p + n].rstrip(b'\0').decode('ascii').strip(':').split(':;:')
+        out.append((items[p + 1], int(first), int(last)))
+        p += n
+    return out
 
 
 def parcel_point(lat, lon):

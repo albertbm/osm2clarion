@@ -2285,15 +2285,15 @@ class AddreRecords(unittest.TestCase):
     ANDORRA_SREC_0 = bytes.fromhex('7f7f4000ffffffff000001c8000100020000ffffffff')
 
     def test_name_record_matches_andorra(self):
-        from addre_io import SIDE_EVEN, SIDE_ODD, house_item, name_record
-        items = house_item(13, 5, SIDE_ODD) + house_item(10, 2, SIDE_EVEN)
+        from addre_io import SIDE_LEFT, SIDE_RIGHT, house_item, name_record
+        items = house_item(13, 5, SIDE_RIGHT) + house_item(10, 2, SIDE_LEFT)
         r = name_record('AVINGUDA CARLEMANY', 0x9fec, 0xcecd, (1, 3, 0), items,
                         refs=((2, 0x40, 0x213b), (3, 0x40, 0x2143)))
         self.assertEqual(r, self.ANDORRA_NAME_0)
 
     def test_continuation_record_has_no_ladder(self):
-        from addre_io import SIDE_EVEN, SIDE_ODD, house_item, name_record
-        items = house_item(19, 15, SIDE_ODD) + house_item(16, 12, SIDE_EVEN)
+        from addre_io import SIDE_LEFT, SIDE_RIGHT, house_item, name_record
+        items = house_item(19, 15, SIDE_RIGHT) + house_item(16, 12, SIDE_LEFT)
         r = name_record('', 0x9fec, 0xcecd, (), items,
                         refs=((2, 0x00, 0x2137), (3, 0x40, 0x213b)), flags=0x19)
         self.assertEqual(r, bytes.fromhex(
@@ -2329,12 +2329,17 @@ class AddreRecords(unittest.TestCase):
         self.assertEqual(len(r), SREC)
         self.assertEqual(r[-2:], b'\x00\x02')
 
+    def test_items_read_back(self):
+        from addre_io import parse_items, parse_name_record
+        self.assertEqual(parse_items(parse_name_record(self.ANDORRA_NAME_0)['items']), [(0x54, 13, 5), (0x58, 10, 2)])
+        self.assertEqual(parse_items(b''), [])
+
     def test_house_item_pads_to_a_word(self):
-        from addre_io import SIDE_ODD, house_item
-        self.assertEqual(house_item(13, 5, SIDE_ODD),
-                         bytes([6, SIDE_ODD, 0, 0]) + b':13:;:5:')
-        self.assertEqual(house_item(19, 15, SIDE_ODD),
-                         bytes([7, SIDE_ODD, 0, 0]) + b':19:;:15:\x00')
+        from addre_io import SIDE_RIGHT, house_item
+        self.assertEqual(house_item(13, 5, SIDE_RIGHT),
+                         bytes([6, SIDE_RIGHT, 0, 0]) + b':13:;:5:')
+        self.assertEqual(house_item(19, 15, SIDE_RIGHT),
+                         bytes([7, SIDE_RIGHT, 0, 0]) + b':19:;:15:\x00')
 
 
 class AddreParcelWords(unittest.TestCase):

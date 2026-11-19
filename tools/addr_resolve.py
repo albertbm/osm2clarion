@@ -12,6 +12,9 @@ own tile, finds that record, and checks every group:
     flag       0x40 on a graph node (shape start or link end), 0x00 on an interior vertex
     order      tags 2/3 ascend, 4/5 descend, between hops; one shape per run
     hops       a tag 0x40/0x50/0x60/0x70 moves one parcel N/E/S/W and v counts there
+    link       a record of two groups spans one link, with no node between its ends
+    items      at most one house-number item a side, the right side (0x54) first
+    row        a range row's low and high numbers are those of its record's items
 
 Reads tiles with clarion_tile.read_tile, so it is for our own cards: whole parcels only.
 --only checks the named files, for a card that keeps factory address files beside ours.
@@ -105,6 +108,10 @@ def resolve(card, rec, street):
         parts = {p.strip().upper() for p in shape_index.label_name(s['label']).split(':')}
         if street.upper() not in parts: bad.append('group %s: shape label %r' % (g, s['label']))
         if (flag == 0x40) != (role[0] in ('start', 'end')): bad.append('group %s: flag 0x%02x on a %s' % (g, flag, role[0]))
+    if len(out) == 2 and len(rec['refs']) == 2 and out[0][1]['shape'] == out[1][1]['shape'] and s:
+        lo, hi = sorted(o['word'] for _, o in out)
+        if any(lo < w < hi and r[0] != 'vertex' for w, r in s['points'].items()):
+            bad.append('the two groups span more than one link')
     for sg in segs:
         for (ga, oa), (gb, ob) in zip(sg, sg[1:]):
             if oa['shape'] != ob['shape']: bad.append('groups %s %s: two shapes' % (ga, gb))
@@ -115,6 +122,23 @@ def resolve(card, rec, street):
     return out, bad
 
 
+def layout(rec, rows):
+    """Failures of a name record's house-number items and of the range rows that point at it."""
+    bad = []
+    try:
+        items = addre_io.parse_items(rec['items'])
+    except ValueError:
+        return ['items do not parse: %s' % rec['items'].hex()]
+    sides = [side & 0x0c for side, _, _ in items]
+    if sides not in ([], [4], [8], [4, 8]):
+        bad.append('items for sides %s' % ' '.join('0x%02x' % side for side, _, _ in items))
+    nums = [n for _, first, last in items for n in (first, last)]
+    for r in rows:
+        if r['rel'] != 0x7f7f and items and (r['lo'], r['hi']) != (min(nums), max(nums)):
+            bad.append('row %d-%d over items %d-%d' % (r['lo'], r['hi'], min(nums), max(nums)))
+    return bad
+
+
 def main(argv):
     if not argv: sys.exit(__doc__)
     card = Card(argv[0]); verbose = '--verbose' in argv
@@ -122,11 +146,16 @@ def main(argv):
     total = ok = 0
     for fn, d in card.addre(only).items():
         a = addre_io.Addre(d); last = None; n = good = 0
-        for r in a.names:
+        rows = {}
+        for i in range(a.nsrec):
+            row = addre_io.parse_range_record(a.srec(i))
+            rows.setdefault(row['name_idx'], []).append(row)
+        for i, r in enumerate(a.names):
             rec = addre_io.parse_name_record(r, a.fmt)
             street = rec['name'] if rec['name'] is not None else last
             last = street
             out, bad = resolve(card, rec, street)
+            bad += layout(rec, rows.get(i, ()))
             n += 1; good += not bad
             if bad or verbose:
                 print('  %-24s %04x %04x %s' % (street, rec['lat'], rec['lon'], ' '.join('(%d,0x%02x,%d)' % g for g in rec['refs'])))

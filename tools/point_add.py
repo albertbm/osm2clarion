@@ -95,7 +95,7 @@ def main(argv=None):
         refs = tuple(struct.unpack_from('>BBH', rec, 8 + 4 * i) for i in range(nref))
         assert (sla, slo) == (lw, ow), ('street shape is in another parcel', hex(sla), hex(slo), hex(lw), hex(ow))
         house = int(a.house)
-        items = addre_io.house_item(house, house, addre_io.SIDE_EVEN if house % 2 == 0 else addre_io.SIDE_ODD)
+        items = addre_io.house_item(house, house, addre_io.SIDE_LEFT if house % 2 == 0 else addre_io.SIDE_RIGHT)
     tels = list(p.tels)
     tel_idx = None
     if a.tel:

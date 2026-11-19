@@ -5,23 +5,24 @@
 The card keeps its ICODE area tree, so nothing but street search changes. Two ways to place
 an address in that tree:
 
+- the area names none: each address goes to the kunta and settlement the card's own factory
+  street file points to (settle.py), from the municipality number a register row carries.
+  This is what the Finland profile does, for one town or the whole country;
 - the area names a municipality ([areas.NAME] municipality): every record carries the ladder
   the tree has for it, and the settlement under it that the address's town names (the one
-  named like the municipality when it names none);
-- it names none: the whole country, each address in the kunta and settlement the card's own
-  factory street file points to (settle.py), which needs the municipality number a register
-  row carries.
+  named like the municipality when it names none).
 
 The addresses come from [addr] source: "osm" reads the pbf, "register" the CSV at [data]
 addresses in the [addr] register layout. Only addresses inside the area's relations are read,
 since only those roads were rebuilt. A register row with a Swedish street name as well
 (Ryhti's street_swe) gives a street under each name, as the factory file lists both.
 
-A street gets one row per road link and side with the house numbers found along it, or a
-plain row when it has no numbers. Each row points at a link of the street's own drawn shape
-in the rebuilt tile, through the shape index rd_build.py --shape-index wrote. A street with
-no road of its name in the tile is left out and listed in addr_skipped.json; one whose road
-carries its name in the other language goes to addr_other_language.json.
+A street gets one row per road link with the house numbers found along it, both sides of
+the road in the one row as the factory writes them, or a plain row when it has no numbers.
+Each row points at a link of the street's own drawn shape in the rebuilt tile, through the
+shape index rd_build.py --shape-index wrote. A street with no road of its name in the tile
+is left out and listed in addr_skipped.json; one whose road carries its name in the other
+language goes to addr_other_language.json.
 The country's other address files (ZCODE, INTER, POINT) are not written and stay the card's.
 
     build_addr_country.py OUTDIR --profile NAME --area AREA --card CARD.img --shapes TILE.shapes.json
@@ -168,6 +169,7 @@ def place(links, ents, reach=None):
                                     rows=e['addresses']))
                 continue
             e['link'] = addr_links.link_refs(e, *got)
+            e['nums'] = []      # a factory row with no link per number holds no numbers
         placed.append(e)
     return placed, skipped
 

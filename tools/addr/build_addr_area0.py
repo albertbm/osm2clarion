@@ -495,7 +495,7 @@ def main_area(a):
         print('range streets %d, ranges %d, addresses %d, fallback streets %d, skipped streets %d (%d addresses)' % (
             len(ranged), sum(len(e['ranges']) for e in ranged), sum(e['n'] for e in ranged),
             len(fallback), len(skipped), sum(e['n'] for e in skipped)))
-        print('  side flags: left 0x54, right 0x58 relative to the emitted reference direction')
+        print('  side bytes: right 0x54, left 0x58 of the direction the references run in')
         print('ADDRE001 %d B, %d keys, %d name blocks' % (len(addre), len(keys), len(blocks)))
         return
     how = collections.Counter(e['link']['how'] for e in ents)
