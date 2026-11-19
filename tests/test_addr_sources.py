@@ -104,7 +104,12 @@ class TestRyhti(unittest.TestCase):
 
 
 class TestDispatch(unittest.TestCase):
-    def test_addr_csv_follows_format(self):
+    def test_addr_csv_follows_source(self):
+        for addr in ({'format': 'ryhti'}, {'source': 'register', 'register': 'ryhti'}):
+            with self.subTest(addr=addr):
+                self.check(addr)
+
+    def check(self, addr):
         import addr_csv
         with tempfile.TemporaryDirectory() as d:
             csvp = os.path.join(d, 'r.csv')
@@ -113,7 +118,7 @@ class TestDispatch(unittest.TestCase):
                 w.writerow(HEADER)
                 w.writerow(['k1', 'b1', 'Kauppakatu', '', '12', '', 'a', '', '40100', 'JYVÄSKYLÄ', '179', '62.24', '25.75'])
             cfg = os.path.join(d, 'c.json')
-            Path(cfg).write_text(json.dumps({'addr': {'format': 'ryhti', 'box': list(BOX)},
+            Path(cfg).write_text(json.dumps({'addr': dict(addr, box=list(BOX)),
                                              'data': {'addresses': csvp}}))
             old = os.environ.get('O2C_CONFIG')
             os.environ['O2C_CONFIG'] = cfg
@@ -134,6 +139,39 @@ class TestFinlandProfile(unittest.TestCase):
         self.assertEqual(raw['addr']['format'], 'osm')
         local = tomllib.loads((ROOT / 'examples' / 'finland.local.toml').read_text(encoding='utf-8'))
         self.assertEqual(local['addr']['format'], 'ryhti')
+
+
+class TestSource(unittest.TestCase):
+    def test_new_keys(self):
+        src = addr_sources.source
+        self.assertEqual(src({'source': 'osm'}), ('osm', None))
+        self.assertEqual(src({'source': 'register', 'register': 'ryhti'}), ('register', 'ryhti'))
+        self.assertEqual(src({'source': 'register', 'register': 'stadfangaskra'}), ('register', 'stadfangaskra'))
+
+    def test_old_format_key_still_reads(self):
+        src = addr_sources.source
+        self.assertEqual(src({'format': 'osm'}), ('osm', None))
+        self.assertEqual(src({'format': 'ryhti'}), ('register', 'ryhti'))
+        self.assertEqual(src({'format': 'stadfangaskra'}), ('register', 'stadfangaskra'))
+        self.assertEqual(src({}, default='stadfangaskra'), ('register', 'stadfangaskra'))
+        self.assertEqual(addr_sources.layout({'source': 'osm'}), 'osm')
+        self.assertEqual(addr_sources.layout({'format': 'ryhti'}), 'ryhti')
+
+    def test_refuses_what_it_cannot_read(self):
+        src = addr_sources.source
+        for cfg in ({}, {'source': 'register'}, {'source': 'register', 'register': 'dvv'}, {'source': 'csv'},
+                    {'format': 'dvv'}, {'source': 'osm', 'format': 'osm'}):
+            with self.assertRaises(SystemExit, msg=cfg):
+                src(cfg)
+
+
+class TestIcelandProfile(unittest.TestCase):
+    def test_reads_as_before(self):
+        # the same register as the old format = "stadfangaskra", so the same rows
+        import tomllib
+        raw = tomllib.loads((ROOT / 'profiles' / 'iceland.toml').read_text(encoding='utf-8'))
+        self.assertEqual(addr_sources.source(raw['addr']), ('register', 'stadfangaskra'))
+        self.assertEqual(addr_sources.layout(raw['addr']), 'stadfangaskra')
 
 
 if __name__ == '__main__':

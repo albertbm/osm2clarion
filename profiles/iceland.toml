@@ -226,7 +226,8 @@ SELTJARNARNES = { la = "0xb01f", lo = "0xc30c", x = 385, y = 742 }
 [addr]
 # poc_streets, poc_anchor and [poicap] addr_only_default are only for the single-street test
 # build; see examples/iceland.local.toml.
-format = "stadfangaskra"
+source = "register"          # the address CSV at [data] addresses
+register = "stadfangaskra"   # in the layout of Iceland's register, Staðfangaskrá
 box = [63.8, 64.4, -22.8, -20.85]
 alphabet = "AÁBDÐEÉFGHIÍJKLMNOÓPRSTUÚVXYÝÞÆÖ"
 towns_expected = ["Akranes", "Eyrarbakki", "Garðabær", "Garðabær (Álftanes)", "Garður", "Grindavík", "Hafnarfjörður", "Hveragerði", "Keflavíkurflugvöllur", "Kjós", "Kópavogur", "Mosfellsbær", "Reykjanesbær", "Reykjavík", "Sandgerði", "Selfoss", "Seltjarnarnes", "Stokkseyri", "Vogar", "Þorlákshöfn", "Ölfus"]

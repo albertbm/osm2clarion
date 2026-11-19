@@ -2,11 +2,11 @@
 """Read an address CSV and its postcode register, filtered to a box or a municipality set.
 
 The column names and the box come from config['addr'] - this module reads the Icelandic
-Stadfangaskra format (config['addr']['format'] == 'stadfangaskra': columns N_HNIT_WGS84,
+Stadfangaskra register (source = "register", register = "stadfangaskra": columns N_HNIT_WGS84,
 E_HNIT_WGS84, HEITI_NF, HEITI_TGF, SVFNR, HUSNR, BOKST, POSTNR; a ';'-delimited postcode
-register). 'osm' (the pbf at [data] pbf) and 'ryhti' (a Ryhti CSV at [data] addresses, Syke,
-CC BY 4.0) come from addr_sources and yield the same dicts, plus a 'town' key. A different
-country's register would need its own reader.
+register). source = "osm" (the pbf at [data] pbf) and register = "ryhti" (a Ryhti CSV at
+[data] addresses, Syke, CC BY 4.0) come from addr_sources and yield the same dicts, plus a
+'town' key. A different country's register would need its own reader.
 """
 import csv
 import json
@@ -34,7 +34,7 @@ def _box():
 
 
 def _format():
-    return _config()['addr'].get('format', 'stadfangaskra')
+    return addr_sources.layout(_config()['addr'], default='stadfangaskra')
 
 
 def towns(path=None):
@@ -70,7 +70,7 @@ def addresses(path=None, box=None, municipalities=None):
                                                 municipalities)
         return
     if fmt != 'stadfangaskra':
-        raise SystemExit('unknown [addr] format %r' % fmt)
+        raise SystemExit('no reader for [addr] register %r' % fmt)
     p = path or os.path.expanduser(_config_data()['addresses'])
     if municipalities is None:
         lo_lat, hi_lat, lo_lon, hi_lon = box or _box()

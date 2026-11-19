@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Address readers for the formats other than Staðfangaskrá, as the dicts addr_csv yields.
+"""Address readers for the formats other than Staðfangaskrá, as the dicts addr_csv yields,
+and the profile setting that picks one.
 
 osm: addr:street and addr:housenumber (addr:postcode, addr:city where present) on nodes,
 closed building ways and multipolygon relations of a pbf. A building's point is the mean of
@@ -12,6 +13,37 @@ import csv
 import re
 
 _NUM = re.compile(r'^\s*(\d+)\s*([^\W\d_])?\s*(?:[-–/].*)?$')
+
+
+REGISTERS = ('stadfangaskra', 'ryhti')     # the CSV layouts a register file can have
+
+
+def source(cfg, default=None):
+    """('osm', None) or ('register', layout) from an [addr] table.
+
+    `source = "register"` takes `register = LAYOUT`, the file being [data] addresses;
+    `source = "osm"` reads the pbf. The older `format = "osm" | LAYOUT` still reads.
+    `default` is the old-style format to assume when the table sets neither."""
+    if 'source' in cfg and 'format' in cfg:
+        raise SystemExit('[addr] sets both source and format; keep source (and register), drop format')
+    if 'source' not in cfg:
+        fmt = cfg.get('format', default)
+        if fmt is None:
+            raise SystemExit('[addr] sets no source ("register" or "osm")')
+        cfg = dict(source='osm') if fmt == 'osm' else dict(source='register', register=fmt)
+    if cfg['source'] == 'osm':
+        return 'osm', None
+    if cfg['source'] != 'register':
+        raise SystemExit('[addr] source %r: use "register" or "osm"' % cfg['source'])
+    if cfg.get('register') not in REGISTERS:
+        raise SystemExit('[addr] register %r: one of %s' % (cfg.get('register'), ', '.join(REGISTERS)))
+    return 'register', cfg['register']
+
+
+def layout(cfg, default=None):
+    """'osm' or the register's CSV layout: the one name a reader switches on."""
+    kind, reg = source(cfg, default)
+    return reg or kind
 
 
 def split_housenumber(text):
