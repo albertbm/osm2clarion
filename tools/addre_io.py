@@ -165,7 +165,7 @@ class Addre:
         self.tail_off = t
         self.blocks = []
         o = t + 4
-        while True:
+        while o + 12 <= len(d):     # the table can end flush with the file, with no zero entry
             st, cw, uw = struct.unpack_from('>III', d, o)
             if cw == 0:
                 break

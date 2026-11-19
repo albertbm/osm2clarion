@@ -177,6 +177,15 @@ class File(unittest.TestCase):
         self.assertEqual(a.srec(len(rows) - 1), rows[-1])
 
 
+    def test_block_table_that_ends_with_the_file(self):
+        # 21 name blocks: the table is 256 bytes exactly and no zero entry follows it
+        out, keys, rows, names, pre = card(21 * addre_io.NAMES_PER_BLOCK)
+        tail = addre_io.unaddr(struct.unpack_from('>I', out, addre_io.unaddr(struct.unpack_from('>I', out, 0x800 + 42)[0]) + 0x92)[0])
+        self.assertEqual(len(out) - tail, 256)
+        a = addre_io.Addre(out)
+        self.assertEqual((len(a.blocks), a.names), (21, names))
+
+
 class Keys(unittest.TestCase):
     def test_shortest(self):
         # ADDRE014 on the QY7 card: AEULE, AEULEGRABEN, AEULESTRASSE, AEULEWEG, AKMEIN
