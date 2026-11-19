@@ -115,6 +115,16 @@ class Place(unittest.TestCase):
         self.assertEqual([(s['street'], s['addresses']) for s in skipped], [('POLKU', 1)])
 
 
+class Colon(unittest.TestCase):
+    def test_a_name_with_a_colon_is_left_out(self):
+        rows = [dict(street='Kaarle IX:n katu', num='1', letter='', post=100, town='', lat=60.45, lon=22.27)]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        for e in ents:
+            e['ladder'] = (6, 1, 1, 0)
+        placed, skipped = build_addr_country.place(addr_links.Links([]), ents, addr_links.NAME_REACH)
+        self.assertEqual((placed, [s['why'][:8] for s in skipped]), ([], ['a colon ']))
+
+
 class Near(unittest.TestCase):
     """The by-name grid and numpy matching a whole country uses give what the plain walk gives."""
 

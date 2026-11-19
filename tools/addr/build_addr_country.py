@@ -149,6 +149,13 @@ def place(links, ents, reach=None):
     road of the name that close to an address counts (a whole country has many of each name)."""
     placed, skipped = [], []
     for e in ents:
+        if ':' in e['name']:
+            # a label reads a colon as the break between two names; the factory label
+            # writes KAARLE IX'N KATU for the street KAARLE IX:N KATU, ours keep the colon
+            skipped.append(dict(street=e['name'], town=e['town'], ladder=e['ladder'], addresses=e['n'],
+                                lat=e['lat'], lon=e['lon'], why='a colon in the name, which the road label '
+                                'reads as two names', rows=e['addresses']))
+            continue
         ranges, e['unmatched'] = addr_links.address_ranges(links, e, reach)
         if ranges:
             e['ranges'] = sorted(ranges, key=lambda r: (r['lo'], r['hi']))    # the factory's order
