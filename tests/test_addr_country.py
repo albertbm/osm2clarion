@@ -13,7 +13,9 @@ sys.path.insert(0, str(ROOT / 'tools' / 'addr'))
 import addr_links
 import addre_io
 import build_addr_country
+import clarion_format
 import icode_io
+import settle
 
 
 def icode(codec='latin-1'):
@@ -111,6 +113,83 @@ class Place(unittest.TestCase):
         self.assertEqual([e['name'] for e in placed], ['KATU'])
         self.assertEqual([(r['lo'], r['hi'], r['link']) for r in placed[0]['ranges']], [(3, 7, 1), (31, 35, 2)])
         self.assertEqual([(s['street'], s['addresses']) for s in skipped], [('POLKU', 1)])
+
+
+class Near(unittest.TestCase):
+    """The by-name grid and numpy matching a whole country uses give what the plain walk gives."""
+
+    def links(self, far=False):
+        lat, lon = 62.2401, 25.7401
+        recs = []
+        for k, (la0, lo0) in enumerate([(lat, lon)] + ([(lat + 1.0, lon)] if far else [])):
+            pts = [dict(word=55 + 5 * i, link=1, role=r, lon=lo0 + 0.002 * i, lat=la0)
+                   for i, r in enumerate(('start', 'vertex', 'end'))]
+            recs.append(dict(code=list(addre_io.parcel_words(la0, lo0 + 0.001)), unit=22,
+                             shapes=[dict(label='1=KATU', at=48 + k, links=[dict(id=1, way=7)], points=pts)]))
+        return recs
+
+    def rows(self, nums, lat=62.2402):
+        return [dict(street='Katu', num=str(n), letter='', post=40100, town='', lat=lat + 0.00005 * (n % 2) - 0.0001,
+                     lon=25.7401 + 0.0003 * n) for n in nums]
+
+    def test_same_ranges_as_the_plain_walk(self):
+        ents = lambda: build_addr_country.entries(self.rows((1, 2, 3, 4, 5, 8, 9)), {'X': 0}, 'X', lambda s: s)[0]
+        plain = build_addr_country.place(addr_links.Links(self.links()), ents())[0]
+        near = addr_links.Links([], named_only=True)
+        for R in self.links(far=True):
+            near.add(R, named_only=True)
+        local = build_addr_country.place(near, ents(), addr_links.NAME_REACH)[0]
+        strip = lambda es: [[{k: v for k, v in r.items() if k != 'points'} for r in e['ranges']] for e in es]
+        self.assertEqual(strip(local), strip(plain))
+        self.assertEqual([p['along'] for p in local[0]['ranges'][0]['points']],
+                         [p['along'] for p in plain[0]['ranges'][0]['points']])
+
+    def test_a_road_of_the_name_out_of_reach_is_not_used(self):
+        near = addr_links.Links([], named_only=True)
+        for R in self.links(far=True)[1:]:          # only the road 110 km north
+            near.add(R, named_only=True)
+        ents, _ = build_addr_country.entries(self.rows((1, 2)), {'X': 0}, 'X', lambda s: s)
+        placed, skipped = build_addr_country.place(near, ents, addr_links.NAME_REACH)
+        self.assertEqual((placed, [s['street'] for s in skipped]), ([], ['KATU']))
+        self.assertEqual(near.grid, {})
+
+    def test_far_address_is_unmatched(self):
+        near = addr_links.Links([], named_only=True)
+        for R in self.links():
+            near.add(R, named_only=True)
+        ents, _ = build_addr_country.entries(self.rows((1,)) + self.rows((3,), lat=62.30), {'X': 0}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(near, ents, addr_links.NAME_REACH)
+        self.assertEqual([(r['lo'], r['hi']) for r in placed[0]['ranges']], [(1, 1)])
+        self.assertEqual([a['num'] for a in placed[0]['unmatched']], ['3'])
+
+
+class Keys(unittest.TestCase):
+    def test_a_name_with_no_letters_has_no_key(self):
+        self.assertEqual(addr_links.word_keys(''), [])
+        self.assertEqual(addr_links.word_keys(' '), [])
+
+
+class Bilingual(unittest.TestCase):
+    def test_a_street_under_both_names(self):
+        fold = settle.folder(clarion_format.X08_02)
+        rows = [dict(street='Mannerheimintie', street_swe='Mannerheimvägen', num='1', post=100, lat=60.17, lon=24.94),
+                dict(street='Kauppakatu', street_swe='', num='2', post=100, lat=60.17, lon=24.95),
+                dict(street='Iso-Roobertinkatu', street_swe='Iso Roobertinkatu', num='3', post=100, lat=60.16, lon=24.94)]
+        ents, _ = build_addr_country.group(rows, lambda r: ('HELSINKI', (6, 4, 4, 3, 1)), lambda s: s,
+                                           lambda r: build_addr_country.names_of(r, fold))
+        self.assertEqual([(e['name'], e['n']) for e in ents],
+                         [('ISO-ROOBERTINKATU', 1), ('KAUPPAKATU', 1), ('MANNERHEIMINTIE', 1), ('MANNERHEIMVÄGEN', 1)])
+        self.assertEqual({e['ladder'] for e in ents}, {(6, 4, 4, 3, 1)})
+
+    def test_name_on_the_other_language_label(self):
+        fold = settle.folder(clarion_format.X08_02)
+        lad = (6, 4, 4, 3, 1)
+        r1 = dict(street='Kaupungintalonkatu', street_swe='Rådhusgatan')
+        r2 = dict(street='Uusikatu', street_swe='')
+        skipped = [dict(street='KAUPUNGINTALONKATU', ladder=lad, rows=[r1]), dict(street='UUSIKATU', ladder=lad, rows=[r2])]
+        missing, other = build_addr_country.other_language(skipped, [dict(name='RÅDHUSGATAN', ladder=lad)],
+                                                           lambda s: s, fold)
+        self.assertEqual(([m['street'] for m in missing], [o['street'] for o in other]), (['UUSIKATU'], ['KAUPUNGINTALONKATU']))
 
 
 if __name__ == '__main__':

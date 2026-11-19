@@ -132,15 +132,6 @@ class TestDispatch(unittest.TestCase):
                     os.environ['O2C_CONFIG'] = old
 
 
-class TestFinlandProfile(unittest.TestCase):
-    def test_default_is_osm(self):
-        import tomllib
-        raw = tomllib.loads((ROOT / 'profiles' / 'finland.toml').read_text(encoding='utf-8'))
-        self.assertEqual(raw['addr']['format'], 'osm')
-        local = tomllib.loads((ROOT / 'examples' / 'finland.local.toml').read_text(encoding='utf-8'))
-        self.assertEqual(local['addr']['format'], 'ryhti')
-
-
 class TestSource(unittest.TestCase):
     def test_new_keys(self):
         src = addr_sources.source
@@ -165,11 +156,24 @@ class TestSource(unittest.TestCase):
                 src(cfg)
 
 
-class TestIcelandProfile(unittest.TestCase):
-    def test_reads_as_before(self):
-        # the same register as the old format = "stadfangaskra", so the same rows
+class TestProfiles(unittest.TestCase):
+    def raw(self, name):
         import tomllib
-        raw = tomllib.loads((ROOT / 'profiles' / 'iceland.toml').read_text(encoding='utf-8'))
+        return tomllib.loads((ROOT / name).read_text(encoding='utf-8'))
+
+    def test_finland_reads_the_ryhti_register(self):
+        raw = self.raw('profiles/finland.toml')
+        self.assertEqual(addr_sources.source(raw['addr']), ('register', 'ryhti'))
+        self.assertTrue(raw['data']['addresses'].startswith('build/'))
+        self.assertNotIn('municipality', raw['addr'])
+        self.assertEqual(raw['areas']['jyvaskyla']['municipality'], 'JYVÄSKYLÄ')
+        self.assertNotIn('municipality', raw['areas']['finland'])
+        local = self.raw('examples/finland.local.toml')
+        self.assertEqual(addr_sources.source(local['addr']), ('osm', None))
+
+    def test_iceland_reads_as_before(self):
+        # same register as the old format = "stadfangaskra", so the same rows
+        raw = self.raw('profiles/iceland.toml')
         self.assertEqual(addr_sources.source(raw['addr']), ('register', 'stadfangaskra'))
         self.assertEqual(addr_sources.layout(raw['addr']), 'stadfangaskra')
 

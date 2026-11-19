@@ -10,6 +10,8 @@ import math
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
 import addre_io  # noqa: E402
 import frames  # noqa: E402
@@ -17,6 +19,7 @@ import shape_index  # noqa: E402
 
 NAME_REACH = 1500.0       # metres from the address centroid to a road of the street's name
 ACCESS_REACH = 500.0      # metres to any road, for a street with no road of its own name
+CELL = (0.1, 0.05)        # lon, lat degrees of a cell of the by-name grid, about 5 km
 
 
 def metres(a, b):
@@ -34,22 +37,50 @@ def seg_dist(p, a, b):
 
 
 class Links:
-    """Every link of every level-1 drawn shape, by street name and by 0.01-degree cell."""
+    """Every link of every level-1 drawn shape, by street name and by 0.01-degree cell.
+    named_only keeps only labelled shapes and no cell grid, for a whole country, where only
+    a road of the street's own name is ever used."""
 
-    def __init__(self, records):
+    def __init__(self, records, named_only=False):
         self.byname = collections.defaultdict(list)
         self.grid = collections.defaultdict(list)
+        self.named = collections.defaultdict(list)
         for R in records:
-            for S in R['shapes']:
-                pts = S['points']
-                nm = shape_index.label_name(S['label']).upper() if S['label'] else ''
-                for L in S['links']:
-                    js = [j for j, P in enumerate(pts) if P['link'] == L['id']]
-                    j0 = js[0] if pts[js[0]]['role'] == 'start' else js[0] - 1
-                    item = (R, S, L, pts[j0:js[-1] + 1])
-                    if nm: self.byname[nm].append(item)
+            self.add(R, named_only)
+
+    def add(self, R, named_only=False):
+        for S in R['shapes']:
+            pts = S['points']
+            nm = shape_index.label_name(S['label']).upper() if S['label'] else ''
+            if named_only and not nm:
+                continue
+            for L in S['links']:
+                js = [j for j, P in enumerate(pts) if P['link'] == L['id']]
+                j0 = js[0] if pts[js[0]]['role'] == 'start' else js[0] - 1
+                item = (R, S, L, pts[j0:js[-1] + 1])
+                if nm:
+                    self.byname[nm].append(item)
+                    cells = set()
+                    for a, b in zip(item[3], item[3][1:]):    # every cell a segment's box touches
+                        for cx in range(int(min(a['lon'], b['lon']) / CELL[0]), int(max(a['lon'], b['lon']) / CELL[0]) + 1):
+                            for cy in range(int(min(a['lat'], b['lat']) / CELL[1]), int(max(a['lat'], b['lat']) / CELL[1]) + 1):
+                                cells.add((cx, cy))
+                    for c in sorted(cells):
+                        self.named[(nm, c)].append(item)
+                if not named_only:
                     for P in item[3]:
                         self.grid[(int(P['lon'] * 100), int(P['lat'] * 100))].append(item)
+
+    def named_near(self, name, lons, lats, reach):
+        """The links of a name with a segment in a cell within `reach` metres of the points' box,
+        in the order byname holds them."""
+        m = reach / 111320
+        k = m / math.cos(math.radians(min(max(abs(min(lats)), abs(max(lats))), 89)))
+        seen = set()
+        for cx in range(int((min(lons) - k) / CELL[0]), int((max(lons) + k) / CELL[0]) + 1):
+            for cy in range(int((min(lats) - m) / CELL[1]), int((max(lats) + m) / CELL[1]) + 1):
+                seen.update(id(it) for it in self.named.get((name, (cx, cy)), ()))
+        return [it for it in self.byname.get(name, ()) if id(it) in seen]
 
     def near(self, p, reach):
         r = int(math.ceil(reach / 400)) + 1
@@ -85,16 +116,65 @@ def project(p, run):
     return best
 
 
-def address_ranges(links, e):
-    cands = links.byname.get(e['name'], ())
-    if not cands:
-        return [], list(e['addresses'])
-    matched = []
-    for a in e['addresses']:
-        p = (a['lon'], a['lat'])
-        choices = [(project(p, c[3]), c) for c in cands]
-        (dist, along, side), c = min(choices, key=lambda x: x[0][0])
-        matched.append((c, side, along, dist, a))
+def match_near(cands, addresses, reach):
+    """What project() picks over every candidate for each address, as numpy does it, keeping
+    only addresses within `reach` metres. ([(c, side, along, dist, a)], [unmatched address])."""
+    ax, ay, bx, by, owner = [], [], [], [], []
+    for ci, c in enumerate(cands):
+        for a, b in zip(c[3], c[3][1:]):
+            ax.append(a['lon']); ay.append(a['lat']); bx.append(b['lon']); by.append(b['lat'])
+            owner.append(ci)
+    if not ax:
+        return [], list(addresses)
+    ax, ay, bx, by, owner = map(np.array, (ax, ay, bx, by, owner))
+    out, missed = [], []
+    step = max(1, 2_000_000 // len(ax))
+    for s0 in range(0, len(addresses), step):
+        part = addresses[s0:s0 + step]
+        px = np.array([a['lon'] for a in part])[:, None]
+        py = np.array([a['lat'] for a in part])[:, None]
+        kx = 111320 * np.cos(np.radians(py)); ky = np.full_like(kx, 111320)
+        vx, vy = (ax - px) * kx, (ay - py) * ky
+        dx, dy = (bx - ax) * kx, (by - ay) * ky
+        size = dx * dx + dy * dy
+        with np.errstate(invalid='ignore', divide='ignore'):
+            t = np.where(size == 0, 0, np.clip(-(vx * dx + vy * dy) / size, 0, 1))
+        dist = np.hypot(vx + t * dx, vy + t * dy)
+        j = np.argmin(dist, axis=1)
+        for i, a in enumerate(part):
+            jj = j[i]
+            if dist[i, jj] > reach:
+                missed.append(a)
+                continue
+            ci = owner[jj]
+            first = np.searchsorted(owner, ci)
+            seglen = np.sqrt(size[i, first:jj])           # the earlier segments of the same run
+            along = float(seglen.sum() + t[i, jj] * math.sqrt(size[i, jj]))
+            cross = dx[i, jj] * -vy[i, jj] - dy[i, jj] * -vx[i, jj]
+            out.append((cands[ci], 1 if cross >= 0 else -1, along, float(dist[i, jj]), a))
+    return out, missed
+
+
+def address_ranges(links, e, reach=None):
+    """(ranges, unmatched addresses). With `reach`, only roads of the name within that many
+    metres of an address count, and an address farther from all of them is unmatched."""
+    unmatched = []
+    if reach is None:
+        cands = links.byname.get(e['name'], ())
+        if not cands:
+            return [], list(e['addresses'])
+        matched = []
+        for a in e['addresses']:
+            p = (a['lon'], a['lat'])
+            choices = [(project(p, c[3]), c) for c in cands]
+            (dist, along, side), c = min(choices, key=lambda x: x[0][0])
+            matched.append((c, side, along, dist, a))
+    else:
+        adr = list(e['addresses'])
+        cands = links.named_near(e['name'], [a['lon'] for a in adr], [a['lat'] for a in adr], reach)
+        matched, unmatched = match_near(cands, adr, reach)
+        if not matched:
+            return [], unmatched
     grouped = collections.defaultdict(list)
     for c, side, along, dist, a in matched:
         if a['num'].isdigit() and int(a['num']):
@@ -115,12 +195,15 @@ def address_ranges(links, e):
                         la=R['code'][0], lo_word=R['code'][1], refs=refs, shape_at=S['at'], link=L['id'],
                         way=L['way'], label=S['label'], addresses=len(rows), max_metres=round(max(r[1] for r in rows), 1),
                         points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0]) for r in rows]))
-    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'], r['side_flag'], r['lo'])), []
+    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'], r['side_flag'], r['lo'])), unmatched
 
 
-def pick(links, e):
-    """(how, distance, (R, S, L, run)) for one entry, or None."""
-    cands = [(run_dist(e['anchor'], c[3]), c) for c in links.byname.get(e['name'], ())]
+def pick(links, e, local=False):
+    """(how, distance, (R, S, L, run)) for one entry, or None. `local` looks the name up in
+    the by-name grid, which gives the same answer without walking every road of the name."""
+    named = (links.named_near(e['name'], [e['anchor'][0]], [e['anchor'][1]], NAME_REACH) if local
+             else links.byname.get(e['name'], ()))
+    cands = [(run_dist(e['anchor'], c[3]), c) for c in named]
     cands = [c for c in cands if c[0] <= NAME_REACH]
     if cands:
         d, c = min(cands, key=lambda c: c[0])
@@ -153,7 +236,7 @@ def word_keys(folded, kw=1):
     def units(t):
         return b''.join(ch.encode('utf-8').ljust(kw, b'\0') for ch in t)
     starts = [0] + [j + 1 for j, c in enumerate(folded) if c == ' ' and j + 1 < len(folded)]
-    return [(units(folded[p:]), p > 0) for p in starts if folded[p].isalnum()]
+    return [(units(folded[p:]), p > 0) for p in starts if p < len(folded) and folded[p].isalnum()]
 
 
 def shortest_keys(keys):

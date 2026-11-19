@@ -2,18 +2,29 @@
 # Addresses: bring your own source
 
 `addre_io`, `zcode_io` and `icode_io` write an address database onto a card.
-`tools/addr/addr_csv.py` reads the rows, by `[addr] format` in the profile:
+`tools/addr/addr_csv.py` reads the rows. `[addr] source` in the profile picks where they come
+from: `"register"`, a national address register's CSV at `[data] addresses` in the layout
+`[addr] register` names, or `"osm"`, the `addr:*` tags of the OSM extract.
 
-| format | reads | from |
-|---|---|---|
-| `stadfangaskra` | Iceland's address register | `[data] addresses`, `[data] postcodes` |
-| `osm` | `addr:*` tags on nodes, closed ways and multipolygon relations | `[data] pbf` |
-| `ryhti` | a CSV pulled from Finland's Ryhti open_address service | `[data] addresses` |
+| source | register | reads | from |
+|---|---|---|---|
+| `register` | `stadfangaskra` | Iceland's address register | `[data] addresses`, `[data] postcodes` |
+| `register` | `ryhti` | a CSV pulled from Finland's Ryhti open_address service | `[data] addresses` |
+| `osm` | | `addr:*` tags on nodes, closed ways and multipolygon relations | `[data] pbf` |
 
-`osm` is the shipping path and the Finland profile's default. `ryhti` is for testing and for
-measuring OSM's coverage; a local file switches to it (`examples/finland.local.toml`).
-Another country needs one more reader that gives the same rows. The flat shape below
-describes what such a reader has to deliver.
+```toml
+[addr]
+source = "register"
+register = "ryhti"
+
+[data]
+addresses = "build/ryhti-finland.csv"
+```
+
+Iceland and Finland both read their registers. The older single key, `format = "osm"` or
+`format = "<register>"`, still reads; a table may not set both. Another country needs one
+more reader that gives the same rows. The flat shape below describes what such a reader has
+to deliver.
 
 ## The shape
 
@@ -61,7 +72,7 @@ columns to the row above and the writers don't care where the data came from.
 
 ## Source 2: OSM
 
-`format = "osm"` reads `addr:street` and `addr:housenumber` (and `addr:postcode`,
+`source = "osm"` reads `addr:street` and `addr:housenumber` (and `addr:postcode`,
 `addr:city` where present) from the pbf, inside `[addr] box`. A house number such as
 `12a` or `12 A` splits into number 12 and letter A; a range keeps its first number. The
 municipality is not looked up. `towns()` takes the town written most often beside each
@@ -104,29 +115,44 @@ one Overpass call.
 
 ## Source 3: Ryhti (Finland)
 
-`format = "ryhti"` reads a CSV of Finland's building addresses, for testing against OSM.
-The data is from Syke's Ryhti service (`open_address` at
+`register = "ryhti"` reads a CSV of Finland's building addresses. The data is from Syke's
+Ryhti service (`open_address` at
 `paikkatiedot.ymparisto.fi/geoserver/ryhti_building/ogc/features/v1/`), licensed CC BY 4.0;
-credit "Syke, Ryhti". The columns are `street`, `number`, `number2` (end of a range),
-`letter`, `letter2`, `postcode`, `town`, `municipality` (three digits, becomes `svf`),
-`lat` and `lon`, with `address_key`, `building_key` and `street_swe` kept for reference. The
-service returns WGS84 and no reprojection is needed. Rows with no street or number are
-skipped. `tools/addr/pull_ryhti.py OUT.csv LON_MIN LAT_MIN LON_MAX LAT_MAX` pulls a box;
-the whole country is 3.9 million rows.
+credit "Lähde: Syke Ryhti" (see LICENSES.md). The columns are `street`, `street_swe` (the
+Swedish name where the municipality has one), `number`, `number2` (end of a range), `letter`,
+`letter2`, `postcode`, `town`, `municipality` (three digits, becomes `svf`), `lat` and `lon`,
+with `address_key` and `building_key` kept for reference. The service returns WGS84 and no
+reprojection is needed. Rows with no street or number are skipped.
+
+`tools/addr/pull_ryhti.py OUT.csv LON_MIN LAT_MIN LON_MAX LAT_MAX` pulls a box. The whole
+country (`19.0 59.7 31.6 70.1`) is 3.9 million rows, about 780 requests made one after
+another; a stopped pull starts again at its last whole page, and a failed request is retried.
 
 ## A factory card with one rebuilt area (QY7)
 
 An area-mode card keeps the factory area tree, so there is no ICODE, ZCODE or POINT to
 write. `tools/addr/build_addr_country.py` rewrites one file, the country's `ADDRE`, from the
-OSM addresses inside the area's relations:
+addresses inside the area's relations:
 
-- the ladder is the row `[addr] municipality` names one level above the deepest tier of the
-  card's own `ICODE001.DAT`, plus the settlement under it that `addr:city` names. An address
-  whose town is no settlement row goes to the settlement named like the municipality;
+- with `[areas.NAME] municipality`, the ladder is the row it names one level above the
+  deepest tier of the card's own `ICODE001.DAT`, plus the settlement under it that the
+  address's town names. An address whose town is no settlement row goes to the settlement
+  named like the municipality;
+- without one, the whole country. Each address goes to the kunta its municipality number
+  names (the OSM boundary with that `ref`, on its Finnish or Swedish name; a kunta merged
+  away since the card was made is picked by the nearest factory record), then to the
+  settlement where the factory file has the street: the only one, or the one of the nearest
+  record of that name. A street the factory never had takes the settlement of the nearest
+  factory record in the kunta, which gives the factory's answer for 92.7% of a held-out
+  sample. `tools/addr/settle.py` has the rules;
+- a Ryhti row with a Swedish name as well is found under both names, as the factory file
+  lists MANNERHEIMINTIE and MANNERHEIMVÄGEN. The factory labels such a road
+  `MANNERHEIMINTIE:MANNERHEIMVÄGEN`; ours carry OSM's `name` alone, so the name not on the
+  label is left out and listed in `addr_other_language.json`;
 - a street gets one row per road link and side with the house numbers along it, as
   `--house-ranges ALL` writes for Iceland, or a plain row when it has no numbers;
 - a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
 - the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.
 
-Street search for the rest of that country then finds nothing, where the factory file
-pointed at roads the build removed.
+With a municipality, street search for the rest of that country then finds nothing, where
+the factory file pointed at roads the build removed.

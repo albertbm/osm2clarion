@@ -28,6 +28,9 @@ osm = "build/finland-latest.osm.pbf"
 relations = [569407]
 cells = ["B58R050R"]
 bbox = [25.26, 61.84, 26.06, 62.43]   # lon_min, lat_min, lon_max, lat_max
+# Street search under this municipality's row of the card's own area tree, the settlement
+# from each address's town.
+municipality = "JYVÄSKYLÄ"
 
 [areas.finland]
 # The whole country: every cell below, rebuilt together so roads join at their edges. Land
@@ -35,8 +38,8 @@ bbox = [25.26, 61.84, 26.06, 62.43]   # lon_min, lat_min, lon_max, lat_max
 relations = [54224]
 cells = ["B58R048R", "B58R050R", "B58R058R", "B60R048R", "B60R050R", "B68R048R", "B68R050R"]
 bbox = [19.0, 59.7, 31.6, 70.1]
-# No street search: the card keeps its factory ADDRE file. Whole-country addresses are a later job.
-addr = false
+# Street search for the whole country. No municipality: each address goes to the kunta and
+# settlement the card's factory street file points to (tools/addr/settle.py).
 
 [grid]
 # The cells holding Finland, as the card names them.
@@ -59,13 +62,17 @@ l2_graph = true
 speed_unit = "km/h"
 
 [addr]
-# Addresses come from OSM addr:* tags. A local file can switch to format = "ryhti"
-# (Syke, Ryhti, CC BY 4.0) for testing; see examples/finland.local.toml.
-format = "osm"
-box = [61.84, 62.43, 25.26, 26.06]   # lat_min, lat_max, lon_min, lon_max; the Jyvaskyla area
-# Area mode rewrites Finland's street search for the addresses inside the build area, under
-# this municipality's row of the card's own area tree. Without it the card keeps its file.
-municipality = "JYVÄSKYLÄ"
+# source = "register": the address CSV at [data] addresses, in the layout `register` names.
+# source = "osm": addr:* tags of the OSM extract, inside `box`.
+# Ryhti is Syke's national building-address register, CC BY 4.0, credit "Lähde: Syke Ryhti";
+# tools/addr/pull_ryhti.py makes the CSV (see docs/ADDRESS-IMPORT.md).
+source = "register"
+register = "ryhti"
+box = [61.84, 62.43, 25.26, 26.06]   # lat_min, lat_max, lon_min, lon_max; used by source = "osm"
+
+[data]
+# Relative paths are read from the repository root; build.py --addresses overrides.
+addresses = "build/ryhti-finland.csv"
 
 [targets]
 default = "v2014"

@@ -1,8 +1,4 @@
-# Test only: read Finnish addresses from a Ryhti CSV instead of OSM. Pass with --local FILE.
-# Data: Syke, Ryhti (open_address), CC BY 4.0. Make the CSV with tools/addr/pull_ryhti.py; the
-# columns are in docs/ADDRESS-IMPORT.md.
+# Test only: read Finnish addresses from OSM instead of the Ryhti register. Pass it with
+# --local FILE in generate mode; area mode reads the profile alone, so edit [addr] there.
 [addr]
-format = "ryhti"
-
-[data]
-addresses = "/path/to/ryhti-jyvaskyla.csv"
+source = "osm"
