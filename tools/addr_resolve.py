@@ -18,6 +18,7 @@ own tile, finds that record, and checks every group:
     style      on a tile that gives every link its style word, the link's header holds one
     items      at most one house-number item a side, the right side (0x54) first
     row        a range row's low and high numbers are those of its record's items
+    plain      a record with no numbers has plain rows and is its street's only record
     alike      a link listed under two settlements holds the same numbers under each
     joined     a street's ranges of one parity run on, each starting two above the one
                before: 98.1% of the factory's, pass at 90% of a file's
@@ -158,6 +159,8 @@ def layout(rec, rows):
     for r in rows:
         if r['rel'] != 0x7f7f and items and (r['lo'], r['hi']) != (min(nums), max(nums)):
             bad.append('row %d-%d over items %d-%d' % (r['lo'], r['hi'], min(nums), max(nums)))
+        if not items and (r['rel'], r['lo'], r['hi']) != (0x7f7f, 0xffff, 0xffff):
+            bad.append('no numbers under a range row %d-%d' % (r['lo'], r['hi']))
     return bad
 
 
@@ -168,6 +171,7 @@ class Streets:
     """What a file's records must agree on beyond their own bytes."""
 
     def __init__(self):
+        self.bare = None
         self.links, self.runs, self.pairs, self.joined = {}, {}, 0, 0
 
     def add(self, rec, street):
@@ -179,6 +183,9 @@ class Streets:
             return bad       # layout has said so
         if rec['name'] is not None:
             self.close()
+            self.bare = not items
+        elif self.bare or not items:
+            bad.append('a street with a record of no numbers holds more than one record')
         link = (street, rec['lat'], rec['lon'], tuple(rec['refs']))
         if self.links.setdefault(link, rec['items']) != rec['items']:
             bad.append('other numbers than the same link holds under another settlement')

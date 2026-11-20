@@ -232,6 +232,8 @@ box = [63.8, 64.4, -22.8, -20.85]
 alphabet = "AÁBDÐEÉFGHIÍJKLMNOÓPRSTUÚVXYÝÞÆÖ"
 towns_expected = ["Akranes", "Eyrarbakki", "Garðabær", "Garðabær (Álftanes)", "Garður", "Grindavík", "Hafnarfjörður", "Hveragerði", "Keflavíkurflugvöllur", "Kjós", "Kópavogur", "Mosfellsbær", "Reykjanesbær", "Reykjavík", "Sandgerði", "Selfoss", "Seltjarnarnes", "Stokkseyri", "Vogar", "Þorlákshöfn", "Ölfus"]
 poc_town = "REYKJAVÍK"
+# Plain street rows for named roads with no address. Off: they are 7% of streets, past the towns check's 1%.
+bare_roads = false
 poc_box = [63.4, -24.53, 66.65, -13.41]
 
 [addr.area_municipalities.capital]

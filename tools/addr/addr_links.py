@@ -548,6 +548,51 @@ def link_refs(links, e, how, d, c):
                 other_parcel=tuple(home) != tuple(R['code']))
 
 
+def named_roads(links, text):
+    """[(name, lon, lat, link)] for every whole link of a road labelled with a name that no
+    record was written for: the name as `text` spells it, and a point in the middle."""
+    out, seen = [], set()
+    for it in links.items:
+        S = it[1]
+        if not S['label'].startswith('1='):
+            continue        # a road number alone
+        ch = links.whole(it)
+        if id(ch) in seen or id(ch) in links.used or not ch['ok']:
+            continue
+        seen.add(id(ch))
+        run = ch['parts'][0][0][3]
+        mid = run[len(run) // 2]
+        out.append((text(S.get('name') or shape_index.label_name(S['label'])), mid['lon'], mid['lat'], it))
+    return out
+
+
+def nearest(lons, lats, to_lons, to_lats):
+    """For each point, the index of the nearest of the `to` points."""
+    import shapely
+    def xy(lon, lat):
+        lon, lat = np.asarray(lon, float), np.asarray(lat, float)
+        return shapely.points(lon * np.cos(np.radians(lat)), lat)
+    return shapely.STRtree(xy(to_lons, to_lats)).nearest(xy(lons, lats))
+
+
+MAX_PIECES = 63       # a record's byte of reference words holds 126 groups, the factory's longest
+
+
+def bare_entry(links, name, town, roads):
+    """The entry of a street with no numbers, on one of its `roads` [(lon, lat, link)]: the
+    one nearest their middle. None when every link crosses too many parcel lines for one
+    record, as a long ferry route does."""
+    roads = [r for r in roads if len(links.whole(r[2])['parts']) <= MAX_PIECES]
+    if not roads:
+        return None
+    mid = (sum(r[0] for r in roads) / len(roads), sum(r[1] for r in roads) / len(roads))
+    lon, lat, it = min(roads, key=lambda r: (metres(mid, r[:2]), r[:2]))
+    e = dict(street=name, name=name, town=town, posts=[], n=0, nums=[], addresses=[], lat=lat, lon=lon,
+             low=(it[3][0]['lon'], it[3][0]['lat']))
+    e['link'] = link_refs(links, e, 'name', 0.0, it)
+    return e
+
+
 def word_keys(folded, kw=1):
     """[(key, is a later word)] for a folded name: one key per word start, running to the end.
     A colon is a space in the key and starts no word, as the factory keys KAARLE IX:N KATU

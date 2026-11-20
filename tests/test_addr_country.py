@@ -314,6 +314,57 @@ class Settlements(unittest.TestCase):
         self.assertEqual((e['town'], e['link'], e['nums'], 'ranges' in e), ('A', dict(la=1, lo=2), [], False))
 
 
+class Bare(unittest.TestCase):
+    """A named road with no address gets the factory's record for a street with no numbers."""
+
+    def links(self):
+        lat, lon = 62.2401, 25.7401
+        shapes = []
+        for k, (name, label, dlat) in enumerate((('Katu', '1=KATU', 0), ('Polku', '1=POLKU;2=12', 0.001),
+                                                 ('Kaarle IX:n katu', "1=KAARLE IX'N KATU", 0.002), (None, '2=12', 0.003))):
+            pts = [dict(word=55 + 100 * k + 5 * i, link=1, role=r, lon=lon + 0.002 * i, lat=lat + dlat)
+                   for i, r in enumerate(('start', 'end'))]
+            shapes.append(dict(name=name, label=label, at=48 + 100 * k, links=[dict(id=1, way=7 + k)], points=pts))
+        return addr_links.Links([dict(code=list(addre_io.parcel_words(lat, lon + 0.001)), unit=22, shapes=shapes)])
+
+    def test_roads_no_entry_lists(self):
+        import shapely
+        here = ('X', (6, 1, 1, 0))
+        found = [dict(street='Katu', num='1', svf='179', lat=62.2401, lon=25.7405)]
+        asked = []
+
+        def places(rows):
+            asked.extend(rows)
+            return [(here,)] * len(rows)
+        ents = [dict(name='KATU', ladder=here[1])]
+        bare, odd = build_addr_country.bare_roads(self.links(), ents, found, places, lambda s: s, shapely.box(25, 62, 26, 63))
+        self.assertEqual([(e['name'], e['town'], e['ladder'], e['nums'], e['n']) for e in bare],
+                         [('POLKU', 'X', here[1], [], 0), ('KAARLE IX:N KATU', 'X', here[1], [], 0)])
+        self.assertEqual(bare[0]['link']['refs'], ((2, 0x40, 133), (3, 0x40, 138)))
+        self.assertEqual({r['svf'] for r in asked}, {'179'})
+        self.assertEqual(odd, [])
+        fmt = clarion_format.X08_02
+        out, _, _ = addr_links.addre_mixed(bare, lambda e: e['ladder'], addr_links.word_keys,
+                                           frames.addre_prefix((4800, 1280, -1200, 4080), '14/04/12/01', fmt),
+                                           frames.addre_df(fmt), 6, 2, fmt=fmt)
+        a = addre_io.Addre(out)
+        self.assertEqual([addre_io.parse_name_record(n, fmt)['items'] for n in a.names], [b'', b''])
+        self.assertEqual({a.srec(i)[:2] + a.srec(i)[4:8] for i in range(a.nsrec)}, {bytes.fromhex('7f7fffffffff')})
+
+    def test_a_link_over_too_many_parcels_has_no_record(self):
+        links = self.links()
+        road = (25.74, 62.24, links.items[0])
+        links.whole(links.items[0])['parts'] *= addr_links.MAX_PIECES + 1
+        self.assertIsNone(addr_links.bare_entry(links, 'KATU', 'X', [road]))
+
+    def test_a_road_outside_the_area_is_left(self):
+        import shapely
+        bare, _ = build_addr_country.bare_roads(self.links(), [], [dict(street='Katu', num='1', svf='179', lat=62.24, lon=25.74)],
+                                                lambda rows: [((('X', (6, 1, 1, 0)),))] * len(rows), lambda s: s,
+                                                shapely.box(20, 60, 21, 61))
+        self.assertEqual(bare, [])
+
+
 class ParcelLine(unittest.TestCase):
     """A link the tile cuts at a parcel line is one record, with a hop group at the line."""
     BOX_W, BOX_E = [25.71875, 2987 / 48, 0.03125, 1 / 48], [25.75, 2987 / 48, 0.03125, 1 / 48]
@@ -438,6 +489,9 @@ class Layout(unittest.TestCase):
         self.assertEqual(addr_resolve.layout(self.rec((0x68, 8, 1)), [row]), [])
         self.assertEqual(addr_resolve.layout(self.rec(), [dict(rel=0x7f7f, lo=0xffff, hi=0xffff)]), [])
 
+    def test_no_numbers_under_a_range_row(self):
+        self.assertEqual(addr_resolve.layout(self.rec(), [dict(rel=0, lo=1, hi=9)]), ['no numbers under a range row 1-9'])
+
     def test_wrong_order_and_wrong_row(self):
         self.assertEqual(addr_resolve.layout(self.rec((0x58, 1, 5), (0x54, 2, 8)), []), ['items for sides 0x58 0x54'])
         self.assertEqual(addr_resolve.layout(self.rec((0x54, 2, 8)), [dict(rel=0, lo=2, hi=6)]), ['row 2-6 over items 2-8'])
@@ -449,6 +503,14 @@ class Streets(unittest.TestCase):
     def rec(self, name, *items, lat=1, refs=((2, 0x40, 0), (3, 0x40, 9))):
         return dict(name=name, lat=lat, lon=2, refs=refs,
                     items=b''.join(addre_io.house_item(first, last, side) for side, first, last in items))
+
+    def test_a_street_with_no_numbers_is_one_record(self):
+        s = addr_resolve.Streets()
+        self.assertEqual(s.add(self.rec('KATU'), 'KATU'), [])
+        self.assertEqual(s.add(self.rec(None, (0x54, 1, 5), lat=3), 'KATU'),
+                         ['a street with a record of no numbers holds more than one record'])
+        self.assertEqual(s.add(self.rec('TIE', (0x54, 1, 5), lat=4), 'TIE'), [])
+        self.assertIn('more than one record', s.add(self.rec(None, lat=5), 'TIE')[0])
 
     def test_a_link_reads_the_same_under_each_settlement(self):
         s = addr_resolve.Streets()

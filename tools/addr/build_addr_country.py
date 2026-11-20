@@ -21,8 +21,8 @@ A street gets one row per road link, both sides of the road in the one row as th
 writes them. Its numbers run on from link to link: those no address has are laid between
 the houses by distance, and below the lowest house from the street's end (addr_links.join).
 A street is placed whole in its municipality and each row listed under the settlements of
-the addresses on its link, the same numbers under each. A street with no numbers gets one
-plain row on one link.
+the addresses on its link, the same numbers under each. A street with no numbers, and a
+named road with no address at all, gets one plain row on one link.
 Each row points at a link of the street's own drawn shape in the rebuilt tile, through the
 shape index rd_build.py --shape-index wrote. A street with no road of its name in the tile
 is left out and listed in addr_skipped.json; one whose road carries its name in the other
@@ -91,7 +91,8 @@ def ladder(ic, iso, municipality, codec):
 
 
 def rows(P, pbf, area, addresses=None):
-    """The address rows inside the area's relations, from the profile's address source."""
+    """(the address rows inside the area's relations, from the profile's address source;
+    the area's outline)."""
     import numpy as np
     import shapely
     cfg = P.raw['addr']
@@ -108,7 +109,7 @@ def rows(P, pbf, area, addresses=None):
     g = osm_roads.region(pbf, relations=set(area['relations']))
     shapely.prepare(g)
     inside = shapely.contains_xy(g, np.array([r['lon'] for r in found]), np.array([r['lat'] for r in found]))
-    return [r for r, ok in zip(found, inside) if ok and int(r['num']) <= MAX_NUMBER]
+    return [r for r, ok in zip(found, inside) if ok and int(r['num']) <= MAX_NUMBER], g
 
 
 def names_of(r, fold):
@@ -214,6 +215,39 @@ def under_settlements(streets, places):
     return sorted(out, key=lambda e: (e['key'], e['ladder'], e['town'] or ''))
 
 
+def bare_roads(links, ents, found, places, text, inside):
+    """(plain entries, names with no typeable key) for the named roads of the area that no
+    entry lists in their settlement: one record on one link and a plain row, the factory's
+    form for a street with no numbers (32,787 streets of the QY7 file, 1,506 of them
+    numbered under another settlement). A road takes the municipality of the nearest
+    address and its settlement from settle.py."""
+    import shapely
+    roads = addr_links.named_roads(links, lambda s: text(s.upper()))
+    keep = shapely.contains_xy(inside, [r[1] for r in roads], [r[2] for r in roads]) if roads else []
+    roads = [r for r, ok in zip(roads, keep) if ok]
+    if not roads:
+        return [], []
+    near = addr_links.nearest([r[1] for r in roads], [r[2] for r in roads], [r['lon'] for r in found], [r['lat'] for r in found])
+    at = places([dict(street=name, street_swe='', svf=found[j]['svf'], lat=la, lon=lo)
+                 for (name, lo, la, _), j in zip(roads, near)])
+    have = {(e['name'], e['ladder']) for e in ents}
+    groups = collections.defaultdict(list)
+    for (name, lo, la, it), pl in zip(roads, at):
+        for town, ladder in pl:
+            if (name, ladder) not in have:
+                groups[(name, town, ladder)].append((lo, la, it))
+    out, odd = [], set()
+    for (name, town, ladder), rs in groups.items():
+        key = addre_io.fold_key(name).upper()
+        if not key.isascii() or not addr_links.word_keys(key):
+            odd.add(name)
+            continue
+        e = addr_links.bare_entry(links, name, town, rs)
+        if e:
+            out.append(dict(e, key=key, ladder=ladder))
+    return out, sorted(odd)
+
+
 def other_language(skipped, placed, text, fold):
     """(no road of the name, a road with the street's other-language name): skipped entries
     split by whether the same addresses were placed under their other name."""
@@ -285,7 +319,7 @@ def main():
     def text(s):
         s = fmt.text(s).decode(fmt.codec)
         return s if fmt.colon_names else shape_index.label_text(s)
-    found = rows(P, a.pbf, area, addresses)
+    found, outline = rows(P, a.pbf, area, addresses)
     if municipality:
         _, path, settlements, _ = ladder(ic, P.country, municipality, fmt.codec)
         home = municipality if municipality in settlements else None
@@ -313,8 +347,11 @@ def main():
         raise SystemExit('no address matched a road of the rebuilt tile')
     skipped, other = other_language(skipped, ents, text, settle.folder(fmt))
     far = sum(len(e['unmatched']) for e in ents if 'ranges' in e)
+    bare, unkeyed = [], []
     if not municipality:
         ents = under_settlements(ents, lambda r: at[id(r)])
+        bare, unkeyed = bare_roads(links, ents, found, places, text, outline)
+        ents = sorted(ents + bare, key=lambda e: (e['key'], e['ladder'], e['town'] or ''))
 
     out, keys, blocks = addr_links.addre_mixed(
         ents, lambda e: e['ladder'], lambda n: addr_links.word_keys(addre_io.fold_key(n).upper()),
@@ -344,6 +381,7 @@ def main():
     print('left out: %d streets with no road of their name (%d addresses), %d with no typeable key, '
           '%d names whose road is labelled in the other language (%d addresses)'
           % (len(skipped), sum(s['addresses'] for s in skipped), len(odd), len(other), sum(s['addresses'] for s in other)))
+    print('named roads with no address: %d plain rows, %d names with no typeable key' % (len(bare), len(unkeyed)))
     print('links no record can follow over a parcel line: %d (%d addresses)'
           % (len(links.cut), sum(c['addresses'] for c in links.cut)))
     if reach:

@@ -377,6 +377,25 @@ def street_ranges(links, ents, town_of):
     return {i: sorted(rs, key=lambda r: (r['lo'], r['hi'])) for i, rs in out.items()}
 
 
+def bare_roads(links, ents, g):
+    """Plain entries for the named roads no entry lists in their town: one record on one
+    link, the factory's form for a street with no numbers (35,990 streets of the 2014 QY8
+    Finnish file). A road takes the town of the nearest address. Written when [addr]
+    bare_roads is set."""
+    adr = [(r['lon'], r['lat'], town) for (_, town), rs in g.items() for r in rs]
+    roads = addr_links.named_roads(links, str.upper)
+    if not roads or not adr:
+        return []
+    near = addr_links.nearest([r[1] for r in roads], [r[2] for r in roads], [a[0] for a in adr], [a[1] for a in adr])
+    have = {(e['name'], e['town']) for e in ents}
+    by = collections.defaultdict(list)
+    for (name, lon, lat, it), j in zip(roads, near):
+        key = addre_io.fold_key(name, FOLD_IS).upper()
+        if (name, adr[j][2]) not in have and key.isascii() and addr_links.word_keys(key):
+            by[(name, adr[j][2])].append((lon, lat, it))
+    return list(filter(None, (addr_links.bare_entry(links, name, town, rs) for (name, town), rs in by.items())))
+
+
 def build_addre_capital(ents):
     """Entries with e['ranges'] get per-link rows; every other entry keeps the single
     generic-row form, so no ranged entries reproduces the pre-range output exactly."""
@@ -531,8 +550,10 @@ def main_area(a):
         for e in es:
             e['nums'] = nums
     full = ents
+    bare = bare_roads(links, ents, g) if all_ranges and _cfg['addr'].get('bare_roads') else []
+    ents = sorted(ents + bare, key=lambda e: (fold(e['name']), TOWNS.index(e['town'])))
     if only is not None:
-        ents = [e for e in full if e['name'] in only]
+        ents = [e for e in ents if e['name'] in only]
         print('--only: %d of %d records kept in ADDRE; ZCODE and POINT keep every town and postcode'
               % (len(ents), len(full)))
     addre, keys, blocks = build_addre_capital(ents)
@@ -558,6 +579,7 @@ def main_area(a):
         print('range streets %d, ranges %d, addresses %d, fallback streets %d, skipped streets %d (%d addresses)' % (
             len(ranged), sum(len(e['ranges']) for e in ranged), sum(e['n'] for e in ranged),
             len(fallback), len(skipped), sum(e['n'] for e in skipped)))
+        print('named roads with no address: %d plain rows' % len(bare))
         print('  side bytes: right 0x54, left 0x58 of the direction the references run in')
         print('ADDRE001 %d B, %d keys, %d name blocks' % (len(addre), len(keys), len(blocks)))
         return
