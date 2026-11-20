@@ -201,6 +201,63 @@ class Sides(unittest.TestCase):
         self.assertEqual(a.srec(0)[:8], bytes.fromhex('7f7f0000ffffffff'))
 
 
+class ParcelLine(unittest.TestCase):
+    """A link the tile cuts at a parcel line is one record, with a hop group at the line."""
+    BOX_W, BOX_E = [25.71875, 2987 / 48, 0.03125, 1 / 48], [25.75, 2987 / 48, 0.03125, 1 / 48]
+    LAT = 62.2401
+
+    def piece(self, box, lons, link, way=7):
+        pts = [dict(word=55 + 5 * i, link=link, role=r, lon=lon, lat=self.LAT)
+               for i, (r, lon) in enumerate(zip(('start', 'end'), lons))]
+        return dict(code=list(addre_io.parcel_words(self.LAT, box[0] + 0.01)), unit=22, box=box,
+                    shapes=[dict(label='1=KATU', at=48, links=[dict(id=link, way=way)], points=pts)])
+
+    def links(self, east=(25.75, 25.76), way=7):
+        """KATU running east over the line at 25.75: 520 m west of it, 520 m east."""
+        on_line = 25.71875 + 2047 / 2048 * 0.03125
+        return addr_links.Links([self.piece(self.BOX_W, (25.74, on_line), 1), self.piece(self.BOX_E, east, 3, way)])
+
+    def place(self, links, nums):
+        """nums: (number, degrees east of 25.74), all south of the road."""
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town='', lat=self.LAT - 0.0001, lon=25.74 + d)
+                for n, d in nums]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        return build_addr_country.place(links, ents)[0]
+
+    def test_one_record_over_the_line(self):
+        west, east = (addre_io.parcel_words(self.LAT, lon) for lon in (25.74, 25.76))
+        (r,) = self.place(self.links(), [(1, 0.002), (3, 0.008), (5, 0.012), (7, 0.018)])[0]['ranges']
+        self.assertEqual((r['lo'], r['hi'], (r['la'], r['lo_word'])), (1, 7, west))
+        self.assertEqual(r['refs'], ((2, 0x40, 33), (2, 0x40, 38), (0x50, 0x40, 33), (3, 0x40, 38)))
+        self.assertEqual([(it['flag'], it['first'], it['last']) for it in r['items']], [(0x54, 1, 7)])
+        # numbers falling eastwards: the record starts in the east parcel and hops west
+        (r,) = self.place(self.links(), [(7, 0.002), (5, 0.008), (3, 0.012), (1, 0.018)])[0]['ranges']
+        self.assertEqual((r['la'], r['lo_word']), east)
+        self.assertEqual(r['refs'], ((4, 0x40, 38), (4, 0x40, 33), (0x70, 0x40, 38), (5, 0x40, 33)))
+        self.assertEqual([(it['flag'], it['first'], it['last']) for it in r['items']], [(0x58, 1, 7)])
+
+    def test_a_piece_drawn_the_other_way(self):
+        # the east piece runs towards the line: its groups fall, and say so in their tags
+        links = self.links(east=(25.76, 25.75))
+        (r,) = self.place(links, [(1, 0.002), (3, 0.008), (5, 0.012), (7, 0.018)])[0]['ranges']
+        self.assertEqual(r['refs'], ((2, 0x40, 33), (2, 0x40, 38), (0x50, 0x40, 38), (5, 0x40, 33)))
+        self.assertEqual([(it['flag'], it['first'], it['last']) for it in r['items']], [(0x54, 1, 7)])
+        (r,) = self.place(links, [(7, 0.002), (5, 0.008), (3, 0.012), (1, 0.018)])[0]['ranges']
+        self.assertEqual(r['refs'], ((2, 0x40, 33), (2, 0x40, 38), (0x70, 0x40, 38), (5, 0x40, 33)))
+        self.assertEqual([(it['flag'], it['first'], it['last']) for it in r['items']], [(0x58, 1, 7)])
+
+    def test_a_link_that_stops_on_the_line_is_left_out(self):
+        links = self.links(way=8)
+        self.assertEqual(self.place(links, [(1, 0.002), (3, 0.008)]), [])
+        self.assertEqual([(c['addresses'], c['why']) for c in links.cut], [(2, 'stops on a parcel line')])
+
+    def test_a_plain_row_runs_node_to_node(self):
+        links = self.links()
+        e = dict(street='KATU', name='KATU', town='X', lat=self.LAT, lon=25.742, anchor=(25.742, self.LAT), low=(25.741, self.LAT))
+        link = addr_links.link_refs(links, e, *addr_links.pick(links, e))
+        self.assertEqual(link['refs'], ((2, 0x40, 33), (2, 0x40, 38), (0x50, 0x40, 33), (3, 0x40, 38)))
+
+
 class Layout(unittest.TestCase):
     """addr_resolve's checks of a record's items and rows."""
 

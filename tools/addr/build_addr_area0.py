@@ -457,13 +457,18 @@ def main_area(a):
                 if got is None:
                     skipped.append(e)
                     continue
-                e['link'] = link_refs(e, *got)
+                e['link'] = link_refs(links, e, *got)
+                if e['link'] is None:
+                    skipped.append(e)
+                    continue
                 fallback.append(e)
         else:
             got = pick(links, e)
             if got is None:
                 skipped.append(e); continue
-            e['link'] = link_refs(e, *got)
+            e['link'] = link_refs(links, e, *got)
+            if e['link'] is None:
+                skipped.append(e); continue
         ents.append(e)
     missing_targets = targets - found_targets if targets else set()
     if missing_targets:

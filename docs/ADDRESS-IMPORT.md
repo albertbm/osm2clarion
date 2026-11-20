@@ -154,6 +154,12 @@ addresses inside the area's relations:
   holds both sides of its link, the right side first, each as the number at the link's
   first end and the number at its last. That is the factory's layout, read off the Finnish
   files of the 2014 QY7 and QY8 cards;
+- a row runs from one junction to the next. Where a parcel line cuts the link, the row
+  goes on in the next parcel behind a hop group (0x40 north, 0x50 east, 0x60 south, 0x70
+  west). The factory does not end a row on the line (8 of 10,903 two-group rows under
+  Jyväskylä do). FI-019 did, and its street search could not find SARPATINTIE, whose two
+  rows both stopped there. A link that cannot be followed over the line is left out and
+  listed in `addr_skipped.json`;
 - a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
 - the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.
 

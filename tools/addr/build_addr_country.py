@@ -163,12 +163,13 @@ def place(links, ents, reach=None):
             e['ranges'] = sorted(ranges, key=lambda r: (r['lo'], r['hi']))    # the factory's order
         else:
             got = addr_links.pick(links, e, local=reach is not None)
-            if got is None or got[0] != 'name':
+            link = addr_links.link_refs(links, e, *got) if got and got[0] == 'name' else None
+            if link is None:
                 skipped.append(dict(street=e['name'], town=e['town'], ladder=e['ladder'], addresses=e['n'],
                                     lat=e['lat'], lon=e['lon'], why='no road of this name in the rebuilt tile',
                                     rows=e['addresses']))
                 continue
-            e['link'] = addr_links.link_refs(e, *got)
+            e['link'] = link
             e['nums'] = []      # a factory row with no link per number holds no numbers
         placed.append(e)
     return placed, skipped
@@ -282,7 +283,7 @@ def main():
         [dict(street=e['name'], town=e['town'], ladder=e['ladder'], posts=e['posts'], addresses=e['n'],
               **(dict(ranges=[{k: r[k] for k in r if k != 'points'} for r in e['ranges']]) if 'ranges' in e
                  else dict(link=e['link']))) for e in ents], ensure_ascii=False, indent=1))
-    (od / 'addr_skipped.json').write_text(json.dumps(skipped + odd, ensure_ascii=False, indent=1))
+    (od / 'addr_skipped.json').write_text(json.dumps(skipped + odd + links.cut, ensure_ascii=False, indent=1))
     (od / 'addr_other_language.json').write_text(json.dumps(other, ensure_ascii=False, indent=1))
     ranged = [e for e in ents if 'ranges' in e]
     per = collections.Counter(e['town'] or '(none)' for e in ents)
@@ -293,6 +294,8 @@ def main():
     print('left out: %d streets with no road of their name (%d addresses), %d with no typeable key, '
           '%d names whose road is labelled in the other language (%d addresses)'
           % (len(skipped), sum(s['addresses'] for s in skipped), len(odd), len(other), sum(s['addresses'] for s in other)))
+    print('links no record can follow over a parcel line: %d (%d addresses)'
+          % (len(links.cut), sum(c['addresses'] for c in links.cut)))
     if reach:
         print('addresses farther than %d m from every road of their street, on a street that has one: %d' % (reach, far))
     print('settlements: %s' % ', '.join('%s %d' % kv for kv in per.most_common(25)))

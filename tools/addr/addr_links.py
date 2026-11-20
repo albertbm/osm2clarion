@@ -5,6 +5,10 @@ An entry is one street of one town: dict(street, name, town, addresses, anchor, 
 `pick` finds the link its record points at, `address_ranges` splits its house numbers into
 one range per link, holding both sides of the road as the factory does, and `link_refs`
 writes the reference words.
+
+A tile cuts a link at every parcel line it crosses, and the index lists each piece as a link
+of its own. A record runs from node to node as the factory's do, over every piece, with a
+hop group at each line (`Links.whole`, `chain_refs`).
 """
 import collections
 import math
@@ -37,6 +41,32 @@ def seg_dist(p, a, b):
     return math.hypot(ax + bx * t, ay + by * t)
 
 
+HOP = {(1, 0): 0x40, (0, 1): 0x50, (-1, 0): 0x60, (0, -1): 0x70}    # (rows north, columns east): tag
+
+
+def parcel_of(R):
+    """(row, column) of a record's parcel on the level-1 grid."""
+    lon, lat, dlon, dlat = R['box']
+    return round(lat / dlat), round(lon / dlon)
+
+
+def line_point(R, P):
+    """Where a point sits on the parcel lines, as grid units shared by the parcels either
+    side, or None for a point inside its parcel. A record with no box has no lines."""
+    if not R.get('box'):
+        return None
+    lon, lat, dlon, dlat = R['box']
+    x, y = round((P['lon'] - lon) / dlon * 2048), round((P['lat'] - lat) / dlat * 2048)
+    if x not in (0, 2047) and y not in (0, 2047):
+        return None
+    row, col = parcel_of(R)
+    return col * 2048 + (2048 if x == 2047 else x), row * 2048 + (2048 if y == 2047 else y)
+
+
+def run_metres(run):
+    return sum(metres((a['lon'], a['lat']), (b['lon'], b['lat'])) for a, b in zip(run, run[1:]))
+
+
 class Links:
     """Every link of every level-1 drawn shape, by street name and by 0.01-degree cell.
     named_only keeps only labelled shapes and no cell grid, for a whole country, where only
@@ -46,8 +76,56 @@ class Links:
         self.byname = collections.defaultdict(list)
         self.grid = collections.defaultdict(list)
         self.named = collections.defaultdict(list)
+        self.items = []
+        self.cut = []         # links left out: no record can follow them over a parcel line
+        self._whole = None
         for R in records:
             self.add(R, named_only)
+
+    def whole(self, item):
+        """The link a piece is part of, node to node: dict(parts, start, ok, why). parts are
+        (piece, drawn the way the link runs) in order, most of the link's length drawn
+        forwards; start maps a piece to the metres before it. ok is False when no factory
+        record could follow the link: a piece that stops on a parcel line, or a step to a
+        diagonal parcel."""
+        if self._whole is None:
+            self._whole, self._twins = {}, collections.defaultdict(list)
+            for it in self.items:
+                for end in (0, -1):
+                    at = line_point(it[0], it[3][end])
+                    if at:
+                        self._twins[(it[2]['way'],) + at].append((it, end))
+        if id(item) in self._whole:
+            return self._whole[id(item)]
+        parts, seen, why = [(item, True)], {id(item)}, None
+        for back in (False, True):
+            while True:
+                it, fwd = parts[0] if back else parts[-1]
+                at = line_point(it[0], it[3][0 if fwd == back else -1])
+                if at is None:      # a node
+                    break
+                over = [t for t in self._twins[(it[2]['way'],) + at] if t[0] is not it]
+                if len(over) != 1 or id(over[0][0]) in seen:
+                    why = 'stops on a parcel line'
+                    break
+                seen.add(id(over[0][0]))
+                nxt = (over[0][0], (over[0][1] == 0) != back)
+                parts.insert(0, nxt) if back else parts.append(nxt)
+        size = {id(it): run_metres(it[3]) for it, _ in parts}
+        if 2 * sum(size[id(it)] for it, fwd in parts if fwd) < sum(size.values()):
+            parts = [(it, not fwd) for it, fwd in reversed(parts)]
+        for (a, _), (b, _) in zip(parts, parts[1:]):
+            (r0, c0), (r1, c1) = parcel_of(a[0]), parcel_of(b[0])
+            if (r1 - r0, c1 - c0) not in HOP:
+                why = why or 'crosses a parcel corner'
+        start, before = {}, 0.0
+        for it, _ in parts:
+            start[id(it)] = before
+            before += size[id(it)]
+        chain = dict(parts=parts, start=start, size=size, ok=why is None, why=why)
+        for it, _ in parts:
+            self._whole[id(it)] = chain
+        return chain
 
     def add(self, R, named_only=False):
         for S in R['shapes']:
@@ -59,6 +137,8 @@ class Links:
                 js = [j for j, P in enumerate(pts) if P['link'] == L['id']]
                 j0 = js[0] if pts[js[0]]['role'] == 'start' else js[0] - 1
                 item = (R, S, L, pts[j0:js[-1] + 1])
+                self.items.append(item)
+                self._whole = None
                 if nm:
                     self.byname[nm].append(item)
                     cells = set()
@@ -186,16 +266,21 @@ def address_ranges(links, e, reach=None):
             nearest[int(num)] = m
     grouped = collections.defaultdict(list)
     for num, (c, side, along, dist, a) in nearest.items():
-        R, S, L, run = c
-        grouped[(R['code'][0], R['code'][1], S['at'], L['id'])].append((along, dist, num, a, side, c))
+        chain = links.whole(c)
+        fwd = dict((id(it), f) for it, f in chain['parts'])[id(c)]
+        along = chain['start'][id(c)] + (along if fwd else chain['size'][id(c)] - along)
+        grouped[id(chain)].append((along, dist, num, a, side if fwd else -side, chain))
     out = []
     for rows in grouped.values():
-        R, S, L, run = rows[0][5]
+        chain = rows[0][5]
+        if not chain['ok']:
+            R, S, L, _ = chain['parts'][0][0]
+            links.cut.append(dict(street=e['name'], town=e.get('town'), la=R['code'][0], lo=R['code'][1],
+                                  link=L['id'], way=L['way'], addresses=len(rows), why=chain['why']))
+            continue
         # the record runs the way the link's numbers rise; a side may still fall
         turn = -1 if falls([(r[0], r[2]) for r in rows]) else 1
-        first, last = (run[0], run[-1])[::turn]
-        k, i = first['word'] - R['unit'], last['word'] - R['unit']
-        refs = addre_io.street_refs(k, i, first['role'] != 'vertex', last['role'] != 'vertex')
+        (R, S, L, _), refs = chain_refs(chain, turn)
         items = []
         for left in (False, True):       # the factory holds the right side first
             part = [r for r in rows if (r[4] * turn > 0) == left]
@@ -212,6 +297,25 @@ def address_ranges(links, e, reach=None):
                         points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0],
                                      side='left' if r[4] * turn > 0 else 'right') for r in rows]))
     return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'])), unmatched
+
+
+def chain_refs(chain, turn=1):
+    """(the piece a record starts on, its reference groups) for a whole link run forwards
+    (turn 1) or backwards (-1). Each piece gives two groups. The second is tagged 2 where
+    the references rise inside the piece and 4 where they fall, 3 and 5 on the last piece;
+    the first has the same tag on the first piece and the hop tag on a later one. Every one
+    of the factory's 1.5 million pieces reads that way. Flag 0x40 marks a node or a point
+    on the line, 0x00 an interior vertex."""
+    parts = [(it, fwd == (turn > 0)) for it, fwd in chain['parts'][::turn]]
+    refs = []
+    for n, ((R, S, L, run), rises) in enumerate(parts):
+        first, last = (run[0], run[-1])[::1 if rises else -1]
+        tag = 2 if rises else 4
+        if n:
+            (r0, c0), (r1, c1) = parcel_of(parts[n - 1][0][0]), parcel_of(R)
+        refs.append((HOP[(r1 - r0, c1 - c0)] if n else tag, 0x40 if first['role'] != 'vertex' else 0, first['word'] - R['unit']))
+        refs.append((tag + (n == len(parts) - 1), 0x40 if last['role'] != 'vertex' else 0, last['word'] - R['unit']))
+    return parts[0][0], tuple(refs)
 
 
 def falls(rows):
@@ -239,13 +343,16 @@ def pick(links, e, local=False):
     return None
 
 
-def link_refs(e, how, d, c):
-    R, S, L, run = c
-    first, last = run[0], run[-1]
-    if metres(e['low'], (last['lon'], last['lat'])) < metres(e['low'], (first['lon'], first['lat'])):
-        first, last = last, first
-    k, i = first['word'] - R['unit'], last['word'] - R['unit']
-    refs = addre_io.street_refs(k, i, first['role'] != 'vertex', last['role'] != 'vertex')
+def link_refs(links, e, how, d, c):
+    """The row of a street with no number on any link: the whole link, from the end nearer
+    the street's lowest number. None when no record can follow the link."""
+    chain = links.whole(c)
+    if not chain['ok']:
+        return None
+    (a, fa), (b, fb) = chain['parts'][0], chain['parts'][-1]
+    first, last = a[3][0 if fa else -1], b[3][-1 if fb else 0]
+    turn = -1 if metres(e['low'], (last['lon'], last['lat'])) < metres(e['low'], (first['lon'], first['lat'])) else 1
+    (R, S, L, run), refs = chain_refs(chain, turn)
     mid = ((run[0]['lat'] + run[1]['lat']) / 2, (run[0]['lon'] + run[1]['lon']) / 2)
     assert addre_io.parcel_words(*mid) == tuple(R['code']), (e['street'], R['code'])
     home = addre_io.parcel_words(e['lat'], e['lon'])
