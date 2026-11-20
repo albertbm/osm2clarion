@@ -164,10 +164,14 @@ def place(links, ents, reach=None, join_up=False):
             owners[link].append(e)
     # a link with houses of two entries, one road in two municipalities, reads the same in both
     shared = {link: [r for e in es for r in rows[id(e)][0][link]] for link, es in owners.items() if len(es) > 1}
+    taken = {}      # a link with no house: the entry whose numbers reached it first
     for e in ents:
         grouped, cands, _ = rows[id(e)]
         if grouped and join_up:
             addr_links.join(addr_links.Street(links, cands, addr_links.Others(owners, set(grouped))), grouped)
+            for link in [k for k in grouped if k not in owners]:
+                if taken.setdefault(link, e) is not e:
+                    del grouped[link]
         grouped.update((link, shared[link]) for link in grouped if link in shared)
         ranges = addr_links.records(links, e, grouped)
         if ranges:

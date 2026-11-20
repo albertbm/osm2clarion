@@ -272,6 +272,22 @@ class Join(unittest.TestCase):
         placed, _ = build_addr_country.place(self.links(), ents, join_up=True)
         self.assertEqual([[(r['link'], r['lo'], r['hi']) for r in e['ranges']] for e in placed], [[(1, 1, 5)], [(3, 41, 45)]])
 
+    def test_a_link_with_no_house_takes_one_entrys_numbers(self):
+        # two entries whose numbers both reach the middle link, as two kunta's roads do
+        # where neither sees the other's houses: the first keeps it
+        links = self.links()
+        empty = links.whole(links.items[1])
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town=t, lat=62.24, lon=25.7401 + east / 51845)
+                for n, east, t in ((1, 50, 'X'), (1, 250, 'Y'))]
+        ents, _ = build_addr_country.entries(rows, {'X': 0, 'Y': 1}, 'X', lambda s: s)
+        old = addr_links.join
+        addr_links.join = lambda street, grouped: grouped[id(empty)].append((50.0, 0.0, 3, None, 1, empty, rows[0]))
+        try:
+            placed, _ = build_addr_country.place(links, ents, join_up=True)
+        finally:
+            addr_links.join = old
+        self.assertEqual([[r['link'] for r in e['ranges']] for e in placed], [[1, 2], [3]])
+
     def test_a_link_with_houses_of_two_entries_reads_the_same_in_both(self):
         rows = [dict(street='Katu', num=str(n), letter='', post=40100, town=t, lat=62.24, lon=25.7401 + east / 51845)
                 for n, east, t in ((1, 20, 'X'), (3, 50, 'Y'), (5, 80, 'X'))]
