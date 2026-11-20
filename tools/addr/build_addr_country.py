@@ -17,8 +17,10 @@ addresses in the [addr] register layout. Only addresses inside the area's relati
 since only those roads were rebuilt. A register row with a Swedish street name as well
 (Ryhti's street_swe) gives a street under each name, as the factory file lists both.
 
-A street gets one row per road link with the house numbers found along it, both sides of
-the road in the one row as the factory writes them, or a plain row when it has no numbers.
+A street gets one row per road link, both sides of the road in the one row as the factory
+writes them. Its numbers run on from link to link: those no address has are laid between
+the houses by distance, and below the lowest house from the street's end (addr_links.join).
+A street with no numbers gets one plain row.
 Each row points at a link of the street's own drawn shape in the rebuilt tile, through the
 shape index rd_build.py --shape-index wrote. A street with no road of its name in the tile
 is left out and listed in addr_skipped.json; one whose road carries its name in the other
@@ -147,15 +149,28 @@ def group(found, town_of, text, names):
     return sorted(out, key=lambda e: (e['key'], e['ladder'] or (), e['town'] or '')), odd
 
 
-def place(links, ents, reach=None):
+def place(links, ents, reach=None, join_up=False):
     """Give each entry its ranges or its link. Returns (placed, skipped). With `reach` only a
-    road of the name that close to an address counts (a whole country has many of each name)."""
+    road of the name that close to an address counts (a whole country has many of each name).
+    `join_up` makes the ranges run on from link to link (addr_links.join)."""
     placed, skipped = [], []
+    rows, owners = {}, collections.defaultdict(list)       # owners: the entries with a house on a link
     for e in ents:
-        ranges, e['unmatched'] = addr_links.address_ranges(links, e, reach)
+        rows[id(e)] = grouped, _, e['unmatched'] = addr_links.house_rows(links, e, reach)
+        for link in grouped:
+            owners[link].append(e)
+    # a link with houses of two entries, one road in two settlements, reads the same in both
+    shared = {link: [r for e in es for r in rows[id(e)][0][link]] for link, es in owners.items() if len(es) > 1}
+    for e in ents:
+        grouped, cands, _ = rows[id(e)]
+        if grouped and join_up:
+            addr_links.join(addr_links.Street(links, cands, addr_links.Others(owners, set(grouped))), grouped)
+        grouped.update((link, shared[link]) for link in grouped if link in shared)
+        ranges = addr_links.records(links, e, grouped)
         if ranges:
             e['ranges'] = sorted(ranges, key=lambda r: (r['lo'], r['hi']))    # the factory's order
-        else:
+    for e in ents:
+        if 'ranges' not in e:
             got = addr_links.pick(links, e, local=reach is not None)
             link = addr_links.link_refs(links, e, *got) if got and got[0] == 'name' else None
             if link is None:
@@ -255,10 +270,11 @@ def main():
         for p in a.shapes:
             for R in json.load(open(p))['records']:
                 links.add(R, named_only=True)
-    ents, skipped = place(links, ents, reach)
+    ents, skipped = place(links, ents, reach, join_up=True)
     if not ents:
         raise SystemExit('no address matched a road of the rebuilt tile')
     skipped, other = other_language(skipped, ents, text, settle.folder(fmt))
+    far = sum(len(e['unmatched']) for e in ents if 'ranges' in e)
 
     out, keys, blocks = addr_links.addre_mixed(
         ents, lambda e: e['ladder'], lambda n: addr_links.word_keys(addre_io.fold_key(n).upper()),
@@ -276,13 +292,12 @@ def main():
     (od / 'card.json').write_text(json.dumps(dict(files=files, index={'REFER001:' + name: len(out)}), indent=1))
     (od / 'addr_records.json').write_text(json.dumps(
         [dict(street=e['name'], town=e['town'], ladder=e['ladder'], posts=e['posts'], addresses=e['n'],
-              **(dict(ranges=[{k: r[k] for k in r if k != 'points'} for r in e['ranges']]) if 'ranges' in e
+              **(dict(ranges=[{k: r[k] for k in r if k not in ('points', 'of')} for r in e['ranges']]) if 'ranges' in e
                  else dict(link=e['link']))) for e in ents], ensure_ascii=False, indent=1))
     (od / 'addr_skipped.json').write_text(json.dumps(skipped + odd + links.cut, ensure_ascii=False, indent=1))
     (od / 'addr_other_language.json').write_text(json.dumps(other, ensure_ascii=False, indent=1))
     ranged = [e for e in ents if 'ranges' in e]
     per = collections.Counter(e['town'] or '(none)' for e in ents)
-    far = sum(len(e['unmatched']) for e in ents if 'ranges' in e)
     print('addresses in the area %d; streets %d (%d addresses), %d with house-number ranges (%d ranges), %d plain'
           % (len(found), len(ents), sum(e['n'] for e in ents), len(ranged), sum(len(e['ranges']) for e in ranged),
              len(ents) - len(ranged)))

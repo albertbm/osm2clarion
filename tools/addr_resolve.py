@@ -18,6 +18,8 @@ own tile, finds that record, and checks every group:
     style      on a tile that gives every link its style word, the link's header holds one
     items      at most one house-number item a side, the right side (0x54) first
     row        a range row's low and high numbers are those of its record's items
+    joined     a street's ranges of one parity run on, each starting two above the one
+               before: 98.1% of the factory's, pass at 90% of a file's
 
 Reads tiles with clarion_tile.read_tile, so it is for our own cards: whole parcels only.
 --only checks the named files, for a card that keeps factory address files beside ours.
@@ -158,14 +160,49 @@ def layout(rec, rows):
     return bad
 
 
+JOINED = 0.9      # the share of same-parity neighbours that must join; the factory's is 0.981
+
+
+class Streets:
+    """What a file's records must agree on beyond their own bytes."""
+
+    def __init__(self):
+        self.runs, self.pairs, self.joined = {}, 0, 0
+
+    def add(self, rec, street):
+        """Failures of one name record, taken in file order."""
+        bad = []
+        try:
+            items = addre_io.parse_items(rec['items'])
+        except ValueError:
+            return bad       # layout has said so
+        if rec['name'] is not None:
+            self.close()
+        for _, first, last in items:
+            if first % 2 == last % 2:
+                self.runs.setdefault(first % 2, []).append((min(first, last), max(first, last)))
+        return bad
+
+    def close(self):
+        for run in self.runs.values():
+            run.sort()
+            self.pairs += len(run) - 1
+            self.joined += sum(b[0] - a[1] == 2 for a, b in zip(run, run[1:]))
+        self.runs = {}
+
+    def ok(self):
+        self.close()
+        return self.joined >= JOINED * self.pairs
+
+
 def main(argv):
     if not argv: sys.exit(__doc__)
     card = Card(argv[0]); verbose = '--verbose' in argv
     only = argv[argv.index('--only') + 1:] if '--only' in argv else ()
-    total = ok = 0
+    total = ok = 0; whole = True
     for fn, d in card.addre(only).items():
         a = addre_io.Addre(d); last = None; n = good = 0
-        rows = {}
+        rows = {}; streets = Streets()
         for i in range(a.nsrec):
             row = addre_io.parse_range_record(a.srec(i))
             rows.setdefault(row['name_idx'], []).append(row)
@@ -175,6 +212,7 @@ def main(argv):
             last = street
             out, bad = resolve(card, rec, street)
             bad += layout(rec, rows.get(i, ()))
+            bad += streets.add(rec, street)
             n += 1; good += not bad
             if bad or verbose:
                 print('  %-24s %04x %04x %s' % (street, rec['lat'], rec['lon'], ' '.join('(%d,0x%02x,%d)' % g for g in rec['refs'])))
@@ -183,9 +221,12 @@ def main(argv):
                           % (g, o['tile'], *o['code'], o['word'], o['role'], o['link'], o['shape'], o['label']))
                 for b in bad: print('      FAIL ' + b)
         print('%s: %d of %d street records resolve' % (fn, good, n))
-        total += n; ok += good
-    print('all: %d of %d (%s)' % (ok, total, 'PASS' if total and ok == total else 'FAIL'))
-    return 0 if total and ok == total else 1
+        joined = streets.ok()
+        print('%s: %d of %d same-parity neighbours join (%s at %d%%)' % (fn, streets.joined, streets.pairs, 'PASS' if joined else 'FAIL', 100 * JOINED))
+        total += n; ok += good; whole &= joined
+    good = total and ok == total and whole
+    print('all: %d of %d (%s)' % (ok, total, 'PASS' if good else 'FAIL'))
+    return 0 if good else 1
 
 
 if __name__ == '__main__':

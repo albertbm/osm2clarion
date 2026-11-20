@@ -340,6 +340,43 @@ def capital_entries(g):
     return sorted(out, key=lambda e: (fold(e['name']), TOWNS.index(e['town'])))
 
 
+def street_ranges(links, ents, town_of):
+    """{id(entry): ranges} for the entries of one street name, one per town. Towns whose
+    houses lie on links that meet are one street: its numbers are joined as a whole, and a
+    range goes under the town of every house on its link, so a link reads the same under
+    each (60,873 of 60,873 links listed twice in the 2014 QY8 Finnish file)."""
+    street = addr_links.Street(links, links.byname.get(shape_index.label_text(ents[0]['name']), ()))
+    piece = street.pieces()
+    found = [addr_links.house_rows(links, e)[0] for e in ents]
+    first, root = {}, list(range(len(ents)))
+
+    def find(i):
+        while root[i] != i:
+            i = root[i]
+        return i
+    for i, grouped in enumerate(found):
+        for link in grouped:
+            if link in piece:
+                root[find(i)] = find(first.setdefault(piece[link], i))
+    root = [find(i) for i in range(len(ents))]
+    out = {id(e): [] for e in ents}
+    for k in sorted(set(root)):
+        rows = collections.defaultdict(list)
+        for i, grouped in enumerate(found):
+            if root[i] == k:
+                for link, rs in grouped.items():
+                    rows[link] += rs
+        if not rows:
+            continue
+        addr_links.join(street, rows)
+        for r in addr_links.records(links, ents[k], rows):
+            towns = {town_of[id(a)] for a in r['of']}
+            for i, e in enumerate(ents):
+                if root[i] == k and e['town'] in towns:
+                    out[id(e)].append(r)
+    return {i: sorted(rs, key=lambda r: (r['lo'], r['hi'])) for i, rs in out.items()}
+
+
 def build_addre_capital(ents):
     """Entries with e['ranges'] get per-link rows; every other entry keeps the single
     generic-row form, so no ranged entries reproduces the pre-range output exactly."""
@@ -443,12 +480,20 @@ def main_area(a):
     ents, fallback, skipped = [], [], []
     found_targets = set()
     only = set(a.only.split(',')) if a.only else None
-    for e in capital_entries(groups(a.addresses, a.postcodes, a.municipalities)):
+    g = groups(a.addresses, a.postcodes, a.municipalities)
+    town_of = {id(r): town for (_, town), rs in g.items() for r in rs}
+    every = capital_entries(g)
+    whole = collections.defaultdict(list)
+    for e in every if all_ranges else ():
+        if e['town'] not in plain_towns:
+            whole[e['name']].append(e)
+    ranges = {i: rs for es in whole.values() for i, rs in street_ranges(links, es, town_of).items()}
+    for e in every:
         if (all_ranges and e['town'] not in plain_towns) or (targets and e['name'] in targets):
             if targets:
                 found_targets.add(e['name'])
-            e['ranges'], failed = address_ranges(links, e)
-            if failed or not e['ranges']:
+            e['ranges'] = ranges.get(id(e)) if all_ranges else address_ranges(links, e, join_up=True)[0]
+            if not e['ranges']:
                 del e['ranges']
                 if not all_ranges:
                     skipped.append(e)
@@ -489,7 +534,8 @@ def main_area(a):
            boxword_lat(ICELAND[2]), boxword_lon(ICELAND[3]))
     (od / 'REFER001_COORD001.DAT').write_bytes(coord([(1 << 79, box)]))
     (od / 'REFER002_COORD001.DAT').write_bytes(coord([]))
-    records = [dict(street=e['name'], town=e['town'], posts=e['posts'], ranges=e['ranges']) if 'ranges' in e else
+    records = [dict(street=e['name'], town=e['town'], posts=e['posts'],
+                    ranges=[{k: r[k] for k in r if k != 'of'} for r in e['ranges']]) if 'ranges' in e else
                dict(e['link'], posts=e['posts'], addresses=e['n'], items=house_items(e['nums']).hex()) for e in ents]
     (od / 'addr_records.json').write_text(json.dumps(records, ensure_ascii=False, indent=1))
     (od / 'addr_skipped.json').write_text(json.dumps(

@@ -4,13 +4,15 @@
 An entry is one street of one town: dict(street, name, town, addresses, anchor, low, lat, lon).
 `pick` finds the link its record points at, `address_ranges` splits its house numbers into
 one range per link, holding both sides of the road as the factory does, and `link_refs`
-writes the reference words.
+writes the reference words. `join` gives the links between two houses the numbers between
+them, so a street's ranges run on as the factory's do.
 
 A tile cuts a link at every parcel line it crosses, and the index lists each piece as a link
 of its own. A record runs from node to node as the factory's do, over every piece, with a
 hop group at each line (`Links.whole`, `chain_refs`).
 """
 import collections
+import heapq
 import math
 import os
 import sys
@@ -236,16 +238,173 @@ def match_near(cands, addresses, reach):
     return out, missed
 
 
-def address_ranges(links, e, reach=None):
-    """(ranges, unmatched addresses): one range per link with a house on it, its items the
-    right and left side seen along its references. With `reach`, only roads of the name
-    within that many metres of an address count, and an address farther from all of them
-    is unmatched."""
+class Others:
+    """`link in Others(owners, mine)`: a link with a house on it, none of them this entry's."""
+
+    def __init__(self, owners, mine):
+        self.owners, self.mine = owners, mine
+
+    def __contains__(self, link):
+        return link in self.owners and link not in self.mine
+
+
+class Street:
+    """The whole links of one street as a graph of their end nodes. `others` holds the id
+    of each link with a house of another street of the name, the same road in the next
+    municipality: this street's numbers stay off those."""
+
+    def __init__(self, links, cands, others=()):
+        self.chains, self.at, self.beyond = {}, collections.defaultdict(list), set()
+        for c in cands:
+            ch = links.whole(c)
+            if not ch['ok'] or id(ch) in self.chains:
+                continue
+            if 'ends' not in ch:
+                (a, fa), (b, fb) = ch['parts'][0], ch['parts'][-1]
+                p, q = a[3][0 if fa else -1], b[3][-1 if fb else 0]
+                ch['ends'] = ((p['lon'], p['lat']), (q['lon'], q['lat']))
+                ch['length'] = sum(ch['size'].values())
+            if id(ch) in others:
+                self.beyond.update(ch['ends'])
+                continue
+            self.chains[id(ch)] = ch
+            for end, node in enumerate(ch['ends']):
+                self.at[node].append((ch, end))
+
+    def way(self, ca, sa, cb, sb):
+        """[(link, forwards, from, to)] from sa metres along ca to sb along cb, the shortest
+        way over the street's links. Where they do not meet, a straight hop between the
+        nearest ends, with None for its link."""
+        first = lambda end: (ca, bool(end), sa, ca['length'] if end else 0.0)
+        last = lambda end: (cb, not end, cb['length'] if end else 0.0, sb)
+        heap = [(ca['length'] - sa if end else sa, end, node, None) for end, node in enumerate(ca['ends'])]
+        heapq.heapify(heap)
+        done, n = {}, 2
+        while heap and not all(node in done for node in cb['ends']):
+            d, _, node, came = heapq.heappop(heap)
+            if node in done:
+                continue
+            done[node] = (d, came)
+            for ch, end in self.at[node]:
+                if ch is not ca and ch is not cb and ch['ends'][1 - end] not in done:
+                    n += 1
+                    heapq.heappush(heap, (d + ch['length'], n, ch['ends'][1 - end], (node, ch, end == 0)))
+        reached = [(done[node][0] + (cb['length'] - sb if end else sb), end) for end, node in enumerate(cb['ends']) if node in done]
+        if not reached:
+            _, ea, eb = min((metres(a, b), i, j) for i, a in enumerate(ca['ends']) for j, b in enumerate(cb['ends']))
+            return [first(ea), (None, True, 0.0, metres(ca['ends'][ea], cb['ends'][eb])), last(eb)]
+        _, eb = min(reached)
+        mid, node = [], cb['ends'][eb]
+        while done[node][1] is not None:
+            node, ch, fwd = done[node][1]
+            mid.append((ch, fwd, 0.0 if fwd else ch['length'], ch['length'] if fwd else 0.0))
+        ea = ca['ends'].index(node) if ca['ends'][0] != ca['ends'][1] else int(ca['length'] - sa < sa)
+        return [first(ea)] + mid[::-1] + [last(eb)]
+
+    def pieces(self):
+        """{id(link): which connected piece of the street it is in}."""
+        out = {}
+        for n, ch in enumerate(self.chains.values()):
+            todo = [ch] if id(ch) not in out else []
+            while todo:
+                c = todo.pop()
+                out[id(c)] = n
+                todo += [o for node in c['ends'] for o, _ in self.at[node] if id(o) not in out]
+        return out
+
+    def back(self, c, s, forwards):
+        """way() from the street's end to s metres along c, coming the way `forwards` says:
+        the links before c while the street does not fork. None where it comes from
+        another street's links, which hold the numbers below."""
+        out, seen = [(c, forwards, 0.0 if forwards else c['length'], s)], {id(c)}
+        node = c['ends'][0 if forwards else 1]
+        while True:
+            nxt = [(ch, end) for ch, end in self.at[node] if id(ch) not in seen]
+            if node in self.beyond:
+                return None
+            if len(nxt) != 1:
+                return out
+            ch, end = nxt[0]
+            seen.add(id(ch))
+            out.insert(0, (ch, bool(end), 0.0 if end else ch['length'], ch['length'] if end else 0.0))
+            node = ch['ends'][1 - end]
+
+
+def spread(way, low, high, sides, srcs):
+    """Rows for the numbers of one parity between two houses, low and high, laid along the
+    way between them by distance: the first and the last that land on each link. sides and
+    srcs are the two houses' side of the way and address. A number on a straight hop goes
+    to the nearer of the links it joins."""
+    steps = (high - low) // 2
+    total = max(sum(abs(t - f) for _, _, f, t in way), 1e-9)
+    at = lambda k: total * k / steps
+
+    def rows(piece, before, k0, k1):
+        ch, fwd, f, t = piece
+        out = []
+        for k in sorted({k0, k1}):
+            d = min(max(at(k) - before, 0.0), abs(t - f))
+            half = 2 * k >= steps
+            out.append((f + d if fwd else f - d, 0.0, low + 2 * k, None, sides[half] if fwd else -sides[half], ch, srcs[half]))
+        return out
+    out, before = [], 0.0
+    for n, piece in enumerate(way):
+        size = abs(piece[3] - piece[2])
+        k0 = max(1, math.ceil(before * steps / total - 1e-9))
+        k1 = steps - 1 if n == len(way) - 1 else min(steps - 1, math.ceil((before + size) * steps / total - 1e-9) - 1)
+        if k0 <= k1 and piece[0] is not None:
+            out += rows(piece, before, k0, k1)
+        elif k0 <= k1:
+            km = min(k1, math.ceil((before + size / 2) * steps / total - 1e-9) - 1)
+            if k0 <= km:
+                out += rows(way[n - 1], before - abs(way[n - 1][3] - way[n - 1][2]), k0, km)
+            if km < k1:
+                out += rows(way[n + 1], before + size, max(k0, km + 1), k1)
+        before += size
+    return out
+
+
+def join(street, grouped):
+    """Add to grouped ({id(link): rows}) the numbers no house has, so a street's ranges run
+    on from link to link as the factory's do: 98.1% of its same-parity neighbours start two
+    above the range before, and four in five runs start at 1 or 2 where the lowest house is
+    higher. Between two houses the numbers go by distance along the street; below the
+    lowest, from the street's end."""
+    def rises(a, b):
+        """Whether b lies forwards along a's link; None for the same place."""
+        if a[5] is b[5]:
+            return None if a[0] == b[0] else b[0] > a[0]
+        return street.way(a[5], a[0], b[5], b[0])[0][1]
+    houses = sorted((r for rows in grouped.values() for r in rows if id(r[5]) in street.chains), key=lambda r: r[2])
+    new = []
+    for parity in (0, 1):
+        run = [r for r in houses if r[2] % 2 == parity]
+        for a, b in zip(run, run[1:]):
+            if b[2] - a[2] > 2 and a[5] is not b[5]:
+                way = street.way(a[5], a[0], b[5], b[0])
+                sides = (a[4] if way[0][1] else -a[4], b[4] if way[-1][1] else -b[4])
+                new += spread(way, a[2], b[2], sides, (a[6], b[6]))
+        if run and run[0][2] > 2:
+            a = run[0]
+            # the next house up says which way the numbers rise, of the other parity if need be
+            up = next((x for b in run[1:] + [r for r in houses if r[2] > a[2]] for x in [rises(a, b)] if x is not None), None)
+            way = street.back(a[5], a[0], up) if up is not None else [(a[5], True, a[0], a[0])]
+            if way:
+                side = a[4] if way[-1][1] else -a[4]
+                new += spread(way, -parity, a[2], (side, side), (a[6], a[6]))
+    for r in new:
+        grouped[id(r[5])].append(r)
+
+
+def house_rows(links, e, reach=None):
+    """({id(link): rows}, the links of the street's name, unmatched addresses): each house
+    number of an entry on the whole link nearest it. A row is (metres along the link,
+    metres off it, number, address, side, link, address)."""
     unmatched = []
     if reach is None:
         cands = links.byname.get(shape_index.label_text(e['name']), ())
         if not cands:
-            return [], list(e['addresses'])
+            return {}, (), list(e['addresses'])
         matched = []
         for a in e['addresses']:
             p = (a['lon'], a['lat'])
@@ -257,7 +416,7 @@ def address_ranges(links, e, reach=None):
         cands = links.named_near(shape_index.label_text(e['name']), [a['lon'] for a in adr], [a['lat'] for a in adr], reach)
         matched, unmatched = match_near(cands, adr, reach)
         if not matched:
-            return [], unmatched
+            return {}, cands, unmatched
     # a number is one place on its street: of several buildings, the one nearest the road
     nearest = {}
     for m in matched:
@@ -269,7 +428,13 @@ def address_ranges(links, e, reach=None):
         chain = links.whole(c)
         fwd = dict((id(it), f) for it, f in chain['parts'])[id(c)]
         along = chain['start'][id(c)] + (along if fwd else chain['size'][id(c)] - along)
-        grouped[id(chain)].append((along, dist, num, a, side if fwd else -side, chain))
+        grouped[id(chain)].append((along, dist, num, a, side if fwd else -side, chain, a))
+    return grouped, cands, unmatched
+
+
+def records(links, e, grouped):
+    """One range per link from the rows of house_rows: its items the right and left side
+    seen along its references."""
     out = []
     for rows in grouped.values():
         chain = rows[0][5]
@@ -289,14 +454,27 @@ def address_ranges(links, e, reach=None):
             nums = [r[2] for r in part]
             ends = (min(nums), max(nums))[::-1 if falls([(r[0] * turn, r[2]) for r in part]) else 1]
             items.append(dict(side='left' if left else 'right', flag=addre_io.side_byte(left, nums),
-                              first=ends[0], last=ends[1], addresses=len(part)))
+                              first=ends[0], last=ends[1], addresses=sum(r[3] is not None for r in part)))
         nums = [r[2] for r in rows]
+        real = [r for r in rows if r[3] is not None]
         out.append(dict(lo=min(nums), hi=max(nums), items=items,
                         la=R['code'][0], lo_word=R['code'][1], refs=refs, shape_at=S['at'], link=L['id'],
-                        way=L['way'], label=S['label'], addresses=len(rows), max_metres=round(max(r[1] for r in rows), 1),
+                        way=L['way'], label=S['label'], addresses=len(real), max_metres=round(max(r[1] for r in rows), 1),
+                        of=[r[6] for r in real or rows],
                         points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0],
-                                     side='left' if r[4] * turn > 0 else 'right') for r in rows]))
-    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link'])), unmatched
+                                     side='left' if r[4] * turn > 0 else 'right') for r in real]))
+    return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link']))
+
+
+def address_ranges(links, e, reach=None, join_up=False):
+    """(ranges, unmatched addresses): one range per link with a house on it. With `reach`,
+    only roads of the name within that many metres of an address count, and an address
+    farther from all of them is unmatched. `join_up` fills in the numbers between the
+    houses (join)."""
+    grouped, cands, unmatched = house_rows(links, e, reach)
+    if grouped and join_up:
+        join(Street(links, cands), grouped)
+    return records(links, e, grouped), unmatched
 
 
 def chain_refs(chain, turn=1):

@@ -202,6 +202,81 @@ class Sides(unittest.TestCase):
         self.assertEqual(a.srec(0)[:8], bytes.fromhex('7f7f0000ffffffff'))
 
 
+class Join(unittest.TestCase):
+    """Ranges run on from link to link: the numbers no house has go by distance."""
+
+    def links(self, cut=False):
+        """KATU as three links running east, 104 m each; `cut` leaves the middle one out."""
+        lat, lon = 62.2401, 25.7401
+        pts = [dict(word=55 + 5 * i, link=max(i, 1), role='end' if i else 'start', lon=round(lon + 0.002 * i, 7), lat=lat)
+               for i in range(4)]
+        shapes = [dict(label='1=KATU', at=48, links=[dict(id=k, way=7) for k in (1, 2, 3)], points=pts)]
+        if cut:
+            west = [dict(p) for p in pts[:2]]
+            east = [dict(pts[2], role='start', link=3, word=155), dict(pts[3], word=160)]
+            shapes = [dict(label='1=KATU', at=48, links=[dict(id=1, way=7)], points=west),
+                      dict(label='1=KATU', at=148, links=[dict(id=3, way=8)], points=east)]
+        return addr_links.Links([dict(code=list(addre_io.parcel_words(lat, lon + 0.001)), unit=22, shapes=shapes)])
+
+    def ranges(self, houses, **how):
+        """houses: (number, metres east along the road, 'N' or 'S' of it)."""
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town='', lat=62.2401 + (0.0001 if ns == 'N' else -0.0001),
+                     lon=25.7401 + east / 51845) for n, east, ns in houses]
+        ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(self.links(**how), ents, join_up=True)
+        return [(r['link'], [(it['flag'], it['first'], it['last']) for it in r['items']], r['addresses'])
+                for r in placed[0]['ranges']]
+
+    def test_numbers_between_two_houses_go_by_distance(self):
+        # 5 at 50 m, 31 at 250 m: 7 to 29 are 15.4 m apart, the links end at 104 and 207 m
+        self.assertEqual(self.ranges([(3, 20, 'S'), (5, 50, 'S'), (31, 250, 'S'), (33, 290, 'S')]),
+                         [(1, [(0x54, 1, 11)], 2), (2, [(0x54, 13, 25)], 0), (3, [(0x54, 27, 33)], 2)])
+
+    def test_each_parity_on_its_own_side(self):
+        got = self.ranges([(1, 20, 'S'), (2, 20, 'N'), (21, 250, 'S'), (22, 250, 'N')])
+        self.assertEqual(got, [(1, [(0x54, 1, 7), (0x58, 2, 8)], 2), (2, [(0x54, 9, 17), (0x58, 10, 18)], 0),
+                               (3, [(0x54, 19, 21), (0x58, 20, 22)], 2)])
+
+    def test_numbers_below_the_lowest_house_run_from_the_streets_end(self):
+        # 21 at 250 m: 1 to 19 are 22.7 m apart from the west end
+        self.assertEqual(self.ranges([(21, 250, 'S'), (23, 290, 'S')]),
+                         [(1, [(0x54, 1, 7)], 0), (2, [(0x54, 9, 17)], 0), (3, [(0x54, 19, 23)], 2)])
+
+    def test_numbers_falling_eastwards(self):
+        # the street starts at its east end: the records run east to west, south is their left
+        # 7 to 13 are 54 m apart going west from 290 m
+        self.assertEqual(self.ranges([(5, 290, 'S'), (15, 20, 'S')]),
+                         [(3, [(0x58, 1, 7)], 1), (2, [(0x58, 9, 11)], 0), (1, [(0x58, 13, 15)], 1)])
+
+    def test_one_house_takes_the_numbers_below_it(self):
+        self.assertEqual(self.ranges([(8, 150, 'N')]), [(2, [(0x58, 2, 8)], 1)])
+
+    def test_links_that_do_not_meet(self):
+        # no link between 104 and 207 m: a number there goes to the nearer side
+        self.assertEqual(self.ranges([(1, 50, 'S'), (27, 250, 'S')], cut=True),
+                         [(1, [(0x54, 1, 13)], 1), (3, [(0x54, 15, 27)], 1)])
+
+    def test_a_road_that_runs_on_from_another_municipality(self):
+        # town X has the west link, town Y the east: Y's numbers do not start again at 1
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town=t, lat=62.24, lon=25.7401 + east / 51845)
+                for n, east, t in ((1, 20, 'X'), (5, 80, 'X'), (41, 250, 'Y'), (45, 290, 'Y'))]
+        ents, _ = build_addr_country.entries(rows, {'X': 0, 'Y': 1}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(self.links(), ents, join_up=True)
+        self.assertEqual([[(r['link'], r['lo'], r['hi']) for r in e['ranges']] for e in placed], [[(1, 1, 5)], [(3, 41, 45)]])
+
+    def test_a_link_with_houses_of_two_entries_reads_the_same_in_both(self):
+        rows = [dict(street='Katu', num=str(n), letter='', post=40100, town=t, lat=62.24, lon=25.7401 + east / 51845)
+                for n, east, t in ((1, 20, 'X'), (3, 50, 'Y'), (5, 80, 'X'))]
+        ents, _ = build_addr_country.entries(rows, {'X': 0, 'Y': 1}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(self.links(), ents, join_up=True)
+        self.assertEqual([[(r['link'], r['lo'], r['hi'], r['items']) for r in e['ranges']] for e in placed],
+                         [[(1, 1, 5, placed[0]['ranges'][0]['items'])]] * 2)
+
+    def test_houses_next_to_each_other_are_left_alone(self):
+        self.assertEqual(self.ranges([(1, 50, 'S'), (3, 150, 'S'), (5, 250, 'S')]),
+                         [(1, [(0x54, 1, 1)], 1), (2, [(0x54, 3, 3)], 1), (3, [(0x54, 5, 5)], 1)])
+
+
 class ParcelLine(unittest.TestCase):
     """A link the tile cuts at a parcel line is one record, with a hop group at the line."""
     BOX_W, BOX_E = [25.71875, 2987 / 48, 0.03125, 1 / 48], [25.75, 2987 / 48, 0.03125, 1 / 48]
@@ -329,6 +404,26 @@ class Layout(unittest.TestCase):
     def test_wrong_order_and_wrong_row(self):
         self.assertEqual(addr_resolve.layout(self.rec((0x58, 1, 5), (0x54, 2, 8)), []), ['items for sides 0x58 0x54'])
         self.assertEqual(addr_resolve.layout(self.rec((0x54, 2, 8)), [dict(rel=0, lo=2, hi=6)]), ['row 2-6 over items 2-8'])
+
+
+class Streets(unittest.TestCase):
+    """addr_resolve's checks across the records of a file."""
+
+    def rec(self, name, *items, lat=1, refs=((2, 0x40, 0), (3, 0x40, 9))):
+        return dict(name=name, lat=lat, lon=2, refs=refs,
+                    items=b''.join(addre_io.house_item(first, last, side) for side, first, last in items))
+
+    def test_joined(self):
+        s = addr_resolve.Streets()
+        s.add(self.rec('KATU', (0x54, 1, 5), (0x58, 2, 8)), 'KATU')
+        s.add(self.rec(None, (0x54, 13, 7), (0x58, 10, 10), lat=3), 'KATU')
+        s.add(self.rec('TIE', (0x54, 1, 5), lat=4), 'TIE')
+        self.assertTrue(s.ok())
+        self.assertEqual((s.joined, s.pairs), (2, 2))
+        s.add(self.rec('KUJA', (0x54, 1, 5), lat=5), 'KUJA')
+        s.add(self.rec(None, (0x54, 9, 11), lat=6), 'KUJA')
+        self.assertFalse(s.ok())
+        self.assertEqual((s.joined, s.pairs), (2, 3))
 
 
 class Colon(unittest.TestCase):
