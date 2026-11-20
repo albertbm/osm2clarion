@@ -15,6 +15,7 @@ sys.path.insert(0, str(ROOT / 'tools'))
 
 import bg_decode
 import clarion_bg
+import clarion_format
 import clarion_profile
 import clarion_rd
 import clarion_tile
@@ -1018,6 +1019,19 @@ class TestRoadShapes(unittest.TestCase):
         self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x4000], [1, 4])
         self.assertEqual([i for i, (_, x, _) in enumerate(pts) if x & 0x2000], [1, 4],
                          'the second link is restyled too, so it carries 0x2000 as well')
+
+    def test_a_qy7_link_repeats_an_unchanged_style_word(self):
+        old, fa_encode.FMT = fa_encode.FMT, clarion_format.X08_02
+        try:
+            self.assertEqual(fa_encode.restyled([0x201e, 0x201e]), [True, True])
+            words = fa_encode.shape_words(self.CHAIN, self.NODES)
+            pts = fa_encode.point_words(self.CHAIN)
+        finally:
+            fa_encode.FMT = old
+        ends = [o for o, _, role in pts if role != 'vertex']
+        self.assertEqual([words[o + 2] for o in ends[:-1]], [0x201e, 0x201e], 'a style word after each link start')
+        self.assertEqual([words[o + 1] & 0x2000 for o in ends[:-1]], [0x2000, 0x2000], 'and the bit that says so')
+        self.assertEqual(fa_encode.restyled([0x101e, 0x101e]), [True, False], 'a QY8 tile leaves it out')
 
     def test_oneway_bits_mark_every_y_of_the_link(self):
         for dirs, want in (([1, -1], [0x4000] * 4 + [0x8000] * 2),

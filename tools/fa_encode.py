@@ -92,8 +92,10 @@ def layer_class(hw, level, layer=None):
     return (layer if layer is not None else lay), cls
 
 def restyled(styles):
-    """Per link, whether its header carries a style word: the first always, a later one only where it changes."""
-    return [n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
+    """Per link, whether its header carries a style word: the first always, a later one only
+    where it changes. A QY7 tile repeats it on every link: 994,267 of 994,481 unchanged
+    links of the factory B58R050R."""
+    return [FMT.style_every_link or n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
 def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False, upper=()):
     """Section-1 shape words for one link chain: start point, then each link's header and
@@ -253,7 +255,7 @@ def header_words(fresh, has_g):
 def point_words(chain, level=1, styles=None, gs=None, head=0):
     """[(word offset, link id, role)] for every point shape_words writes; role is start, end or vertex.
     head: upper-link words in the shape's header."""
-    fresh = restyled(styles) if styles and level == 1 else [n == 0 and level == 1 for n in range(len(chain))]
+    fresh = restyled(styles or [None] * len(chain)) if level == 1 else [False] * len(chain)
     if gs is None or level != 1: gs = {}
     out = [(7 + head, chain[0][0], 'start')]
     q = 9 + head
@@ -273,7 +275,7 @@ def key_slots(chain, styles=None, gs=None, head=0):
     -> w722 lands on w722's x word). len(chain)+1 entries, in the
     order the firmware would read them off the card. A G word, when gs has one for the
     occurrence, sits at key slot + 1."""
-    fresh = restyled(styles) if styles else [n == 0 for n in range(len(chain))]
+    fresh = restyled(styles or [None] * len(chain))
     if gs is None: gs = {}
     q = 9 + head; px = 7 + head; slots = []
     for n, (lid, a, b, inner) in enumerate(chain):
