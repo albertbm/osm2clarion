@@ -18,6 +18,7 @@ own tile, finds that record, and checks every group:
     style      on a tile that gives every link its style word, the link's header holds one
     items      at most one house-number item a side, the right side (0x54) first
     row        a range row's low and high numbers are those of its record's items
+    alike      a link listed under two settlements holds the same numbers under each
     joined     a street's ranges of one parity run on, each starting two above the one
                before: 98.1% of the factory's, pass at 90% of a file's
 
@@ -167,7 +168,7 @@ class Streets:
     """What a file's records must agree on beyond their own bytes."""
 
     def __init__(self):
-        self.runs, self.pairs, self.joined = {}, 0, 0
+        self.links, self.runs, self.pairs, self.joined = {}, {}, 0, 0
 
     def add(self, rec, street):
         """Failures of one name record, taken in file order."""
@@ -178,6 +179,9 @@ class Streets:
             return bad       # layout has said so
         if rec['name'] is not None:
             self.close()
+        link = (street, rec['lat'], rec['lon'], tuple(rec['refs']))
+        if self.links.setdefault(link, rec['items']) != rec['items']:
+            bad.append('other numbers than the same link holds under another settlement')
         for _, first, last in items:
             if first % 2 == last % 2:
                 self.runs.setdefault(first % 2, []).append((min(first, last), max(first, last)))

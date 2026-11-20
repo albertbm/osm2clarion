@@ -20,7 +20,9 @@ since only those roads were rebuilt. A register row with a Swedish street name a
 A street gets one row per road link, both sides of the road in the one row as the factory
 writes them. Its numbers run on from link to link: those no address has are laid between
 the houses by distance, and below the lowest house from the street's end (addr_links.join).
-A street with no numbers gets one plain row.
+A street is placed whole in its municipality and each row listed under the settlements of
+the addresses on its link, the same numbers under each. A street with no numbers gets one
+plain row on one link.
 Each row points at a link of the street's own drawn shape in the rebuilt tile, through the
 shape index rd_build.py --shape-index wrote. A street with no road of its name in the tile
 is left out and listed in addr_skipped.json; one whose road carries its name in the other
@@ -159,7 +161,7 @@ def place(links, ents, reach=None, join_up=False):
         rows[id(e)] = grouped, _, e['unmatched'] = addr_links.house_rows(links, e, reach)
         for link in grouped:
             owners[link].append(e)
-    # a link with houses of two entries, one road in two settlements, reads the same in both
+    # a link with houses of two entries, one road in two municipalities, reads the same in both
     shared = {link: [r for e in es for r in rows[id(e)][0][link]] for link, es in owners.items() if len(es) > 1}
     for e in ents:
         grouped, cands, _ = rows[id(e)]
@@ -172,16 +174,44 @@ def place(links, ents, reach=None, join_up=False):
     for e in ents:
         if 'ranges' not in e:
             got = addr_links.pick(links, e, local=reach is not None)
-            link = addr_links.link_refs(links, e, *got) if got and got[0] == 'name' else None
-            if link is None:
+            got = got if got and got[0] == 'name' else None
+            numbered = got and addr_links.range_on(links, got[2])
+            link = addr_links.link_refs(links, e, *got) if got and not numbered else None
+            if numbered:
+                e['ranges'] = [numbered]     # a link reads the same under every street entry
+            elif link is None:
                 skipped.append(dict(street=e['name'], town=e['town'], ladder=e['ladder'], addresses=e['n'],
                                     lat=e['lat'], lon=e['lon'], why='no road of this name in the rebuilt tile',
                                     rows=e['addresses']))
                 continue
-            e['link'] = link
-            e['nums'] = []      # a factory row with no link per number holds no numbers
+            else:
+                e['link'] = link
+                e['nums'] = []      # a factory row with no link per number holds no numbers
         placed.append(e)
     return placed, skipped
+
+
+def under_settlements(streets, places):
+    """Entries by street and settlement from streets placed whole. places(address) lists its
+    (town, ladder), and a range goes under every settlement an address on its link has, so
+    a link reads the same wherever it is listed: the factory's 59,950 links under two or
+    more settlements hold the same numbers under each."""
+    def of(rows):
+        return sorted({at for a in rows for at in places(a)})
+    out = []
+    for e in streets:
+        parts = collections.defaultdict(list)
+        for r in e.get('ranges', ()):
+            for at in of(r['of']):
+                parts[at].append(r)
+        if 'ranges' not in e:
+            parts = dict.fromkeys(of(e['addresses']))
+        for at, ranges in parts.items():
+            new = dict(street=e['name'], name=e['name'], key=e['key'], town=at[0], ladder=at[1], posts=e['posts'],
+                       n=sum(at in places(a) for a in e['addresses']))
+            new.update(dict(link=e['link'], nums=[]) if ranges is None else dict(ranges=ranges))
+            out.append(new)
+    return sorted(out, key=lambda e: (e['key'], e['ladder'], e['town'] or ''))
 
 
 def other_language(skipped, placed, text, fold):
@@ -199,23 +229,29 @@ def other_language(skipped, placed, text, fold):
 
 
 def by_settlement(P, a, ic, factory, labels, found, fmt):
-    """(town_of, names, report lines) for a whole country, each address placed by settle.py."""
+    """(places, names, report lines) for a whole country, each address placed by settle.py.
+    places(rows) gives each row its ((town, ladder), ...): its own settlement, then the
+    others that list its links."""
     fold = settle.folder(fmt)
     tree, _ = settle.area_tree(ic, P.country, fmt.codec)
     recs = settle.factory_records(factory, fmt, tree)
     S = settle.Settler(tree, recs, addr_sources.osm_municipalities(a.pbf), fold)
-    out, home = S.assign(found)
     names = {k: {i: n for n, i in s.items()} for k, (_, s) in tree.items()}
-    got = {id(r): (k, s) for r, (k, s, _, _) in zip(found, out)}
+    kept = []
 
-    def town_of(r):
-        k, s = got[id(r)]
-        return names[k].get(s, k), tree[k][0] + (s,)
+    def places(rows):
+        out, home = S.assign(rows)
+        kept[:] = [out, home]
+        return [tuple((names[k].get(t, k), tree[k][0] + (t,)) for t in (s,) + more)
+                for (k, s, _, _), more in zip(out, S.extra)]
+    first = places(found)
+    out, home = kept
+    places.found = first
     lines = ['factory: %d kunta rows, %d name records (%d with no parcel position); %d municipality numbers matched'
              % (len(tree), len(recs), sum(r[3] is None for r in recs), len(S.kunta_of)),
              'merged away since the card: %s' % (', '.join('%s (now %d)' % kv for kv in sorted(home.items())) or 'none in these rows')]
     lines += ['  %-32s %8d addresses %7d streets' % (p, *n) for p, n in settle.counts(found, out, fold).items()]
-    return town_of, (lambda r: names_of(r, fold)), lines
+    return places, (lambda r: names_of(r, fold)), lines
 
 
 def main():
@@ -263,9 +299,11 @@ def main():
     else:
         print('%s: ordinal %d, area %s placed by the factory street file, %d levels, DATA VERSION %s'
               % (name, ordinal, a.area, len(labels), version))
-        town_of, names, lines = by_settlement(P, a, ic, old, labels, found, fmt)
+        places, names, lines = by_settlement(P, a, ic, old, labels, found, fmt)
         print('\n'.join(lines))
-        ents, odd = group(found, town_of, text, names)
+        at = {id(r): pl for r, pl in zip(found, places.found)}
+        # a street is placed whole in its kunta, then listed under its settlements
+        ents, odd = group(found, lambda r: (None, at[id(r)][0][1][:-1]), text, names)
         reach, links = addr_links.NAME_REACH, addr_links.Links([], named_only=True)
         for p in a.shapes:
             for R in json.load(open(p))['records']:
@@ -275,6 +313,8 @@ def main():
         raise SystemExit('no address matched a road of the rebuilt tile')
     skipped, other = other_language(skipped, ents, text, settle.folder(fmt))
     far = sum(len(e['unmatched']) for e in ents if 'ranges' in e)
+    if not municipality:
+        ents = under_settlements(ents, lambda r: at[id(r)])
 
     out, keys, blocks = addr_links.addre_mixed(
         ents, lambda e: e['ladder'], lambda n: addr_links.word_keys(addre_io.fold_key(n).upper()),

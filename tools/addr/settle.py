@@ -19,6 +19,13 @@ The factory's no-settlement marker counts as a settlement in b and c, since the 
 writes it there; d picks a real settlement. Factory positions are level-1 parcel centres, the
 precision a record's lat/lon words carry; a record whose words name no whole parcel has no
 position and only counts in b and c.
+
+The tree's settlements overlap: a village's links are listed under the larger place around
+it as well, with the same numbers (ILMOPOHJA's 8 links under ORAVASAARI too). In the QY7
+file 59,950 links are under two or more settlements, and where two settlements share a
+street one's links lie wholly inside the other's in 13,994 of 14,065 cases. So an address
+also goes to every settlement that lists at least half of the links its own settlement
+holds at the factory position that placed it (Settler.extra).
 """
 import collections
 import os
@@ -73,7 +80,8 @@ def xy(lat, lon):
 
 
 def factory_records(addre, fmt, tree):
-    """[(kunta, street name, settlement index, lat or None, lon or None)] of a factory ADDRE file."""
+    """[(kunta, street name, settlement index, lat or None, lon or None, link)] of a factory
+    ADDRE file; the link is the record's parcel code and references."""
     kunta_of = {path: k for k, (path, _) in tree.items()}
     out, cur = [], None
     for r in addre.names:
@@ -88,7 +96,7 @@ def factory_records(addre, fmt, tree):
             lat, lon = (row + .5) / 48, (col + .5) / 32 - 924
         except AssertionError:
             lat = lon = None
-        out.append(cur + (lat, lon))
+        out.append(cur + (lat, lon, (p['lat'], p['lon'], tuple(p['refs']))))
     return out
 
 
@@ -108,13 +116,18 @@ class Centres:
     def __bool__(self):
         return bool(self.keys)
 
-    def nearest(self, lat, lon):
-        """The most common label at each point's nearest position; equal distances pool their counts."""
+    def nearest(self, lat, lon, spots=False):
+        """The most common label at each point's nearest position; equal distances pool their
+        counts. With `spots`, (label, the positions pooled) instead."""
         x, y = xy(lat, lon)
         pairs = self.tree.query_nearest(shapely.points(x, y), all_matches=True)
         pooled = collections.defaultdict(collections.Counter)
+        where = collections.defaultdict(list)
         for i, j in zip(*pairs):
             pooled[int(i)].update(self.counts[int(j)])
+            where[int(i)].append(self.keys[int(j)])
+        if spots:
+            return [(best(pooled[i]), where[i]) for i in range(len(x))]
         return [best(pooled[i]) for i in range(len(x))]
 
 
@@ -136,9 +149,15 @@ class Settler:
                 self.kunta_of[int(num)] = hit.pop()
         self.merged = sorted(set(tree) - set(self.kunta_of.values()))
         self.streets = collections.defaultdict(lambda: collections.defaultdict(list))
+        self.listed = collections.defaultdict(set)      # (kunta, name, link): its settlements
+        self.spot = collections.defaultdict(list)       # (kunta, lat, lon): (settlement, name, link)
+        self.extra = []
         located = collections.defaultdict(list)
-        for k, name, s, lat, lon in records:
+        for k, name, s, lat, lon, *link in records:
             self.streets[k][fold(name)].append((s, lat, lon))
+            if link:
+                self.listed[(k, fold(name), link[0])].add(s)
+                self.spot[(k, lat, lon)].append((s, fold(name), link[0]))
             if lat is not None:
                 located[k].append((lat, lon, s))
         self.located = located
@@ -190,6 +209,7 @@ class Settler:
                 if k != self.kunta_of.get(c):
                     khow[i] = tag
         settle = [None] * n
+        self.extra = [()] * n       # per row, the other settlements that list its links
         groups = collections.defaultdict(list)
         for i, r in enumerate(rows):
             st = self.streets[kunta[i]]
@@ -197,9 +217,11 @@ class Settler:
             groups[(kunta[i], name)].append(i)
         for (k, name), idx in sorted(groups.items(), key=lambda g: (g[0][0], g[0][1] or '')):
             idx = np.array(idx)
+            spots = [()] * len(idx)
             if name is None:
                 if self.real.get(k):
-                    got, tag = self.real[k].nearest(lat[idx], lon[idx]), PATHS[2]
+                    got, tag = self.real[k].nearest(lat[idx], lon[idx], spots=True), PATHS[2]
+                    got, spots = zip(*got)
                 else:
                     got, tag = [self.none[k]] * len(idx), PATHS[3]
             else:
@@ -208,18 +230,28 @@ class Settler:
                 if len(kinds) == 1:
                     got, tag = [kinds.pop()] * len(idx), PATHS[0]
                 else:
-                    got, tag = self._same_name(recs, lat[idx], lon[idx]), PATHS[1]
-            for i, s in zip(idx, got):
+                    (got, spots), tag = self._same_name(recs, lat[idx], lon[idx]), PATHS[1]
+            for i, s, at in zip(idx, got, spots):
                 settle[i] = s
                 how[i] = tag
+                self.extra[i] = self._others(k, s, name, at)
         return list(zip(kunta, settle, khow, how)), home
+
+    def _others(self, k, s, name, spots):
+        """The settlements besides s that list at least half of the links s holds at these
+        positions, of one street or of any when name is None."""
+        links = {(nm, link) for la, lo in spots for t, nm, link in self.spot.get((k, la, lo), ())
+                 if t == s and name in (None, nm)}
+        n = collections.Counter(t for nm, link in links for t in self.listed[(k, nm, link)] if t != s)
+        return tuple(sorted(t for t, c in n.items() if 2 * c >= len(links)))
 
     @staticmethod
     def _same_name(recs, lat, lon):
+        """(settlement per point, the factory positions that gave it)."""
         pos = [(la, lo, s) for s, la, lo in recs if la is not None]
         if not pos:
-            return [best(collections.Counter(s for s, _, _ in recs))] * len(lat)
-        return Centres(pos).nearest(lat, lon)
+            return [best(collections.Counter(s for s, _, _ in recs))] * len(lat), [()] * len(lat)
+        return zip(*Centres(pos).nearest(lat, lon, spots=True))
 
 
 def counts(rows, out, fold):

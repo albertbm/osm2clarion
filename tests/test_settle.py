@@ -101,6 +101,37 @@ class Rules(unittest.TestCase):
                           'd: nearest factory record': (1, 1)})
 
 
+class Nested(unittest.TestCase):
+    """The factory lists a village's links under the town around it as well."""
+    RECORDS = [
+        ('LAHTI', 'KYLÄTIE', 1, *SUBURB, 'k1'), ('LAHTI', 'KYLÄTIE', 0, *SUBURB, 'k1'),     # one link, under both
+        ('LAHTI', 'KYLÄTIE', 0, *CITY, 'k2'),
+        ('LAHTI', 'RANTATIE', 1, *SUBURB, 'r1'), ('LAHTI', 'RANTATIE', 0, *SUBURB, 'r1'),
+        ('LAHTI', 'KAUPPAKATU', 0, *CITY, 'c1'),
+    ]
+
+    def extra(self, *rows):
+        S = settle.Settler(TREE, self.RECORDS, MUNICIPALITIES, settle.folder(V5))
+        out, _ = S.assign(list(rows))
+        return [(s, more) for (_, s, _, _), more in zip(out, S.extra)]
+
+    def test_a_street_the_factory_lists_under_both(self):
+        self.assertEqual(self.extra(row('Kylätie', '398', 61.001, 25.601), row('Kylätie', '398', 60.981, 25.661)),
+                         [(0, (1,)), (0, ())])
+
+    def test_a_new_street_follows_the_links_around_it(self):
+        self.assertEqual(self.extra(row('Uusitie', '398', 61.001, 25.601), row('Uusitie', '398', 60.981, 25.661)),
+                         [(0, (1,)), (0, ())])
+
+    def test_a_street_in_one_settlement_stays_there(self):
+        self.assertEqual(self.extra(row('Kauppakatu', '398', 61.001, 25.601)), [(0, ())])
+
+    def test_records_without_links_add_nothing(self):
+        S = settle.Settler(TREE, RECORDS, MUNICIPALITIES, settle.folder(V5))
+        S.assign([row('Salpausseläntie', '398', 61.001, 25.601)])
+        self.assertEqual(S.extra, [()])
+
+
 class FromTheCard(unittest.TestCase):
     def test_area_tree(self):
         tree, labels = settle.area_tree(icode(), 246, 'latin-1')
@@ -119,6 +150,7 @@ class FromTheCard(unittest.TestCase):
         tree = {'JYVÄSKYLÄ': ((6, 1, 1), {'A': 0, 'B': 1, 'C': 2})}
         got = settle.factory_records(addre_io.Addre(out), V5, tree)
         self.assertEqual([g[:3] for g in got], [('JYVÄSKYLÄ', 'KAUPPAKATU', 2), ('JYVÄSKYLÄ', 'KOULUTIE', 3)])
+        self.assertEqual({g[5] for g in got}, {(la, lo, ((2, 0x40, 10), (3, 0x40, 20)))})
         for g in got:     # the parcel centre, within half a parcel of the point
             self.assertLess(abs(g[3] - lat), 1 / 96)
             self.assertLess(abs(g[4] - lon), 1 / 64)

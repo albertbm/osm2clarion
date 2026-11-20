@@ -256,6 +256,14 @@ class Join(unittest.TestCase):
         self.assertEqual(self.ranges([(1, 50, 'S'), (27, 250, 'S')], cut=True),
                          [(1, [(0x54, 1, 13)], 1), (3, [(0x54, 15, 27)], 1)])
 
+    def test_an_entry_with_no_numbers_takes_the_range_of_its_link(self):
+        rows = [dict(street='Katu', num=n, letter='', post=40100, town=t, lat=62.24, lon=25.7401 + 50 / 51845)
+                for n, t in (('1', 'X'), ('B', 'Y'))]
+        ents, _ = build_addr_country.entries(rows, {'X': 0, 'Y': 1}, 'X', lambda s: s)
+        placed, _ = build_addr_country.place(self.links(), ents, join_up=True)
+        self.assertEqual([e['town'] for e in placed], ['X', 'Y'])
+        self.assertIs(placed[1]['ranges'][0], placed[0]['ranges'][0])
+
     def test_a_road_that_runs_on_from_another_municipality(self):
         # town X has the west link, town Y the east: Y's numbers do not start again at 1
         rows = [dict(street='Katu', num=str(n), letter='', post=40100, town=t, lat=62.24, lon=25.7401 + east / 51845)
@@ -275,6 +283,35 @@ class Join(unittest.TestCase):
     def test_houses_next_to_each_other_are_left_alone(self):
         self.assertEqual(self.ranges([(1, 50, 'S'), (3, 150, 'S'), (5, 250, 'S')]),
                          [(1, [(0x54, 1, 1)], 1), (2, [(0x54, 3, 3)], 1), (3, [(0x54, 5, 5)], 1)])
+
+
+class Settlements(unittest.TestCase):
+    def test_a_range_goes_under_the_settlements_of_its_addresses(self):
+        village, town = ('KYLÄ', (6, 1, 1, 0)), ('KAUPUNKI', (6, 1, 1, 1))
+        a, b, c = (dict(num=n) for n in '123')
+        at = {id(a): (village, town), id(b): (village, town), id(c): (town,)}
+        low, high = dict(lo=1, hi=2, of=[a, b], addresses=2), dict(lo=3, hi=3, of=[c], addresses=1)
+        street = dict(name='KATU', key='KATU', ladder=(6, 1, 1), posts=[], addresses=[a, b, c], ranges=[low, high])
+        ents = build_addr_country.under_settlements([street], lambda r: at[id(r)])
+        self.assertEqual([(e['town'], e['ladder'], e['n']) for e in ents], [('KYLÄ', (6, 1, 1, 0), 2), ('KAUPUNKI', (6, 1, 1, 1), 3)])
+        self.assertEqual([e['ranges'] for e in ents], [[low], [low, high]])
+        self.assertIs(ents[0]['ranges'][0], ents[1]['ranges'][0])      # the same numbers under each
+
+    def test_a_link_with_addresses_of_two_settlements_goes_under_both(self):
+        here, there = ('A', (6, 1, 1, 0)), ('B', (6, 1, 1, 1))
+        rows = [dict(num=str(n)) for n in (1, 2, 3)]
+        at = {id(rows[0]): (here,), id(rows[1]): (here,), id(rows[2]): (there,)}
+        street = dict(name='KATU', key='KATU', ladder=(6, 1, 1), posts=[], addresses=rows,
+                      ranges=[dict(lo=1, hi=3, of=rows, addresses=3)])
+        ents = build_addr_country.under_settlements([street], lambda r: at[id(r)])
+        self.assertEqual([(e['town'], e['n'], e['ranges'][0]['hi']) for e in ents], [('A', 2, 3), ('B', 1, 3)])
+
+    def test_a_street_with_no_numbers(self):
+        here = ('A', (6, 1, 1, 0))
+        rows = [dict(num='B')]
+        street = dict(name='KATU', key='KATU', ladder=(6, 1, 1), posts=[], addresses=rows, link=dict(la=1, lo=2), n=1)
+        (e,) = build_addr_country.under_settlements([street], lambda r: (here,))
+        self.assertEqual((e['town'], e['link'], e['nums'], 'ranges' in e), ('A', dict(la=1, lo=2), [], False))
 
 
 class ParcelLine(unittest.TestCase):
@@ -412,6 +449,14 @@ class Streets(unittest.TestCase):
     def rec(self, name, *items, lat=1, refs=((2, 0x40, 0), (3, 0x40, 9))):
         return dict(name=name, lat=lat, lon=2, refs=refs,
                     items=b''.join(addre_io.house_item(first, last, side) for side, first, last in items))
+
+    def test_a_link_reads_the_same_under_each_settlement(self):
+        s = addr_resolve.Streets()
+        self.assertEqual(s.add(self.rec('KATU', (0x54, 1, 5)), 'KATU'), [])
+        self.assertEqual(s.add(self.rec('KATU', (0x54, 1, 5)), 'KATU'), [])
+        self.assertEqual(s.add(self.rec('KATU', (0x54, 1, 3)), 'KATU'),
+                         ['other numbers than the same link holds under another settlement'])
+        self.assertEqual(s.add(self.rec('TIE', (0x54, 1, 3)), 'TIE'), [])
 
     def test_joined(self):
         s = addr_resolve.Streets()

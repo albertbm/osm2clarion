@@ -502,6 +502,11 @@ def main_area(a):
                 if got is None:
                     skipped.append(e)
                     continue
+                numbered = got[0] == 'name' and addr_links.range_on(links, got[2])
+                if numbered:      # a link reads the same under every town
+                    e['ranges'] = [numbered]
+                    ents.append(e)
+                    continue
                 e['link'] = link_refs(links, e, *got)
                 if e['link'] is None:
                     skipped.append(e)
@@ -518,6 +523,13 @@ def main_area(a):
     missing_targets = targets - found_targets if targets else set()
     if missing_targets:
         raise SystemExit('--house-ranges streets not found: %s' % ', '.join(sorted(missing_targets)))
+    shared = collections.defaultdict(list)
+    for e in fallback:
+        shared[(e['name'], e['link']['la'], e['link']['lo'], e['link']['refs'])].append(e)
+    for es in shared.values():      # one link of one name under two towns: the same numbers under each
+        nums = sorted({n for e in es for n in e['nums']})
+        for e in es:
+            e['nums'] = nums
     full = ents
     if only is not None:
         ents = [e for e in full if e['name'] in only]

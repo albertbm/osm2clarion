@@ -80,6 +80,7 @@ class Links:
         self.named = collections.defaultdict(list)
         self.items = []
         self.cut = []         # links left out: no record can follow them over a parcel line
+        self.used = {}        # id of each whole link a record was written for: its range, if it has numbers
         self._whole = None
         for R in records:
             self.add(R, named_only)
@@ -457,12 +458,13 @@ def records(links, e, grouped):
                               first=ends[0], last=ends[1], addresses=sum(r[3] is not None for r in part)))
         nums = [r[2] for r in rows]
         real = [r for r in rows if r[3] is not None]
-        out.append(dict(lo=min(nums), hi=max(nums), items=items,
+        links.used[id(chain)] = dict(lo=min(nums), hi=max(nums), items=items,
                         la=R['code'][0], lo_word=R['code'][1], refs=refs, shape_at=S['at'], link=L['id'],
                         way=L['way'], label=S['label'], addresses=len(real), max_metres=round(max(r[1] for r in rows), 1),
                         of=[r[6] for r in real or rows],
                         points=[dict(num=r[2], lat=r[3]['lat'], lon=r[3]['lon'], along=r[0],
-                                     side='left' if r[4] * turn > 0 else 'right') for r in real]))
+                                     side='left' if r[4] * turn > 0 else 'right') for r in real])
+        out.append(links.used[id(chain)])
     return sorted(out, key=lambda r: (r['la'], r['lo_word'], r['shape_at'], r['link']))
 
 
@@ -522,12 +524,18 @@ def pick(links, e, local=False):
     return None
 
 
+def range_on(links, c):
+    """The range already written for the whole link of a piece, or None."""
+    return links.used.get(id(links.whole(c)))
+
+
 def link_refs(links, e, how, d, c):
     """The row of a street with no number on any link: the whole link, from the end nearer
     the street's lowest number. None when no record can follow the link."""
     chain = links.whole(c)
     if not chain['ok']:
         return None
+    links.used.setdefault(id(chain))
     (a, fa), (b, fb) = chain['parts'][0], chain['parts'][-1]
     first, last = a[3][0 if fa else -1], b[3][-1 if fb else 0]
     turn = -1 if metres(e['low'], (last['lon'], last['lat'])) < metres(e['low'], (first['lon'], first['lat'])) else 1
