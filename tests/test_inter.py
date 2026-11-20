@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The X08-02 (QY7) intersection search: records, keys, the file layout and the builder."""
+import json
 import struct
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -105,6 +107,14 @@ class Layout(unittest.TestCase):
         out, _keys, _rows, firsts, seconds = self.build(1700)
         I = inter_io.Inter(out)
         self.assertEqual((I.first, I.second), (firsts, seconds))
+
+
+class Colon(unittest.TestCase):
+    def test_a_street_gets_its_colon_back(self):
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / 'roads.json'
+            p.write_text(json.dumps([dict(name='Gregorius IX:n tie'), dict(name='Yrjönkatu'), dict(name='Tie "A"')]))
+            self.assertEqual(build_inter.colon_names(p, lambda s: s), {"GREGORIUS IX'N TIE": 'GREGORIUS IX:N TIE'})
 
 
 class Builder(unittest.TestCase):

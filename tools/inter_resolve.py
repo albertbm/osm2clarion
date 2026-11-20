@@ -81,7 +81,7 @@ def check_file(card, nodes, d, verbose):
             else:
                 here = pt.get((s['x'], s['y']), set())
                 for street in (f['name'], s['name']):
-                    if street.upper() not in here: why.append('no node of %s at the point (%s)' % (street, ', '.join(sorted(here)) or 'no named node'))
+                    if shape_index.label_text(street.upper()) not in here: why.append('no node of %s at the point (%s)' % (street, ', '.join(sorted(here)) or 'no named node'))
             good += not why
             if why or verbose:
                 print('  %-28s x %-28s %04x %04x %4d %4d' % (f['name'], s['name'], s['la'], s['lo'], s['x'], s['y']))

@@ -273,7 +273,7 @@ def area_steps(P, prof, base, out, work, area, osm, addresses=None, addr_area=No
             print('the profile sets no [build] inter; the card keeps its intersection files')
             return
         same_base()
-        run(tool('addr/build_inter.py'), inter_dir, '--profile', prof, '--card', base,
+        run(tool('addr/build_inter.py'), inter_dir, '--profile', prof, '--card', base, '--roads', roads,
             '--tiles', *[os.path.join(outmap, c + '.DAT') for c in cells])
 
     def point():

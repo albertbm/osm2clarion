@@ -25,6 +25,15 @@ class ShapeIndexLabel(unittest.TestCase):
             rd_build.FMT = old
         self.assertEqual(R['shapes'][0]['label'], '1=TRAVEMÜNDE (D) ? HELSINKI (FIN)')
 
+    def test_a_colon_is_an_apostrophe(self):
+        old = rd_build.UPPER_NAMES
+        rd_build.UPPER_NAMES = True
+        try:
+            self.assertEqual(rd_build.label('Kaarle IX:n katu', '12'), "1=KAARLE IX'N KATU;2=12")
+        finally:
+            rd_build.UPPER_NAMES = old
+        self.assertEqual(rd_build.label(None, '12'), '2=12')
+
 
 if __name__ == '__main__':
     unittest.main()

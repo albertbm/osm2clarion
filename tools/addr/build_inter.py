@@ -20,6 +20,7 @@ import argparse
 import collections
 import json
 import math
+import re
 import struct
 import sys
 from pathlib import Path
@@ -59,8 +60,18 @@ def km(a, b):
     return math.hypot((a[0] - b[0]) * 111.2, (a[1] - b[1]) * 111.2 * math.cos(math.radians(a[0])))
 
 
-def tile_nodes(path):
-    """{(la, lo, x, y): {name}} of every graph node of a named shape in one tile."""
+def colon_names(roads, text):
+    """{label spelling: name} of the road names that hold a colon, which a label cannot."""
+    with open(roads, encoding='utf-8') as f:
+        found = set(re.findall(r'"name": ("(?:[^"\\]|\\.)*")', f.read()))
+    names = {text(json.loads(n).upper()) for n in found if ':' in n}
+    return {shape_index.label_text(n): n for n in names}
+
+
+def tile_nodes(path, colon=None):
+    """{(la, lo, x, y): {name}} of every graph node of a named shape in one tile. `colon`
+    gives a street its colon back."""
+    colon = colon or {}
     d = open(path, 'rb').read()
     codec = clarion_format.of_header(d).codec
     out = collections.defaultdict(set)
@@ -71,6 +82,7 @@ def tile_nodes(path):
             if not s['label'].startswith('1='):
                 continue        # unnamed, or a road number alone
             name = shape_index.label_name(s['label'])
+            name = colon.get(name, name)
             for word, (role, _link) in s['points'].items():
                 if role != 'vertex':
                     out[code + (w[word] & 0x7ff, w[word + 1] & 0x7ff)].add(name)
@@ -172,6 +184,7 @@ def main():
     ap.add_argument('--profile', required=True)
     ap.add_argument('--card', required=True, help='the base card image; read for ICODE001.DAT and its INTER file')
     ap.add_argument('--tiles', nargs='+', required=True)
+    ap.add_argument('--roads', help='roads.json of the rebuilt roads: its names with a colon keep it')
     a = ap.parse_args()
     P = clarion_profile.load(a.profile)
     fmt = P.fmt
@@ -186,8 +199,9 @@ def main():
     if old.area != ordinal:
         raise SystemExit('%s on the card is area %d, not country %d (ordinal %d)' % (name, old.area, P.country, ordinal))
     nodes = collections.defaultdict(set)
+    colon = colon_names(a.roads, lambda s: fmt.text(s).decode(fmt.codec)) if a.roads else {}
     for t in a.tiles:
-        for k, v in tile_nodes(t).items():
+        for k, v in tile_nodes(t, colon).items():
             nodes[k] |= v
     keys, rows, firsts, seconds, st = build(nodes, Ladders(old), fmt.codec)
     if not firsts:

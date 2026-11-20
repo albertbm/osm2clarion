@@ -16,6 +16,12 @@ def inflate(raw):
     return zlib.decompress(raw) if raw[:2] in ZLIB else raw
 
 
+def label_text(name):
+    """A street name as a road label spells it. A colon parts two names in a label
+    (MANNERHEIMINTIE:MANNERHEIMVÄGEN), so the factory writes KAARLE IX'N KATU."""
+    return name.replace(':', "'")
+
+
 def label_name(label):
     """The street name of a `1=NAME;2=REF` label, or the label itself."""
     part = label.split(';')[0]

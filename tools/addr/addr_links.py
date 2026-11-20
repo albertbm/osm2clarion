@@ -243,7 +243,7 @@ def address_ranges(links, e, reach=None):
     is unmatched."""
     unmatched = []
     if reach is None:
-        cands = links.byname.get(e['name'], ())
+        cands = links.byname.get(shape_index.label_text(e['name']), ())
         if not cands:
             return [], list(e['addresses'])
         matched = []
@@ -254,7 +254,7 @@ def address_ranges(links, e, reach=None):
             matched.append((c, side, along, dist, a))
     else:
         adr = list(e['addresses'])
-        cands = links.named_near(e['name'], [a['lon'] for a in adr], [a['lat'] for a in adr], reach)
+        cands = links.named_near(shape_index.label_text(e['name']), [a['lon'] for a in adr], [a['lat'] for a in adr], reach)
         matched, unmatched = match_near(cands, adr, reach)
         if not matched:
             return [], unmatched
@@ -328,8 +328,9 @@ def falls(rows):
 def pick(links, e, local=False):
     """(how, distance, (R, S, L, run)) for one entry, or None. `local` looks the name up in
     the by-name grid, which gives the same answer without walking every road of the name."""
-    named = (links.named_near(e['name'], [e['anchor'][0]], [e['anchor'][1]], NAME_REACH) if local
-             else links.byname.get(e['name'], ()))
+    name = shape_index.label_text(e['name'])
+    named = (links.named_near(name, [e['anchor'][0]], [e['anchor'][1]], NAME_REACH) if local
+             else links.byname.get(name, ()))
     cands = [(run_dist(e['anchor'], c[3]), c) for c in named]
     cands = [c for c in cands if c[0] <= NAME_REACH]
     if cands:
@@ -362,9 +363,11 @@ def link_refs(links, e, how, d, c):
 
 
 def word_keys(folded, kw=1):
-    """[(key, is a later word)] for a folded name: one key per word start, running to the end."""
+    """[(key, is a later word)] for a folded name: one key per word start, running to the end.
+    A colon is a space in the key and starts no word, as the factory keys KAARLE IX:N KATU
+    (IX N KATU, no N KATU)."""
     def units(t):
-        return b''.join(ch.encode('utf-8').ljust(kw, b'\0') for ch in t)
+        return b''.join(ch.encode('utf-8').ljust(kw, b'\0') for ch in t.replace(':', ' '))
     starts = [0] + [j + 1 for j, c in enumerate(folded) if c == ' ' and j + 1 < len(folded)]
     return [(units(folded[p:]), p > 0) for p in starts if p < len(folded) and folded[p].isalnum()]
 

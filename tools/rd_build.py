@@ -438,6 +438,7 @@ UPPER_NAMES = False   # factory labels are upper case, accents kept (1=ÅRHUSVEJ
 def label(name, ref):
     """The shipped label text: `1=NAME;2=REF`, either part alone when the other is missing."""
     if name and UPPER_NAMES: name = name.upper()
+    if name: name = shape_index.label_text(name)
     parts = ([f'1={name}'] if name else []) + ([f'2={ref}'] if ref else [])
     return ';'.join(parts)
 

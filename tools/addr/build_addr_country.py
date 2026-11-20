@@ -50,6 +50,7 @@ import fatread  # noqa: E402
 import frames  # noqa: E402
 import icode_io  # noqa: E402
 import osm_roads  # noqa: E402
+import shape_index  # noqa: E402
 import settle  # noqa: E402
 
 MAX_NUMBER = 9999      # a longer house number is a mistagged postcode or phone number
@@ -151,13 +152,6 @@ def place(links, ents, reach=None):
     road of the name that close to an address counts (a whole country has many of each name)."""
     placed, skipped = [], []
     for e in ents:
-        if ':' in e['name']:
-            # a label reads a colon as the break between two names; the factory label
-            # writes KAARLE IX'N KATU for the street KAARLE IX:N KATU, ours keep the colon
-            skipped.append(dict(street=e['name'], town=e['town'], ladder=e['ladder'], addresses=e['n'],
-                                lat=e['lat'], lon=e['lon'], why='a colon in the name, which the road label '
-                                'reads as two names', rows=e['addresses']))
-            continue
         ranges, e['unmatched'] = addr_links.address_ranges(links, e, reach)
         if ranges:
             e['ranges'] = sorted(ranges, key=lambda r: (r['lo'], r['hi']))    # the factory's order
@@ -238,7 +232,8 @@ def main():
     version = bytes(ic[0xfa:0xfa + 22]).decode('utf-16-be')
 
     def text(s):
-        return fmt.text(s).decode(fmt.codec)
+        s = fmt.text(s).decode(fmt.codec)
+        return s if fmt.colon_names else shape_index.label_text(s)
     found = rows(P, a.pbf, area, addresses)
     if municipality:
         _, path, settlements, _ = ladder(ic, P.country, municipality, fmt.codec)

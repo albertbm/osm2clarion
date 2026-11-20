@@ -117,7 +117,7 @@ def resolve(card, rec, street):
         out.append((g, o)); seg.append((g, o))
         if role is None: bad.append('group %s: word %d is not a point x word' % (g, w)); continue
         parts = {p.strip().upper() for p in shape_index.label_name(s['label']).split(':')}
-        if street.upper() not in parts: bad.append('group %s: shape label %r' % (g, s['label']))
+        if shape_index.label_text(street.upper()) not in parts: bad.append('group %s: shape label %r' % (g, s['label']))
         if (flag == 0x40) != (role[0] in ('start', 'end')): bad.append('group %s: flag 0x%02x on a %s' % (g, flag, role[0]))
     if out and len(out) == len(rec['refs']):
         for g, o in (out[0], out[-1]):

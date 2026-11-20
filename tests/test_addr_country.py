@@ -332,13 +332,60 @@ class Layout(unittest.TestCase):
 
 
 class Colon(unittest.TestCase):
-    def test_a_name_with_a_colon_is_left_out(self):
-        rows = [dict(street='Kaarle IX:n katu', num='1', letter='', post=100, town='', lat=60.45, lon=22.27)]
+    """KAARLE IX:N KATU keeps its colon in the street file; its road label has an apostrophe."""
+
+    def links(self, label):
+        lat, lon = 60.4501, 22.2701
+        pts = [dict(word=55 + 5 * i, link=1, role=r, lon=lon + 0.002 * i, lat=lat) for i, r in enumerate(('start', 'end'))]
+        return addr_links.Links([dict(code=list(addre_io.parcel_words(lat, lon + 0.001)), unit=22,
+                                      shapes=[dict(label=label, at=48, links=[dict(id=1, way=7)], points=pts)])])
+
+    def place(self, label):
+        rows = [dict(street='Kaarle IX:n katu', num='1', letter='', post=100, town='', lat=60.4502, lon=22.2705)]
         ents, _ = build_addr_country.entries(rows, {'X': 0}, 'X', lambda s: s)
-        for e in ents:
-            e['ladder'] = (6, 1, 1, 0)
-        placed, skipped = build_addr_country.place(addr_links.Links([]), ents, addr_links.NAME_REACH)
-        self.assertEqual((placed, [s['why'][:8] for s in skipped]), ([], ['a colon ']))
+        return build_addr_country.place(self.links(label), ents)
+
+    def test_found_on_the_apostrophe_label(self):
+        placed, skipped = self.place("1=KAARLE IX'N KATU")
+        self.assertEqual(([e['name'] for e in placed], skipped), (['KAARLE IX:N KATU'], []))
+        self.assertEqual(placed[0]['ranges'][0]['label'], "1=KAARLE IX'N KATU")
+
+    def test_a_label_that_kept_the_colon_is_no_road_of_the_name(self):
+        placed, skipped = self.place('1=KAARLE IX:N KATU')
+        self.assertEqual((placed, [s['street'] for s in skipped]), ([], ['KAARLE IX:N KATU']))
+
+    def test_formats(self):
+        # the 2014 QY8 Finnish file spells the street KAARLE IX'N KATU, as its label
+        self.assertTrue(clarion_format.X08_02.colon_names)
+        self.assertFalse(clarion_format.X08_03.colon_names)
+
+    def test_keys(self):
+        # ADDRE007 of the QY7 card: KAARLE I.., IX N K.., KATU; no key starts at N
+        self.assertEqual(addr_links.word_keys('KAARLE IX:N KATU'),
+                         [(b'KAARLE IX N KATU', False), (b'IX N KATU', True), (b'KATU', True)])
+
+    def test_resolve_reads_the_label(self):
+        R = Resolve()
+        code, plain, v = R.record(5, [[(1, 0, 1, [])]])
+        bg = None
+        card = Resolve.Card({code: (plain, bg)}, False)
+        rec = dict(lat=code[0], lon=code[1], refs=[(2, 0x40, v[0]), (3, 0x40, v[1])])
+        old = addr_resolve.shape_index.shapes_of
+
+        def labelled(text):
+            def shapes_of(plain, bg, codec):
+                c, u, shapes = old(plain, bg, codec)
+                for s in shapes:
+                    s['label'] = text
+                return c, u, shapes
+            return shapes_of
+        try:
+            addr_resolve.shape_index.shapes_of = labelled("1=KAARLE IX'N KATU")
+            self.assertEqual(addr_resolve.resolve(card, rec, 'KAARLE IX:N KATU')[1], [])
+            addr_resolve.shape_index.shapes_of = labelled('1=KAARLE IX:N KATU')
+            self.assertIn('shape label', addr_resolve.resolve(card, rec, 'KAARLE IX:N KATU')[1][0])
+        finally:
+            addr_resolve.shape_index.shapes_of = old
 
 
 class Near(unittest.TestCase):
