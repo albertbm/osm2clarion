@@ -133,7 +133,7 @@ class Links:
     def add(self, R, named_only=False):
         for S in R['shapes']:
             pts = S['points']
-            nm = shape_index.label_name(S['label']).upper() if S['label'] else ''
+            nm = shape_index.label_name(S['label']).upper().strip() if S['label'] else ''
             if named_only and not nm:
                 continue
             for L in S['links']:
@@ -562,7 +562,10 @@ def named_roads(links, text):
         seen.add(id(ch))
         run = ch['parts'][0][0][3]
         mid = run[len(run) // 2]
-        out.append((text(S.get('name') or shape_index.label_name(S['label'])), mid['lon'], mid['lat'], it))
+        name, raw = shape_index.label_name(S['label']).strip(), (S.get('name') or '').strip()
+        if ':' in raw and shape_index.label_text(raw).upper() == name.upper():
+            name = raw      # the label has an apostrophe for the colon
+        out.append((text(name), mid['lon'], mid['lat'], it))
     return out
 
 

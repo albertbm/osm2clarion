@@ -336,7 +336,7 @@ class Bare(unittest.TestCase):
     def links(self):
         lat, lon = 62.2401, 25.7401
         shapes = []
-        for k, (name, label, dlat) in enumerate((('Katu', '1=KATU', 0), ('Polku', '1=POLKU;2=12', 0.001),
+        for k, (name, label, dlat) in enumerate((('Katu', '1=KATU', 0), ('Polku ;Toinen', '1=POLKU ;TOINEN;2=12', 0.001),
                                                  ('Kaarle IX:n katu', "1=KAARLE IX'N KATU", 0.002), (None, '2=12', 0.003))):
             pts = [dict(word=55 + 100 * k + 5 * i, link=1, role=r, lon=lon + 0.002 * i, lat=lat + dlat)
                    for i, r in enumerate(('start', 'end'))]
