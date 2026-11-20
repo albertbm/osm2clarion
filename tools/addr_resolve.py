@@ -10,9 +10,12 @@ own tile, finds that record, and checks every group:
     lands      word unit + v is a point x word of a shape
     named      the shape's label names the street
     flag       0x40 on a graph node (shape start or link end), 0x00 on an interior vertex
-    order      tags 2/3 ascend, 4/5 descend, between hops; one shape per run
+    order      inside a parcel the groups ascend to a tag 2/3, descend to a 4/5; one shape there
     hops       a tag 0x40/0x50/0x60/0x70 moves one parcel N/E/S/W and v counts there
-    link       a record of two groups spans one link, with no node between its ends
+    link       the two groups inside a parcel span one link, with no node between them
+    ends       a record starts and ends on a node, not where a parcel line cuts its link
+    across     a hop goes on from the same place on the parcel line
+    style      on a tile that gives every link its style word, the link's header holds one
     items      at most one house-number item a side, the right side (0x54) first
     row        a range row's low and high numbers are those of its record's items
 
@@ -52,6 +55,7 @@ class Card:
         self.files = {p.strip('/'): (sz, c) for p, sz, c, _ in self.fs.walk() if sz is not None}
         self.tiles = {}
         self.codec = {}
+        self.styled = {}
 
     def read(self, path):
         sz, c = self.files[path]
@@ -79,6 +83,7 @@ class Card:
                     d = self.read(p)
                     self.tiles[n] = shape_index.tile_records(d)
                     self.codec[n] = clarion_format.of_header(d).codec
+                    self.styled[n] = clarion_format.of_header(d).style_every_link
                 return n, self.tiles[n]
         return None, {}
 
@@ -102,22 +107,36 @@ def resolve(card, rec, street):
         s = next((s for s in shapes if s['at'] <= w < s['at'] + s['length']), None)
         role = s['points'].get(w) if s else None
         o = dict(tile=tile, code=code, word=w, shape=s and s['at'], label=s and s['label'],
-                 role=role and role[0], link=role and role[1])
+                 role=role and role[0], link=role and role[1], points=s and s['points'])
+        if role:
+            x, y = (c & 0x7ff for c in struct.unpack_from('>2H', recs[code][0], 2 * w))
+            # the far line is 2047 on this side and 0 on the other
+            o['at'] = (col * 2048 + (2048 if x == 2047 else x), row * 2048 + (2048 if y == 2047 else y))
+            o['line'] = x in (0, 2047) or y in (0, 2047)
+            o['styled'] = bool(struct.unpack_from('>H', recs[code][0], 2 * w + 2)[0] & 0x2000)
         out.append((g, o)); seg.append((g, o))
         if role is None: bad.append('group %s: word %d is not a point x word' % (g, w)); continue
         parts = {p.strip().upper() for p in shape_index.label_name(s['label']).split(':')}
         if street.upper() not in parts: bad.append('group %s: shape label %r' % (g, s['label']))
         if (flag == 0x40) != (role[0] in ('start', 'end')): bad.append('group %s: flag 0x%02x on a %s' % (g, flag, role[0]))
-    if len(out) == 2 and len(rec['refs']) == 2 and out[0][1]['shape'] == out[1][1]['shape'] and s:
-        lo, hi = sorted(o['word'] for _, o in out)
-        if any(lo < w < hi and r[0] != 'vertex' for w, r in s['points'].items()):
-            bad.append('the two groups span more than one link')
+    if out and len(out) == len(rec['refs']):
+        for g, o in (out[0], out[-1]):
+            if o.get('line'): bad.append('group %s: the record ends on a parcel line' % (g,))
+        for (ga, oa), (gb, ob) in zip(out, out[1:]):
+            if gb[0] >= 0x40 and 'at' in oa and 'at' in ob and oa['at'] != ob['at']:
+                bad.append('groups %s %s: the hop does not go on from the same place' % (ga, gb))
     for sg in segs:
+        if len(sg) == 2 and sg[0][1]['shape'] == sg[1][1]['shape'] and all(o['role'] for _, o in sg):
+            a, b = sorted((o for _, o in sg), key=lambda o: o['word'])
+            if any(a['word'] < w < b['word'] and r[0] != 'vertex' for w, r in a['points'].items()):
+                bad.append('groups %s %s span more than one link' % (sg[0][0], sg[1][0]))
+            if card.styled[a['tile']] and not a['styled']:
+                bad.append('groups %s %s: the link header has no style word' % (sg[0][0], sg[1][0]))
         for (ga, oa), (gb, ob) in zip(sg, sg[1:]):
             if oa['shape'] != ob['shape']: bad.append('groups %s %s: two shapes' % (ga, gb))
-            up = ga[0] & 0xf in (2, 3) and gb[0] & 0xf in (2, 3)
-            down = ga[0] & 0xf in (4, 5) and gb[0] & 0xf in (4, 5)
-            if not ((up and gb[2] > ga[2]) or (down and gb[2] < ga[2]) or ga[0] >= 0x40 or gb[0] >= 0x40):
+            # the second group's tag says which way the pair runs; a hop group has no say
+            ka, kb = ({2: 'up', 3: 'up', 4: 'down', 5: 'down'}.get(g[0]) for g in (ga, gb))
+            if kb is None or (gb[2] > ga[2]) != (kb == 'up') or gb[2] == ga[2] or not (ka == kb or ga[0] >= 0x40):
                 bad.append('groups %s %s: order does not match the tags' % (ga, gb))
     return out, bad
 

@@ -15,6 +15,7 @@ import addr_resolve
 import addre_io
 import build_addr_country
 import clarion_format
+import fa_encode
 import frames
 import icode_io
 import settle
@@ -256,6 +257,61 @@ class ParcelLine(unittest.TestCase):
         e = dict(street='KATU', name='KATU', town='X', lat=self.LAT, lon=25.742, anchor=(25.742, self.LAT), low=(25.741, self.LAT))
         link = addr_links.link_refs(links, e, *addr_links.pick(links, e))
         self.assertEqual(link['refs'], ((2, 0x40, 33), (2, 0x40, 38), (0x50, 0x40, 33), (3, 0x40, 38)))
+
+
+class Resolve(unittest.TestCase):
+    """addr_resolve's checks of where a record's groups land in the tile."""
+    NODES = [(100, 500), (900, 500), (2047, 500), (0, 500), (300, 500), (0, 600)]
+
+    class Card:
+        def __init__(self, recs, styled):
+            self.recs, self.codec, self.styled = recs, {'T': 'latin-1'}, {'T': styled}
+
+        def records(self, row, col):
+            return 'T', self.recs
+
+    def record(self, col, chains, fmt=clarion_format.X08_03):
+        """(parcel code, record, {node: v}) of a level-1 record at column `col` of one row."""
+        old, fa_encode.FMT = fa_encode.FMT, fmt
+        try:
+            plain, _ = fa_encode.build_record(1, 93, 949, 11, col, self.NODES, chains, country=246)
+        finally:
+            fa_encode.FMT = old
+        ix = fa_encode.build_record.last_index
+        v, node = {}, [c[0][1] for c in chains]
+        for S in ix['shapes']:
+            ends = [chains[S['chain']][0][1]] + [b for _, _, b, _ in chains[S['chain']]]
+            for (w, _, _), n in zip(S['points'], ends):
+                v[n] = w - ix['unit']
+        return ix['code'], plain, v
+
+    def bad(self, recs, code, refs, styled=False):
+        rec = dict(lat=code[0], lon=code[1], refs=refs)
+        return [b for b in addr_resolve.resolve(self.Card(recs, styled), rec, 'KATU')[1] if 'shape label' not in b]
+
+    def test_a_link_header_without_its_style_word(self):
+        chain = [[(1, 0, 1, []), (2, 1, 2, [])]]
+        code, plain, v = self.record(5, chain)
+        refs = [(2, 0x40, v[1]), (3, 0x40, v[2])]
+        self.assertEqual(v[2] - v[1], 4, 'a QY8 tile leaves an unchanged style word out')
+        self.assertEqual(self.bad({code: (plain, None)}, code, [(2, 0x40, v[0]), (3, 0x40, v[1])], styled=True), [])
+        self.assertIn('the link header has no style word', ' '.join(self.bad({code: (plain, None)}, code, refs, styled=True)))
+        self.assertNotIn('style word', ' '.join(self.bad({code: (plain, None)}, code, refs)))
+        code, plain, v = self.record(5, chain, clarion_format.X08_02)
+        self.assertEqual(v[2] - v[1], 5, 'a QY7 tile repeats it')
+        self.assertNotIn('style word', ' '.join(self.bad({code: (plain, None)}, code, [(2, 0x40, v[1]), (3, 0x40, v[2])], styled=True)))
+
+    def test_a_record_that_ends_on_a_parcel_line(self):
+        west, pw, vw = self.record(5, [[(1, 1, 2, [])]])
+        east, pe, ve = self.record(6, [[(1, 3, 4, [])]])
+        recs = {west: (pw, None), east: (pe, None)}
+        self.assertEqual(self.bad(recs, west, [(2, 0x40, vw[1]), (3, 0x40, vw[2])]),
+                         ['group (3, 64, %d): the record ends on a parcel line' % vw[2]])
+        self.assertEqual(self.bad(recs, west, [(2, 0x40, vw[1]), (2, 0x40, vw[2]), (0x50, 0x40, ve[3]), (3, 0x40, ve[4])]), [])
+        off, po, vo = self.record(6, [[(1, 5, 4, [])]])
+        self.assertIn('the hop does not go on from the same place',
+                      ' '.join(self.bad({west: (pw, None), off: (po, None)}, west,
+                                        [(2, 0x40, vw[1]), (2, 0x40, vw[2]), (0x50, 0x40, vo[5]), (3, 0x40, vo[4])])))
 
 
 class Layout(unittest.TestCase):
