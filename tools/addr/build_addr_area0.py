@@ -344,10 +344,12 @@ def street_ranges(links, ents, town_of):
     """{id(entry): ranges} for the entries of one street name, one per town. Towns whose
     houses lie on links that meet are one street: its numbers are joined as a whole, and a
     range goes under the town of every house on its link, so a link reads the same under
-    each (60,873 of 60,873 links listed twice in the 2014 QY8 Finnish file)."""
+    each (60,873 of 60,873 links listed twice in the 2014 QY8 Finnish file). Only a road
+    of the name within NAME_REACH of a house counts: the same name is a street in one
+    town and a farm in another."""
     street = addr_links.Street(links, links.byname.get(shape_index.label_text(ents[0]['name']), ()))
     piece = street.pieces()
-    found = [addr_links.house_rows(links, e)[0] for e in ents]
+    found = [addr_links.house_rows(links, e, addr_links.NAME_REACH)[0] for e in ents]
     first, root = {}, list(range(len(ents)))
 
     def find(i):
