@@ -10,7 +10,7 @@ the class, a rank from the class, a closed flag and the link code from shape wor
 
 With --tiles the links come from the card: level-1 shapes, an arm per segment leaving a link
 end, the heading that first segment's, class and code from shape words 2 and 3. A shape whose
-word 3 carries any of the other fields the classifier reads is reported 'unread'.
+word 3 has bits 11-9 or 5-4 set is reported 'unread': the ported rules take them as 0.
 
 What is ported: the path for ranks 5 and up (classes 3 to 9), which is all of Iceland, with
 helpers 005eb378, 005ec790, 005eb3e0, 005eb3a0, 005ea628, 005ebc98, 005eb72c, 005eb8d8,
@@ -18,7 +18,9 @@ helpers 005eb378, 005ec790, 005eb3e0, 005eb3a0, 005ea628, 005ebc98, 005eb72c, 00
 
 What is not, and how a node that needs it is reported:
   - the motorway rules (rank under 5) and 005ec80c                       -> 'unread'
-  - every rule that tests link code 1, and 005ebf98 which pairs code-1 rows -> 'unread'
+  - 005ebf98, which pairs the code-1 rows of a divided road and can turn their headings:
+    read, and a node where it would turn a pair is 'unread'; the code-1 rules of 005e75c8
+    for three links are ported
   - 005eba88's side test (its last arguments did not decompile): left out, the rest kept
   - 005eb17c's sector numbers come from an unrecovered jump table: taken in angle order
 Assumed, not read: the entry heading is the travel direction into the node; an arm traffic
@@ -39,8 +41,8 @@ UNREAD = 'unread'
 CLASS = {'motorway': 1, 'trunk': 3, 'primary': 4, 'secondary': 5, 'tertiary': 7,
          'unclassified': 8, 'residential': 8, 'living_street': 8, 'service': 9, 'ferry': 10}
 RINGS = ('roundabout', 'circular')
-Row = collections.namedtuple('Row', 'h cls rank closed code way plain')
-Arm = collections.namedtuple('Arm', 'key h leave arrive cls code plain way')
+Row = collections.namedtuple('Row', 'h cls rank closed code way plain f8')
+Arm = collections.namedtuple('Arm', 'key h leave arrive cls code plain way f8')
 
 
 def road(code):
@@ -86,7 +88,7 @@ def sector(e, x):
     return 8
 
 
-def sides(rows, t, lo, hi, ref, open_only):
+def sides(rows, t, lo, hi, ref, open_only, side=0):
     """005ea628 and 005ebc98: which side of the reference row other arms of rank lo..hi lie on, within t."""
     left = right = False
     for a in rows[2:]:
@@ -94,8 +96,8 @@ def sides(rows, t, lo, hi, ref, open_only):
         if not lo <= a.rank <= hi: continue
         d = sdiff(rows[ref].h, a.h)
         if ref == 1 and d == 0: continue
-        if -t <= d <= 0: left = True
-        if 0 <= d <= t: right = True
+        if side in (0, 2) and -t <= d <= 0: left = True
+        if side in (0, 1) and 0 <= d <= t: right = True
     return (2 if left else 0) | (1 if right else 0)
 
 
@@ -139,10 +141,39 @@ def eb72c(rows):
     return 0 if eba88(rows) == 1 else 0x13
 
 
+def pairs_rewritten(rows):
+    """005ebf98 as far as it is read: it pairs an arriving code-1 row with the code-1 row that
+    carries it on, and turns both to their mean heading when a plain road of the same rank
+    leaves about opposite to that mean. True when it would turn a pair; the turning itself is
+    not ported, so such a node is unread. The exact-heading matches it also tests are left out."""
+    ones_in = [i for i, r in enumerate(rows) if r.code == 1 and 5 <= r.rank < 14 and (i == 0 or r.closed)]
+    ones_out = [i for i, r in enumerate(rows) if r.code == 1 and 5 <= r.rank < 14 and i != 0 and not r.closed]
+    if len(rows) < 3 or len(ones_in) != len(ones_out) or not ones_in or len(ones_in) > 4: return False
+    for a in ones_in:
+        out_a = (rows[a].h + 1800) % 3600 if a == 0 else rows[a].h
+        best = None
+        for b in ones_out:
+            if rows[b].cls != rows[a].cls: continue
+            d = sdiff(out_a, rows[b].h)
+            if d > 0: continue                                   # setting 4 taken as 0
+            if not 2300 <= (rows[b].h - (out_a + 1800)) % 3600 <= 3600: continue
+            if best is None or abs(d) > best[0]: best = (abs(d), b)
+        if best is None: continue
+        b = best[1]
+        through = (out_a + 1800) % 3600
+        mean = (rows[b].h + sdiff(through, rows[b].h) // 2) % 3600
+        for i, r in enumerate(rows):
+            if i in (a, b) or r.closed or r.code != 0 or r.rank != rows[a].rank: continue
+            h = (r.h + 1800) % 3600 if i == 0 else r.h
+            if 1580 <= (h - mean) % 3600 <= 2020: return True
+    return False
+
+
 def classify(rows):
     """005e75c8, the path for ranks of 5 and up."""
     n = len(rows); e, x = rows[0], rows[1]
-    if any(r.code == 1 or not r.plain for r in rows) or e.rank < 5 or x.rank < 5: return UNREAD
+    if any(not r.plain for r in rows) or e.rank < 5 or x.rank < 5: return UNREAD
+    if any(r.code == 1 for r in rows) and pairs_rewritten(rows): return UNREAD
     dev = adiff(x.h, e.h)
     opened = [a for a in rows[2:] if not a.closed]
     near90 = sum(1 for a in opened if adiff(a.h, e.h) < 900)
@@ -156,11 +187,17 @@ def classify(rows):
     if sides(rows, 1800, 0, 15, 0, False) == 0:
         return 0x13 if within(e, x, 450) else 0
     if within(e, x, 470) == 2:
+        if n == 3 and e.rank == x.rank == rows[2].rank and rows[2].code == 1:
+            a = rows[2]                                          # leaving or joining a divided road; setting 4 taken as 0
+            if not a.closed and e.code == 1 and x.code == 0:
+                if in_band(e, x, 1200, 1800) == 0 and in_band(e, a, 2700, 3600) == 0: return 0
+            if a.closed and e.code == 0 and x.code == 1:
+                if in_band(e, x, 1200, 1800) == 0 and sides(rows, 600, 0, 15, 1, False, 2) == 2: return 0
         if in_band(e, x, 1200, 2400) != 0: return 0x13
         return 0x13 if sides(rows, 1350, 0, 15, 0, True) != 0 else 0
     if n == 3:
         a = rows[2]
-        if e.code == 0 and dev < 200 and x.code == 3 and a.code == 3 and e.cls == x.cls == a.cls: return 0
+        if e.code in (0, 1) and dev < 200 and x.code == 3 and a.code == 3 and e.cls == x.cls == a.cls: return 0
     go_8770 = False
     if sides(rows, 300, 0, 15, 1, True) == 0:
         if sides(rows, 470, 0, 15, 1, True) != 0:
@@ -175,11 +212,11 @@ def classify(rows):
                     if n > 2 and rows[2].closed: return 0
             if within(e, x, 250) == 0:
                 if x.code != 3: return 0
-                if e.code != 0: return 0 if dev < nearest(rows, 0) else 0x13
+                if e.code not in (0, 1): return 0 if dev < nearest(rows, 0) else 0x13
                 return 0x13
             if e.rank != x.rank: return eb72c(rows)
             if eba88(rows) != 1: return 0x13
-            if e.code != 0: return 0
+            if e.code not in (0, 1): return 0
             return 0x13 if x.code == 3 else 0
     else:
         sec = sector(e, x)
@@ -191,7 +228,8 @@ def classify(rows):
         if x.rank < e.rank: return eb72c(rows)
         if road(e.code) and x.code == 3: return 0x13
         if eb52c(rows) != 2: return 0
-        return 0x13   # 005e59f4 is never 1 while shape word 3's other fields are 0
+        if n > 3 and any(r.f8 for r in rows): return UNREAD   # 005e59f4 reads that field; not ported
+        return 0x13   # 005e59f4 is never 1 while the field is 0
     route_near = within(e, x, 210) == 0
     arm_near = any(not a.closed and within(e, a, 210) == 0 for a in rows[2:])
     if route_near and arm_near:
@@ -241,7 +279,7 @@ def arms(use, node, codes='nocode3'):
             if 0 <= j < len(w['nodes']):
                 d = w['dir'] * s
                 out.append(Arm((w['id'], i, s), heading(node, w['nodes'][j]), d >= 0, d <= 0,
-                               link_class(w), link_code(w, codes), True, w))
+                               link_class(w), link_code(w, codes), True, w, 0))
     return out
 
 
@@ -252,7 +290,7 @@ def arm_routes(A):
         if not ae.arrive: continue
         for j, ax in enumerate(A):
             if i == j or not ax.leave: continue
-            def row(a, h, closed): return Row(h, a.cls, rank(a.cls), closed, a.code, a.way, a.plain)
+            def row(a, h, closed): return Row(h, a.cls, rank(a.cls), closed, a.code, a.way, a.plain, a.f8)
             rows = [row(ae, (ae.h + 1800) % 3600, False), row(ax, ax.h, False)]
             rows += [row(a, a.h, not a.leave) for k, a in enumerate(A) if k not in (i, j)]
             yield ae, ax, classify(rows), rows
@@ -284,7 +322,8 @@ def tile_nodes(path):
             if not S['ok']: continue
             at = S['at']; w3 = w[at + 3]
             c = w3 >> 12; c = 7 if c == 8 else c
-            plain = (w3 & 0xff0) == 0          # the other word-3 fields the classifier reads
+            plain = (w3 & 0xe30) == 0          # word 3 bits 11-9 and 5-4, which the ported rules take as 0
+            f8 = (w3 >> 6) & 7                 # bits 8-6, read by 005e59f4 only
             idx = list(S['points'])
             P = [(w[i] & 0x7ff, w[i + 1] & 0x7ff, w[i + 1] & 0xc000, S['points'][i][0]) for i in idx]
             for k, (x, y, _, role) in enumerate(P):
@@ -296,7 +335,7 @@ def tile_nodes(path):
                     fwd = bits == 0x4000; back = bits == 0x8000
                     leave = not (back if s == 1 else fwd); arrive = not (fwd if s == 1 else back)
                     h = round(10 * math.degrees(math.atan2((P[j][0] - x) * kx, (P[j][1] - y) * ky))) % 3600
-                    nodes[(row, col, x, y)].append(Arm((at, k, s), h, leave, arrive, S['cls'], c, plain, None))
+                    nodes[(row, col, x, y)].append(Arm((at, k, s), h, leave, arrive, S['cls'], c, plain, None, f8))
     return nodes
 
 
