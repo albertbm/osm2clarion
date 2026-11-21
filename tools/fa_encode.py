@@ -97,7 +97,7 @@ def restyled(styles):
     links of the factory B58R050R."""
     return [FMT.style_every_link or n == 0 or styles[n] != styles[n - 1] for n in range(len(styles))]
 
-def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False, upper=()):
+def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, dirs=None, gs=None, ring=False, upper=(), slip=False):
     """Section-1 shape words for one link chain: start point, then each link's header and
     points, with x flags 0x4000/0x2000/0x1000/0x0800 marking link starts, style changes and
     ends (docs/GEOMETRY.md), and the one-way sense OR'd into bits 15-14 of y.
@@ -119,7 +119,8 @@ def shape_words(chain, nodes, name_off=0xffff, level=1, cls=None, styles=None, d
         return 0x4000 if d > 0 else 0x8000 if d < 0 else 0
     # word 3 bits 14-12 = 7 on factory ring strings (Koln 89%, UK 95%, ~0% elsewhere): the
     # 3-bit code section 2 carries in w4. Word 4: word offset of the name entry, 0xffff = none
-    code = 0x7000 if ring else 0
+    # 3 on a one-way slip road: factory forks are carriageway 1 in, 1 on, slip 3 (UK 897, Norway 347)
+    code = 0x7000 if ring else FMT.slip_code if slip else 0
     if level == 1: out = [cls << 12, code | FMT.shape_w3, name_off, FMT.shape_w5, *upper, 0x0000]
     else: out = [cls << 12, code, name_off, 0x0000, *upper, 0x0000]
     sx, sy = nodes[chain[0][1]]
@@ -352,7 +353,7 @@ def junctions(chains):
     return sum(1 for n in deg.values() if n >= 3)
 
 def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0xffff, name_offs=None, hws=None,
-                 styles=None, country=None, dirs=None, gs=None, rings=None, area=None, uppers=None):
+                 styles=None, country=None, dirs=None, gs=None, rings=None, area=None, uppers=None, slips=None):
     """A level-1 or level-2 road-shape record and its compressed form, shapes grouped by layer.
     uppers: each chain's upper-link words (shape_words).
 
@@ -369,7 +370,7 @@ def build_record(level, y0, x0, row, col, nodes, chains, layer=None, name_off=0x
     if uppers is None: uppers = [()] * len(chains)
     heads = [len(u) for u in uppers]
     shapes = [shape_words(c, nodes, name_offs[i] if name_offs else name_off, level, lc[i][1], styles[i], dirs[i], gs.get(i),
-                          ring=bool(rings and rings[i]), upper=uppers[i])
+                          ring=bool(rings and rings[i]), upper=uppers[i], slip=bool(slips and slips[i]))
               for i, c in enumerate(chains)]
     if level == 1: unit = [junctions(chains)] + [0xffff, 0x0000] * 12 + [0x0000]; first = 1
     else: unit = [0xffff, 0x0000] * 11; first = 0   # no count word

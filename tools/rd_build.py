@@ -369,6 +369,10 @@ def flip(c):
     """A chain of links turned to run the other way."""
     return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
 
+def is_slip(l):
+    """A one-way *_link way: the factory's link code 3."""
+    return l[5].endswith('_link') and l[10] != 0
+
 def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
     chains = {}
@@ -828,7 +832,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         # the factory marks a roundabout ring's own links (not its approach/exit spokes) with
         # w4's top 3 bits all set, both ends alike, at both L1 and L2, measured on the Koln
         # and UK factory tiles, never on a plain one-way link's entries
-        link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else 0 for l in P['links']]
+        link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else FMT.slip_code if is_slip(l) else 0 for l in P['links']]
         # w4 bits 1-2 (KIWI link direction, 7.A.8): 0 on a level-1-only link, 1-3 on a link that an
         # upper-level link integrates. Factory B58R060R: set on 190,880/190,880 L1 links that an L2
         # link expands to, clear on 95,412/95,412 side links at the same nodes and on every class
@@ -878,6 +882,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                   for g in groups]
         dirs = [[L[k][10] for k in g] for g in groups]
         rings = [all(L[k][11] in ('roundabout', 'circular') for k in g) for g in groups]
+        slips = [all(is_slip(L[k]) for k in g) for g in groups]
         area = area_of(level, pc) if AREA_BASE is not None else None
         found = find_signposts(L, nodes, idx, groups, signs, UPPER_NAMES) if signs and level == 1 else []
         gs = None
@@ -887,14 +892,14 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
             gs = {}
             for s in found: gs.setdefault(s['exit'][0], {})[s['exit'][1]] = 0
             fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers)
+                                   styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers, slips=slips)
             occ = fa_encode.occurrence_words(fa_encode.build_record.last_index)
             subs = signpost_subs(found, occ)
             L_of_key = dict(zip((s['key'] for s in subs), sec4_write.sub_offsets(subs)))
             gs = {i: {n: L_of_key[occ[i][n] - 22] for n in o} for i, o in gs.items()}
             encode_parcels.signposts[pc] = subs
         fa = fa_encode.build_record(level, pc[0], pc[1], pc[2], pc[3], nodes, chains, name_offs=name_offs, hws=hws,
-                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers)
+                                    styles=styles, country=COUNTRY, dirs=dirs, gs=gs, rings=rings, area=area, uppers=uppers, slips=slips)
         encode_parcels.index[pc] = shape_index_record(level, pc, fa_encode.build_record.last_index, groups, ids, L,
                                                       label_of, no_names)
         section, _ = fa_encode.names_section(labels, fa_encode.build_record.last_items, base)
