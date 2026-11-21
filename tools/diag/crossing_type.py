@@ -8,6 +8,10 @@ type: 0 no manoeuvre, 0x13 a branch among roads, 0x14 leaving onto a link that i
 code (a slip), other values the motorway types. Each row has a heading in tenths of a degree,
 the class, a rank from the class, a closed flag and the link code from shape word 3.
 
+With --tiles the links come from the card: level-1 shapes, an arm per segment leaving a link
+end, the heading that first segment's, class and code from shape words 2 and 3. A shape whose
+word 3 carries any of the other fields the classifier reads is reported 'unread'.
+
 What is ported: the path for ranks 5 and up (classes 3 to 9), which is all of Iceland, with
 helpers 005eb378, 005ec790, 005eb3e0, 005eb3a0, 005ea628, 005ebc98, 005eb72c, 005eb8d8,
 005eb52c, 005e59f4 and the code-7 part of 005e3c4c.
@@ -24,6 +28,7 @@ of the drawn shape in parcel units.
 
     crossing_type.py roads.json --at lat,lon [--codes nocode3|code3]    every route through a node
     crossing_type.py roads.json --slips                                 census of slip forks
+    crossing_type.py --tiles OLD.DAT[,..] [NEW.DAT[,..]] --at lat,lon | --slips     the same on tiles
 """
 import collections
 import json
@@ -34,7 +39,8 @@ UNREAD = 'unread'
 CLASS = {'motorway': 1, 'trunk': 3, 'primary': 4, 'secondary': 5, 'tertiary': 7,
          'unclassified': 8, 'residential': 8, 'living_street': 8, 'service': 9, 'ferry': 10}
 RINGS = ('roundabout', 'circular')
-Row = collections.namedtuple('Row', 'h cls rank closed code way')
+Row = collections.namedtuple('Row', 'h cls rank closed code way plain')
+Arm = collections.namedtuple('Arm', 'key h leave arrive cls code plain way')
 
 
 def road(code):
@@ -123,11 +129,6 @@ def eb52c(rows):
     return 0
 
 
-def e59f4(rows, dev):
-    """005e59f4 with shape word 3's field at 0: never 1."""
-    return 0
-
-
 def eb72c(rows):
     e, x = rows[0], rows[1]
     arms = [a for a in rows[2:] if not a.closed]
@@ -141,7 +142,7 @@ def eb72c(rows):
 def classify(rows):
     """005e75c8, the path for ranks of 5 and up."""
     n = len(rows); e, x = rows[0], rows[1]
-    if any(r.code == 1 for r in rows) or e.rank < 5 or x.rank < 5: return UNREAD
+    if any(r.code == 1 or not r.plain for r in rows) or e.rank < 5 or x.rank < 5: return UNREAD
     dev = adiff(x.h, e.h)
     opened = [a for a in rows[2:] if not a.closed]
     near90 = sum(1 for a in opened if adiff(a.h, e.h) < 900)
@@ -190,7 +191,7 @@ def classify(rows):
         if x.rank < e.rank: return eb72c(rows)
         if road(e.code) and x.code == 3: return 0x13
         if eb52c(rows) != 2: return 0
-        return 0 if e59f4(rows, dev) == 1 else 0x13
+        return 0x13   # 005e59f4 is never 1 while shape word 3's other fields are 0
     route_near = within(e, x, 210) == 0
     arm_near = any(not a.closed and within(e, a, 210) == 0 for a in rows[2:])
     if route_near and arm_near:
@@ -231,39 +232,127 @@ def load(path):
     return use
 
 
-def arms(use, node):
-    """Each link end at the node: (way, heading out of the node, may leave by it, may arrive by it)."""
+def arms(use, node, codes='nocode3'):
+    """Each link end at the node, from OSM."""
     out = []
     for w, i in use[node]:
         for s in (1, -1):
             j = i + s
             if 0 <= j < len(w['nodes']):
                 d = w['dir'] * s
-                out.append((w, heading(node, w['nodes'][j]), d >= 0, d <= 0))
+                out.append(Arm((w['id'], i, s), heading(node, w['nodes'][j]), d >= 0, d <= 0,
+                               link_class(w), link_code(w, codes), True, w))
     return out
 
 
-def routes(use, node, codes):
-    """(entry way, exit way, crossing type, rows) for every way through the node."""
-    A = arms(use, node)
+def arm_routes(A):
+    """(entry arm, exit arm, crossing type, rows) for every way through a node with arms A."""
     if len(A) < 3: return
-    for i, (we, he, _, arrive) in enumerate(A):
-        if not arrive: continue
-        for j, (wx, hx, leave, _) in enumerate(A):
-            if i == j or not leave: continue
-            def row(k, h, closed):
-                w = A[k][0]; c = link_class(w)
-                return Row(h, c, rank(c), closed, link_code(w, codes), w)
-            rows = [row(i, (he + 1800) % 3600, False), row(j, hx, False)]
-            rows += [row(k, A[k][1], not A[k][2]) for k in range(len(A)) if k not in (i, j)]
-            yield we, wx, classify(rows), rows
+    for i, ae in enumerate(A):
+        if not ae.arrive: continue
+        for j, ax in enumerate(A):
+            if i == j or not ax.leave: continue
+            def row(a, h, closed): return Row(h, a.cls, rank(a.cls), closed, a.code, a.way, a.plain)
+            rows = [row(ae, (ae.h + 1800) % 3600, False), row(ax, ax.h, False)]
+            rows += [row(a, a.h, not a.leave) for k, a in enumerate(A) if k not in (i, j)]
+            yield ae, ax, classify(rows), rows
+
+
+def routes(use, node, codes):
+    for ae, ax, t, rows in arm_routes(arms(use, node, codes)): yield ae.way, ax.way, t, rows
+
+
+def tile_nodes(path):
+    """{(row, col, x, y): [Arm]} of a tile's level-1 road shapes: an arm per shape segment
+    that leaves a link end, its heading that first segment's, as the unit takes it."""
+    import os, struct
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    from tile_scan import TileScan
+    import clarion_bg, fa_encode, rd_check
+    nodes = collections.defaultdict(list)
+    with TileScan(path) as t:
+        recs = {k: r.plain() for k, r in rd_check.shape_records(t, 1).items()}
+    for code, pl in recs.items():
+        try: shapes = fa_encode.parse_record(pl, 1)[2]
+        except Exception: continue
+        if not all(S['length'] for S in shapes): continue
+        w = struct.unpack('>%dH' % (len(pl) // 2), pl)
+        try: row, col = clarion_bg.parcel_rowcol(1, *code)
+        except AssertionError: continue   # not a level-1 parcel code
+        kx = math.cos(math.radians(row / 48)) / 32; ky = 1 / 48
+        for S in shapes:
+            if not S['ok']: continue
+            at = S['at']; w3 = w[at + 3]
+            c = w3 >> 12; c = 7 if c == 8 else c
+            plain = (w3 & 0xff0) == 0          # the other word-3 fields the classifier reads
+            idx = list(S['points'])
+            P = [(w[i] & 0x7ff, w[i + 1] & 0x7ff, w[i + 1] & 0xc000, S['points'][i][0]) for i in idx]
+            for k, (x, y, _, role) in enumerate(P):
+                if role == 'vertex': continue
+                for s in (1, -1):
+                    j = k + s
+                    if not 0 <= j < len(P): continue
+                    bits = P[max(k, j)][2]        # a segment's one-way bits sit on its later point
+                    fwd = bits == 0x4000; back = bits == 0x8000
+                    leave = not (back if s == 1 else fwd); arrive = not (fwd if s == 1 else back)
+                    h = round(10 * math.degrees(math.atan2((P[j][0] - x) * kx, (P[j][1] - y) * ky))) % 3600
+                    nodes[(row, col, x, y)].append(Arm((at, k, s), h, leave, arrive, S['cls'], c, plain, None))
+    return nodes
+
+
+def node_lonlat(key):
+    row, col, x, y = key
+    return (col + x / 2048) / 32 - 924, (row + y / 2048) / 48
 
 
 def show(t):
     return t if t == UNREAD else {0: 'none', 0x13: 'branch 0x13', 0x14: 'slip 0x14'}.get(t, hex(t))
 
 
+def kind_of(rows):
+    return 'takes the slip' if rows[1].code == 3 else 'from a slip' if rows[0].code == 3 else 'passes the slip'
+
+
+def tiles_main(argv):
+    """--tiles OLD[,OLD..] [NEW[,NEW..]] with --at lat,lon or --slips: the same runs on tiles."""
+    i = argv.index('--tiles')
+    sets = [a.split(',') for a in argv[i + 1:i + 3] if not a.startswith('--')]
+    loaded = []
+    for paths in sets:
+        nodes = {}
+        for p in paths: nodes.update(tile_nodes(p))
+        loaded.append(nodes)
+    if '--at' in argv:
+        lat, lon = (float(v) for v in argv[argv.index('--at') + 1].split(','))
+        for n, nodes in enumerate(loaded):
+            key = min((k for k in nodes if len(nodes[k]) >= 3), key=lambda k: dist_m(node_lonlat(k), (lon, lat)))
+            print('set %d node %.6f,%.6f (%.0f m off)' % ((n + 1,) + node_lonlat(key)[::-1] + (dist_m(node_lonlat(key), (lon, lat)),)))
+            for ae, ax, t, rows in arm_routes(nodes[key]):
+                print('   class %d -> class %d  dev %5.1f  codes %s  %s' % (
+                    ae.cls, ax.cls, adiff(rows[1].h, rows[0].h) / 10, [r.code for r in rows], show(t)))
+        return 0
+    new = loaded[-1]; old = loaded[0] if len(loaded) == 2 else None
+    tally = collections.Counter(); lost = []; dropped = []
+    for key, A in new.items():
+        if len(A) < 3 or not any(a.code == 3 and a.leave for a in A): continue
+        was = {(ae.key, ax.key): t for ae, ax, t, _ in arm_routes(old[key])} if old else {}
+        for ae, ax, t, rows in arm_routes(A):
+            kind = kind_of(rows)
+            if old is None:
+                tally[(kind, 'codes in,out %d,%d' % (rows[0].code, rows[1].code), show(t))] += 1; continue
+            o = was[(ae.key, ax.key)]
+            tally[(kind, show(o), show(t))] += 1
+            if o not in (0, UNREAD) and t == 0: (lost if kind == 'takes the slip' else dropped).append((key, rows))
+    for k, v in sorted(tally.items()): print('%-16s %-22s %-12s %6d' % (k + (v,)))
+    if old is not None:
+        print('calls dropped:', len(dropped), ' routes that take a slip and lose their call:', len(lost))
+        for key, rows in lost[:20]:
+            print('   %.5f,%.5f dev %.1f codes %s' % (node_lonlat(key)[::-1] + (adiff(rows[1].h, rows[0].h) / 10, [r.code for r in rows])))
+    return 0
+
+
 def main(argv):
+    if '--tiles' in argv: return tiles_main(argv)
     use = load(argv[1])
     codes = argv[argv.index('--codes') + 1] if '--codes' in argv else None
     if '--at' in argv:
@@ -279,8 +368,8 @@ def main(argv):
     if '--slips' in argv:
         tally = collections.Counter(); lost = []
         for node in use:
-            A = arms(use, node)
-            slips = [a for a in A if a[0]['hw'].endswith('_link') and a[0]['dir'] != 0 and a[2]]
+            A = arms(use, node, 'code3')
+            slips = [a for a in A if a.code == 3 and a.leave]
             if len(A) < 3 or not slips: continue
             old = {(id(we), id(wx)): t for we, wx, t, _ in routes(use, node, 'nocode3')}
             for we, wx, t, rows in routes(use, node, 'code3'):
