@@ -72,8 +72,9 @@ def cost_words(length_m, kmh, reserved=True, length_top=0):
     return (0x8000 if reserved else 0) | (mt << 12) | t, (length_top << 14) | (mb << 12) | b
 
 def class_word(cls):
-    """The link class word: class in the high byte, then 0x90 | class (0x80 | class above 9)."""
-    return cls << 8 | (0x90 if cls <= 9 else 0x80) | cls
+    """The link class word: class in the high byte, then 0x10 | class, class alone from
+    FMT.class_plain up (a ferry in X08-03). X08-03 sets bit 7 too."""
+    return cls << 8 | (0x10 if cls < FMT.class_plain else 0) | FMT.class_flag | cls
 
 def pair_slot(cls):
     """Pair index at u4..u25 for a node class: 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 10 and up at u24."""
@@ -148,23 +149,26 @@ PROHIBITED = 0xff     # regulation flag (bit 7) + passage code 0x7f, "not allowe
 
 def regulation_word(entry_index):
     """One regulation record: byte 0 entry-side link number (bits 7-4, 15 = all entries), exit
-    nibble left clear, byte 1 the flag plus passage code."""
+    nibble clear in X08-03 and 3 in X08-02, byte 1 the flag plus passage code."""
     assert 0 <= entry_index <= 15
-    return (entry_index << 12) | PROHIBITED
+    return (entry_index << 12) | FMT.reg_exit << 8 | PROHIBITED
 
 ALL_ENTRIES = 15      # the from nibble that names every entry at the node
 
 def oneway_regulations(adj, real):
     """{(node, entry number): [regulation words]} around one-way links: the arriving entry
-    gets no-entry-from-anyone, every entry beside a leaving one gets barred from it."""
+    gets no-entry-from-anyone, every entry beside a leaving one gets barred from it. X08-02
+    writes no word on the arriving entry and none from a leaving entry to itself."""
     out = {}
+    own = FMT.oneway_end_words
     for nd, ents in adj.items():
         leaving = [k for k in range(real[nd]) if ents[k][5] == 0x4000 and k <= 14]
         for k in range(real[nd]):
             if ents[k][5] == 0x8000:
-                out[(nd, k)] = [regulation_word(ALL_ENTRIES)]
-            elif leaving:
-                out[(nd, k)] = [regulation_word(j) for j in leaving]
+                if own: out[(nd, k)] = [regulation_word(ALL_ENTRIES)]
+                continue
+            words = [regulation_word(j) for j in leaving if own or j != k]
+            if words: out[(nd, k)] = words
     return out
 
 def regulation_order(words, k):
@@ -195,7 +199,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     link from each end's L1 twin; the descent (0x33aabc) looks that index up among the twin's
     L1 entries and dereferences NULL when it is not one of them.
     tops: per link, the length word's bits 14-15 where the caller knows them, else None."""
-    default = 0x0898 if level == 1 else 0x0797
+    default = class_word(8 if level == 1 else 7)
     cls_of = ([class_word(c) for c in class_codes] if class_codes is not None else
               [class_word(fa_encode.layer_class(hw, level)[1]) for hw in classes] if classes else
               [default] * len(links))
@@ -242,6 +246,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         fi, ti = slot.get((nd, fl)), slot.get((nd, tl))
         if fi is None or ti is None or fi > 14 or ti > 14:
             build_record_edges.regs_dropped += 1; continue
+        if not FMT.oneway_end_words and (adj[nd][ti][5] == 0x8000 or fi == ti and adj[nd][fi][5] == 0x4000):
+            continue   # no traffic makes that turn: X08-02 writes no word for it
         w = regulation_word(fi)
         lst = extras.setdefault((nd, ti), [])
         if w in lst or regulation_word(ALL_ENTRIES) in lst: continue   # already prohibited
@@ -282,7 +288,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
             x, y = nodes[old]
             pairs[old] = ((y * 4 // 2048) << 14 | (x * 4 // 2048) << 6, pos_of[old])
     cellof = {old: pairs[old][0] for old in pos_of}
-    stream_order = sorted(pos_of, key=lambda old: (cellof[old], pos_of[old]))
+    stream_order = sorted(pos_of, key=lambda old: (cellof[old], pairs[old][1] if FMT.pairing_by_child else 0, pos_of[old]))
     pb = [nn, 0xa100]   # part b: connection table
     for old in stream_order:
         cw, child = pairs[old]

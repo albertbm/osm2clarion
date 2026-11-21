@@ -732,6 +732,44 @@ class TestRoadGraph(unittest.TestCase):
         self.assertEqual(words[(100, 1)], [0x10ff, 0x00ff], 'link 1 leaves node 0: the turn from entry 1, then itself')
         self.assertEqual(words[(900, 1)], [rd_check.NO_ENTRY])
 
+    def test_qy7_link_words(self):
+        # QY7 stock LEV3456R: no word on 40,548 of 40,548 arriving ends, none from a leaving
+        # entry to itself, 0x3ff under every prohibition, bit 7 clear in every class word
+        old, rd_encode.FMT = rd_encode.FMT, clarion_format.X08_02
+        try:
+            self.assertEqual(rd_encode.class_word(8), 0x818)
+            self.assertEqual(rd_encode.class_word(0xa), 0xa1a, '10,920 of 10,930 level-4 ferry ends')
+            self.assertEqual(rd_encode.class_word(0xc), 0xc0c)
+            plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
+                                                    country=352, dirs=[1, -1, 0], regs=[(1, 0, 1), (0, 0, 0)])
+        finally:
+            rd_encode.FMT = old
+        rec = clarion_rd.parse_record(plain)
+        for nd in rec['nodes']:
+            ents = nd['entries']
+            leaving = [k for k, e in enumerate(ents) if e['w5'] & 0xc000 == 0x4000]
+            for k, e in enumerate(ents):
+                self.assertEqual(e['cls'] & 0xf0, 0x10)
+                regs = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                want = [] if e['w5'] & 0xc000 == 0x8000 else [j << 12 | 0x3ff for j in leaving if j != k]
+                self.assertEqual(regs, want)
+
+    def test_qy7_part_b_lists_a_cell_by_child_node(self):
+        # 2,948 of 2,948 level-2 records of stock QY7 B58R050R; ours listed by own node
+        nodes = [(100, 200), (300, 240), (500, 300), (700, 400)]
+        links = [(0, 1, 100), (1, 2, 100), (2, 3, 100)]
+        pair = [(0, 9), (0, 4), (0, 7), (0, 2)]
+        got = {}
+        for fmt in (clarion_format.X08_03, clarion_format.X08_02):
+            old, rd_encode.FMT = rd_encode.FMT, fmt
+            try:
+                _, b = rd_encode.build_record_edges(2, 96, 898, 7, 9, nodes, links, {}, country=352, l1_pair=pair)
+            finally:
+                rd_encode.FMT = old
+            got[fmt.name] = [(n['upper'], n['child']) for n in clarion_rd.parse_part_b(b)['nodes']]
+        self.assertEqual(got['x08-03'], [(0, 9), (1, 4), (2, 7), (3, 2)])
+        self.assertEqual(got['x08-02'], [(3, 2), (1, 4), (2, 7), (0, 9)])
+
     def test_parcel_edge_entry(self):
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS,
                                                 {2: (0xc000, 17)}, country=352)

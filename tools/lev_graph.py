@@ -223,13 +223,15 @@ def collapse(per):
 
 
 def pairing_record(level, origin, parent, country, code, ordered, refs, adjacency):
-    """Factory-form part B: blocks sorted by child parcel/node, each mapped to an upper node."""
+    """Factory-form part B: a block per upper node, sorted by child parcel, then by upper
+    node in X08-03 and by child node in X08-02."""
     blocks = []
     for upper in range(len(ordered)):
         parcel, child = refs[upper]
         blocks.append((parcel, upper, child, adjacency[upper]))
     unit = [len(blocks), marker(level, *parent)]
-    for parcel, upper, child, entries in sorted(blocks):
+    by_child = rd_build.FMT.pairing_by_child
+    for parcel, upper, child, entries in sorted(blocks, key=lambda b: (b[0], b[2] if by_child else b[1], b[1])):
         unit += [len(entries) << 12, upper, parcel, child]
         for e in entries: unit += e
     unit += [code[0], code[1]]

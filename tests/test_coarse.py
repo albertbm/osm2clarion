@@ -19,6 +19,22 @@ import osm_roads
 import rd_build
 
 
+class TestPartBOrder(unittest.TestCase):
+    def test_a_child_parcel_is_listed_by_upper_node_or_by_child_node(self):
+        # stock coarse graphs: by upper node in 556 of 556 QY8 records, by child node in 419 of 419 QY7
+        import clarion_format, clarion_rd, lev_graph
+        refs = [(0x10, 5), (0x10, 2), (0x00, 9)]
+        got = {}
+        for fmt in (clarion_format.X08_03, clarion_format.X08_02):
+            old, rd_build.FMT = rd_build.FMT, fmt
+            try:
+                b = lev_graph.pairing_record(5, (32, 896), (7, 5), 246, (1, 2), [0, 1, 2], refs, [[], [], []])
+            finally:
+                rd_build.FMT = old
+            got[fmt.name] = [n['upper'] for n in clarion_rd.parse_part_b(b)['nodes']]
+        self.assertEqual(got, {'x08-03': [2, 0, 1], 'x08-02': [2, 1, 0]})
+
+
 @unittest.skipIf(lev_roads is None, 'shapely is not installed')
 class TestCoarseShapes(unittest.TestCase):
     # factory words off the 2015 coarse file: named and unnamed level-4 shapes, a level-3 shape
