@@ -162,8 +162,6 @@ def place(links, ents, reach=None, join_up=False):
         rows[id(e)] = grouped, _, e['unmatched'] = addr_links.house_rows(links, e, reach)
         for link in grouped:
             owners[link].append(e)
-    # a link with houses of two entries, one road in two municipalities, reads the same in both
-    shared = {link: [r for e in es for r in rows[id(e)][0][link]] for link, es in owners.items() if len(es) > 1}
     taken = {}      # a link with no house: the entry whose numbers reached it first
     for e in ents:
         grouped, cands, _ = rows[id(e)]
@@ -172,6 +170,11 @@ def place(links, ents, reach=None, join_up=False):
             for link in [k for k in grouped if k not in owners]:
                 if taken.setdefault(link, e) is not e:
                     del grouped[link]
+    # a link with houses of two entries, one road in two municipalities, reads the same in both,
+    # joined numbers included
+    shared = {link: [r for e in es for r in rows[id(e)][0][link]] for link, es in owners.items() if len(es) > 1}
+    for e in ents:
+        grouped = rows[id(e)][0]
         grouped.update((link, shared[link]) for link in grouped if link in shared)
         ranges = addr_links.records(links, e, grouped)
         if ranges:
@@ -201,16 +204,17 @@ def under_settlements(streets, places):
     (town, ladder), and a range goes under every settlement an address on its link has, so
     a link reads the same wherever it is listed: the factory's 59,950 links under two or
     more settlements hold the same numbers under each."""
-    def of(rows):
-        return sorted({at for a in rows for at in places(a)})
+    def of(rows, kunta):
+        return sorted({at for a in rows for at in places(a) if at[1][:-1] == kunta})
     out = []
     for e in streets:
         parts = collections.defaultdict(list)
         for r in e.get('ranges', ()):
-            for at in of(r['of']):
+            # only its own kunta's settlements; a range borrowed from the next kunta's link goes under the street's own
+            for at in of(r['of'], e['ladder']) or of(e['addresses'], e['ladder']):
                 parts[at].append(r)
         if 'ranges' not in e:
-            parts = dict.fromkeys(of(e['addresses']))
+            parts = dict.fromkeys(of(e['addresses'], e['ladder']))
         for at, ranges in parts.items():
             new = dict(street=e['name'], name=e['name'], key=e['key'], town=at[0], ladder=at[1], posts=e['posts'],
                        n=sum(at in places(a) for a in e['addresses']))

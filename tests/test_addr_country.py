@@ -296,6 +296,17 @@ class Join(unittest.TestCase):
         self.assertEqual([[(r['link'], r['lo'], r['hi'], r['items']) for r in e['ranges']] for e in placed],
                          [[(1, 1, 5, placed[0]['ranges'][0]['items'])]] * 2)
 
+    def test_joined_numbers_stay_on_a_link_of_two_kunta(self):
+        # kunta 1 has 1 and 21, kunta 2 has 2 on kunta 1's first link: 3 to 7 land there too
+        lad = {'k1': (6, 1, 1), 'k2': (6, 1, 2)}
+        rows = [dict(street='Katu', num=str(n), letter='', post=1, town='', tag=t, lat=62.2401 + dlat, lon=25.7401 + east / 51845)
+                for n, east, dlat, t in ((1, 20, -0.0001, 'k1'), (21, 290, -0.0001, 'k1'), (2, 50, 0.0001, 'k2'))]
+        ents, _ = build_addr_country.group(rows, lambda r: (None, lad[r['tag']]), lambda s: s, lambda r: [r['street']])
+        placed, _ = build_addr_country.place(self.links(), ents, join_up=True)
+        one, two = ([(r['link'], [(it['first'], it['last']) for it in r['items']]) for r in e['ranges']] for e in placed)
+        self.assertEqual(one, [(1, [(1, 7), (2, 2)]), (2, [(9, 13)]), (3, [(15, 21)])])
+        self.assertEqual(two, one[:1])
+
     def test_houses_next_to_each_other_are_left_alone(self):
         self.assertEqual(self.ranges([(1, 50, 'S'), (3, 150, 'S'), (5, 250, 'S')]),
                          [(1, [(0x54, 1, 1)], 1), (2, [(0x54, 3, 3)], 1), (3, [(0x54, 5, 5)], 1)])
@@ -344,6 +355,18 @@ class Settlements(unittest.TestCase):
                       ranges=[dict(lo=1, hi=3, of=rows, addresses=3)])
         ents = build_addr_country.under_settlements([street], lambda r: at[id(r)])
         self.assertEqual([(e['town'], e['n'], e['ranges'][0]['hi']) for e in ents], [('A', 2, 3), ('B', 1, 3)])
+
+    def test_a_link_of_two_kunta_goes_under_each_kuntas_own_settlements(self):
+        one, two = ('S1', (6, 1, 1, 0)), ('S2', (6, 1, 2, 0))
+        a, b, c = (dict(num=n) for n in ('1', '2', 'B'))
+        at = {id(a): (one,), id(b): (two,), id(c): (two,)}
+        shared = dict(lo=1, hi=2, of=[a, b], addresses=2)
+        streets = [dict(name='KATU', key='KATU', ladder=(6, 1, 1), posts=[], addresses=[a], ranges=[shared]),
+                   dict(name='KATU', key='KATU', ladder=(6, 1, 2), posts=[], addresses=[b], ranges=[shared]),
+                   dict(name='TIE', key='TIE', ladder=(6, 1, 2), posts=[], addresses=[c], ranges=[dict(lo=1, hi=1, of=[a])])]
+        ents = build_addr_country.under_settlements(streets, lambda r: at[id(r)])
+        self.assertEqual([(e['name'], e['town'], e['n']) for e in ents], [('KATU', 'S1', 1), ('KATU', 'S2', 1), ('TIE', 'S2', 1)])
+        self.assertIs(ents[0]['ranges'][0], ents[1]['ranges'][0])
 
     def test_a_street_with_no_numbers(self):
         here = ('A', (6, 1, 1, 0))
