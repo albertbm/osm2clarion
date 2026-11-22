@@ -315,7 +315,7 @@ def encode(s, level):
     return [w0] + out
 
 
-def shape(level, cls, links, name_off=0xffff, ids=None, upper=None, direction=None):
+def shape(level, cls, links, name_off=0xffff, ids=None, upper=None, direction=None, ring=False):
     """A shape from points: links is [[(x, y), ...], ...], the first point of the first link
     being the shape's start, each later link starting where the previous ended (that point
     not repeated). Named shapes carry word 3 0 and plain y words; unnamed ones word 3 0x3000
@@ -333,6 +333,7 @@ def shape(level, cls, links, name_off=0xffff, ids=None, upper=None, direction=No
     if direction is not None:
         yb = {1: ONEWAY_ALONG, -1: ONEWAY_AGAINST}.get(direction, 0)
         w3 = 0 if not direction else ONEWAY_NAMED if named else code
+    if ring: w3 = RING   # factory: 7 where the graph link has 7, on all 102,097 level-4 ring links of QY8 and 84,451 of QY7
     start = links[0][0]
     body = [[(x, y, yb) for x, y in links[0][1:]]] + [[(x, y, yb) for x, y in l] for l in links[1:]]
     npts = 1 + sum(len(b) for b in body)
@@ -393,6 +394,7 @@ LINK_MAXPTS = 32          # points of one graph link's shape: the factory's long
 LAYER = 6                 # classes 3 to 7 at every coarse level; 0 to 2 would go in 7
 UPPER5 = 0x8000           # a level-4 shape's header word for its level-5 link, as fa_encode.UPPER_LEVEL[5]
 ONEWAY_ALONG, ONEWAY_AGAINST = 0x4000, 0x8000     # y bits of a one-way link's points, the graph entry's w5 bits
+RING = 0x7000             # word 3 of a roundabout ring's shape, the code its graph link has in w4
 ONEWAY_NAMED = 0x1000     # word 3 of a named one-way shape; an unnamed one keeps FMT.coarse_unnamed
 DIR_MESHES = {3: 8, 4: 88, 5: 88}
 GRID = {3: 16, 4: 44, 5: 11}
@@ -536,7 +538,7 @@ def kept_names(plain, country):
 
 def put(D, level, row, col, items, country, keep):
     """Write one parcel's road shapes and route labels. items are (class, ref, points, link
-    id, level-5 link id, direction), the last three None for a shape no graph link stands
+    id, level-5 link id, direction, ring), the last four None for a shape no graph link stands
     behind. Returns (shapes, points, labels), or None where the parcel has no background
     record to hang them on."""
     import fa_encode, rd_build
@@ -547,8 +549,8 @@ def put(D, level, row, col, items, country, keep):
     labels = list(dict.fromkeys('2=' + it[1] for it in items if it[1]))
     base, area = kept_names(bg['plain'], country) if keep else ((b'', 0), None)
     _, offs = fa_encode.names_section(labels, [], base)
-    shapes = by_layer([shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff, [lid] if lid else None, up, way)
-                       for cls, ref, piece, lid, up, way in items], level != 3)
+    shapes = by_layer([shape(level, cls, [piece], offs['2=' + ref] if ref else 0xffff, [lid] if lid else None, up, way, bool(ring))
+                       for cls, ref, piece, lid, up, way, ring in items], level != 3)
     subs = [fa_encode.item_words(sh, 2, sh[4], country, area) for sh in shapes]
     section, _ = fa_encode.names_section(labels, None if keep and level == 5 else subs, base)
     plain = rd_build.replace_names(bg['plain'], section) if keep else rd_build.merge_names(bg['plain'], section)
@@ -585,7 +587,7 @@ def build(levels, ways, origin, country, keep=False, only=(3, 4, 5)):
             for k, run in parcel_runs(r['nodes'], level, origin):
                 for i in range(0, len(run) - 1, MAXPTS - 1):
                     piece = run[i:i + MAXPTS]
-                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece, None, None, None))
+                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece, None, None, None, None))
         dirs = {(D['y'], (D['x'] + x_base) & 0xffff) if level == 3 else tuple(origin): D for D in levels[level]}
         nrec = nsh = npt = nlab = 0
         for (y0, x0, row, col), items in sorted(per.items()):
@@ -598,7 +600,7 @@ def build(levels, ways, origin, country, keep=False, only=(3, 4, 5)):
 
 def graph_build(levels, links, country, keep=False):
     """Levels 4 and 5 from the coarse graph: links is {level: {(row, col): [(class, ref,
-    points, link id, level-5 link id, direction)]}} from lev_graph.link_shapes, one shape for
+    points, link id, level-5 link id, direction, ring)]}} from lev_graph.link_shapes, one shape for
     each graph link, between its two nodes and under its class and id. Returns {level:
     (records, shapes, points, labels, links left without a shape)}."""
     stats = {}

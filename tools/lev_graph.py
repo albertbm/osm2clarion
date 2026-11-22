@@ -300,7 +300,7 @@ def encode_level(child, records, level, origin, country, occurrences, hierarchy=
 
 
 def link_shapes(level, records, origin, upper=None):
-    """{parcel: [(class, route number, points, link id, level-5 link id, direction)]}, one
+    """{parcel: [(class, route number, points, link id, level-5 link id, direction, ring)]}, one
     item per graph link, for lev_roads.graph_build. The unit draws a route link from the
     section-1 shape that carries its class and id (Navi.exe 0x516604), so each link gets a
     shape of its own, from its first node to the node whose entry carries the drawn-end
@@ -324,7 +324,8 @@ def link_shapes(level, records, origin, upper=None):
                 if len(pts) <= lev_roads.LINK_MAXPTS: break
                 tol *= 1.25
             above = {upper.get(m, {}).get(5) for m in link.get('members', ())} if upper and level == 4 else set()
-            items.append((link['cls'], link.get('ref'), pts, lid, above.pop() if len(above) == 1 else None, link['direction']))
+            items.append((link['cls'], link.get('ref'), pts, lid, above.pop() if len(above) == 1 else None, link['direction'],
+                          link.get('w4', 0) & 0x7000 == 0x7000))
         out[parent] = items
     return out
 

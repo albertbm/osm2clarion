@@ -9,6 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 
+import clarion_format
 import clarion_profile
 try:
     import lev_roads                     # lev_coarse needs shapely
@@ -87,6 +88,18 @@ class TestCoarseShapes(unittest.TestCase):
         both = lev_roads.shape(4, 7, [[(10, 20), (30, 40)]], ids=[7], direction=0)
         self.assertEqual((both[3], both[8] & 0xc000, both[11] & 0xc000), (0, 0, 0), 'unnamed and two-way')
         self.assertIsNotNone(lev_roads.decode(along, 4))
+
+    def test_a_ring_link_takes_its_graph_code(self):
+        # stock coarse files: code 7 on every shape link of a code-7 graph link, named or not
+        for name_off in (0xffff, 12):
+            ring = lev_roads.shape(4, 4, [[(10, 20), (30, 40)]], name_off=name_off, ids=[7], direction=1, ring=True)
+            self.assertEqual((ring[3], ring[8] & 0xc000), (0x7000, 0x4000))
+        for fmt in (clarion_format.X08_03, clarion_format.X08_02):
+            old, fa_encode.FMT = fa_encode.FMT, fmt
+            try:
+                self.assertEqual(lev_roads.shape(4, 4, [[(10, 20), (30, 40)]], ids=[7], direction=1, ring=True)[3], 0x7000)
+            finally:
+                fa_encode.FMT = old
 
     def test_layer_keeps_a_class_together(self):
         shapes = [lev_roads.shape(4, c, [[(0, 0), (9, 9)]], ids=[i]) for i, c in enumerate((5, 3, 7, 3, 10, 5), 1)]

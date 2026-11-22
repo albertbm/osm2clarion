@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 18)
+        self.assertEqual(len(checks), 19)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -145,6 +145,27 @@ class TestCoarseShapes(unittest.TestCase):
 
     def test_nothing_loaded_passes(self):
         self.assertTrue(card_check.check_coarse_shapes({}, {}, {})['passed'])
+
+
+class TestCoarseRingCodes(unittest.TestCase):
+    def run_rule(self, w4, code):
+        lev4 = {(0, 0): (dict(nodes=[node(entries=[entry(cls=0x0404, id=1, w4=w4)]),
+                                     node(entries=[entry(cls=0x0404, id=0x2001, w4=w4)])]), None)}
+        return card_check.check_coarse_ring_codes(lev4, {}, {'codes': {4: {(0, 0): {(4, 1): code}}}})
+
+    def test_a_ring_link_drawn_as_a_ring_passes(self):
+        r = self.run_rule(0x7002, 7)
+        self.assertTrue(r['passed'])
+        self.assertEqual(r['counts']['L4 ring links'], 1)
+
+    def test_a_ring_link_drawn_as_a_slip_fails(self):
+        self.assertFalse(self.run_rule(0x7000, 3)['passed'])
+
+    def test_a_plain_link_drawn_as_a_ring_fails(self):
+        self.assertFalse(self.run_rule(0x0000, 7)['passed'])
+
+    def test_a_plain_link_passes(self):
+        self.assertTrue(self.run_rule(0x3000, 3)['passed'])
 
 
 class TestRoadContinuity(unittest.TestCase):

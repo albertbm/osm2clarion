@@ -152,7 +152,8 @@ def load_lev(path):
 
 
 def load_lev_shapes(path):
-    """{level: {(row, col): [(layer, class, links, level-5 word or None, named)]}} of the
+    """{level: {(row, col): [(layer, class, links, level-5 word or None, named)]}}, and under
+    'codes' {level: {(row, col): {(class, link id): word-3 code}}}, of the
     level-4 and level-5 road shapes, walked as the unit walks them (Navi.exe 0x516604), a
     link as (id, first point, last point, y bits, points), or {} when path is None."""
     if path is None:
@@ -163,6 +164,7 @@ def load_lev_shapes(path):
         if layer['level'] not in (4, 5):
             continue
         recs = out.setdefault(layer['level'], {})
+        codes = out.setdefault('codes', {}).setdefault(layer['level'], {})
         for d in layer['dirs']:
             per = d['pairs'] // d['cols']
             for row, rr in enumerate(d['rows'] or []):
@@ -175,6 +177,8 @@ def load_lev_shapes(path):
                         continue
                     try:
                         recs[row, col] = list(coarse_shapes(w[2 * w[7]:2 * (w[7] + w[8])]))
+                        codes[row, col] = {(cls, lid): code for _, cls, _, _, ids, _, _, code in coarse_walk(w[2 * w[7]:2 * (w[7] + w[8])])
+                                           for lid, _ in ids}
                     except IndexError:
                         recs[row, col] = []
     return out
@@ -182,7 +186,7 @@ def load_lev_shapes(path):
 
 def coarse_walk(u):
     """(layer, class, name word, level-5 words, [(link id, index of its first point)], points,
-    y bits) of each shape of one coarse road unit, layer by layer."""
+    y bits, word-3 code) of each shape of one coarse road unit, layer by layer."""
     for layer in range(11):
         p, count = 2 * u[2 * layer], u[2 * layer + 1]
         if u[2 * layer] == 0xffff:
@@ -201,13 +205,13 @@ def coarse_walk(u):
                     q += 1
                 pts.append((x & 0x7ff, y & 0x7ff))
                 way.append(y & 0xc000)
-            yield layer, w2 >> 12, name, above, ids, pts, way
+            yield layer, w2 >> 12, name, above, ids, pts, way, w3 >> 12
             p += w0 & 0x1fff
 
 
 def coarse_shapes(u):
     """The shapes of one coarse road unit, layer by layer."""
-    for layer, cls, name, above, ids, pts, way in coarse_walk(u):
+    for layer, cls, name, above, ids, pts, way, _ in coarse_walk(u):
         links = [(lid, pts[at], pts[nxt[1] if nxt else -1], set(way[at + 1:nxt[1] + 1 if nxt else None]),
                   (nxt[1] if nxt else len(pts) - 1) - at + 1) for (lid, at), nxt in zip(ids, ids[1:] + [None])]
         yield layer, cls, links, above[0] & 0x1fff if above else None, name != 0xffff
@@ -994,6 +998,29 @@ def check_coarse_shapes(lev4, lev5, coarse):
                    'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
 
 
+def check_coarse_ring_codes(lev4, lev5, coarse):
+    """A level-4 or level-5 shape link has code 7 in word 3 where its graph link has 7 in w4,
+    and nowhere else. Factory QY8: 699,013 of 699,013 links at level 4, 97,294 of 97,294 at
+    level 5. QY7: 498,917 of 498,919 and 48,472 of 48,472."""
+    st = collections.Counter()
+    bad = []
+    for lv, recs in ((4, lev4), (5, lev5)):
+        for par, (a, b) in recs.items():
+            shape = (coarse or {}).get('codes', {}).get(lv, {}).get(par, {})
+            for nd in a['nodes']:
+                for e in nd['entries']:
+                    key = e['cls'] & 0xf, e['id'] & 0x1fff
+                    if e['cls'] & 0x8000 or e['id'] & 0x2000 or key not in shape:
+                        continue
+                    ring = e['w4'] >> 12 == 7
+                    st['L%d links with a shape' % lv] += 1
+                    st['L%d ring links' % lv] += ring
+                    if ring != (shape[key] == 7):
+                        st['L%d ring code in one of the two only' % lv] += 1
+                        bad.append((lv, par) + key)
+    return result('coarse_ring_codes', not bad, st, ['wrong: %r' % bad[:5]])
+
+
 GAP = 8                   # level units between two pieces of a road before it counts as a break; at level 1 any gap does
 # The limits are none, or the factory's own share on B50R068R where it has some.
 NAMED_BREAKS = {1: 0, 2: 3 / 7044, 4: 0, 5: 0}          # roads broken where level 1 names the level's links, or OSM has the way
@@ -1088,7 +1115,7 @@ def load_drawn_roads(tile_paths, lev_path, osm=None):
                         continue
                     pc = (row + D['base'][0], col + D['base'][1])
                     D['parcels'].add(pc)
-                    for _, cls, name, above, ids, pts, way in shapes:
+                    for _, cls, name, above, ids, pts, way, _ in shapes:
                         pts = [(pc[1] * 2048 + far_edge(x), pc[0] * 2048 + far_edge(y)) for x, y in pts]
                         cuts = [at for lid, at in ids] or [0]
                         for a, b in zip(cuts, cuts[1:] + [len(pts) - 1]):
@@ -1284,6 +1311,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     out.append(check_coarse_shapes(lev4, lev5, coarse))
+    out.append(check_coarse_ring_codes(lev4, lev5, coarse))
     out.append(check_road_continuity(drawn, L1, L2, lev4, lev5))
     return out
 
