@@ -1106,8 +1106,11 @@ def main():
             # the level-1 node an L2 node pairs with, by exact geo match: (parcel, index in that record)
             l1_index = {}; l1_adj = {}
             for pc, P in parcels.items():
-                if P['ring']: continue
                 ways_at = node_ways(P)
+                for key, nd in P['nodes'].items():
+                    # the two edge nodes either side of a parcel line share one geo
+                    l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
+                if P['ring']: continue   # indexed all the same: a twin across the cell line pairs with a ring node
                 adj = l1_adj.setdefault(pc, {})
                 for a, b, *_ in P['links']:
                     adj.setdefault(P['index'][a], []).append((P['index'][b], P['nodes'][b]['geo']))
@@ -1120,9 +1123,6 @@ def main():
                           0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
                     twin = parcels[npc]['index'].get(tw) if npc in parcels else None
                     if twin is not None: adj.setdefault(P['index'][key], []).append((twin, nd['geo']))
-                for key, nd in P['nodes'].items():
-                    # the two edge nodes either side of a parcel line share one geo
-                    l1_index.setdefault(tuple(nd['geo']), []).append((pc, P['index'][key], key, ways_at.get(key, frozenset())))
         upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else coarse_runs(parcels) if coarse else None
         turned = follow_upper(parcels, upper, upper_links.against) if level == 1 else 0
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
@@ -1179,7 +1179,7 @@ def main():
             report.append(f'level {level}: {encode_parcels.no_twin} edge nodes with no node at the mirrored point '
                           f'across the edge, left without an edge entry')
         if level == 2:
-            report.append(f'level 2: link ends without an L1 next node {encode_parcels.l1_next_missing} (w4 falls back to the far L2 index)')
+            report.append(f'level 2: link ends without an L1 next node {encode_parcels.l1_next_missing}')
             report.append(f'level 2: L1 twins by nearest node {encode_parcels.l1_near} (max {l1_nearest.max_m:.1f} m, '
                           f'{l1_nearest.other_way} on another road), '
                           f'no L1 node at all {encode_parcels.l1_missing}, exact twin outside the parcel {encode_parcels.l1_mismatch}')

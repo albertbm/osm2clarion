@@ -295,11 +295,14 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         pb += [len(adj[old]) << 12, pos_of[old], cw, child]
         for other, lid, cls, a, length, _, _, nxt in adj[old]:
             if cls & 0x8000:
+                # factory: the far node's own L1 child (31,826/31,826 on four QY7 tiles, 5,324/5,324 on four QY8)
                 tc = edge_child.get(old)
-                pb += [other, mirror_cell(cw, cls & 0xe000), tc if tc is not None else other]
+                assert tc is not None or not l1_pair, 'edge node %d has no level-1 child across the line' % pos_of[old]
+                pb += [other, mirror_cell(cw, cls & 0xe000), other if tc is None else tc]
             else:
                 # factory: w4 is the L1 node next along the link from the twin (36,326/36,326 on B30R070R)
-                pb += [other, cw, nxt if nxt is not None else other]
+                assert nxt is not None or not l1_next, 'node %d has a link with no level-1 node next along it' % pos_of[old]
+                pb += [other, cw, other if nxt is None else nxt]
     pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)

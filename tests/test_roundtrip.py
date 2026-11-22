@@ -905,6 +905,15 @@ class TestRoadHeader(unittest.TestCase):
         self.assertEqual(len(rd_check.edge_joins([west, wrong])[1]), 2)
         self.assertEqual(rd_check.edge_joins([west])[1][0][5], 'neighbour parcel not read')
 
+    def test_a_level2_edge_needs_its_level1_child(self):
+        nodes, links = [(100, 100), (2047, 100)], [(0, 1, 50)]
+        kw = dict(country=352, l1_pair=[(0, 0), (0x00c0, 1)], l1_next=[(1, 0)])
+        _, b = rd_encode.build_record_edges(2, 96, 896, 1, 1, nodes, links, {1: (0xa000, 7, 4)}, **kw)
+        edge = [x for x in clarion_rd.parse_part_b(b)['nodes'] if x['upper'] == 1][0]['entries'][1]
+        self.assertEqual(tuple(edge), (7, 0x0000, 4))
+        with self.assertRaises(AssertionError):
+            rd_encode.build_record_edges(2, 96, 896, 1, 1, nodes, links, {1: (0xa000, 7, None)}, **kw)
+
     def test_two_country_records(self):
         """A parcel a border runs through lists both codes and starts unit 0 a word later."""
         unit = rd_encode.unit_head([8, 8], [1, 1]) + [

@@ -459,6 +459,36 @@ def check_edges(L1, L2, lev4, lev5):
     return result('edge_entries', ok, st, list(bad[:5]))
 
 
+def check_l2_edge_triples(L2):
+    """A level-2 edge triple names the far node's own part-B block: its cell word and its
+    level-1 child. Factory QY7 B58R048R, B58R050R, B60R048R, B60R050R: 31,826 of 31,826,
+    330 of them across a tile line. QY8 B50R068R, B58R060R, B58R068R, B60R060R: 5,324 of 5,324."""
+    st = collections.Counter()
+    bad = []
+    for pc, (a, b) in L2.items():
+        if b is None:
+            continue
+        blocks = {x['upper'] & 0x3fff: x for x in b['nodes']}
+        for k, n in enumerate(a['nodes']):
+            x = blocks.get(k)
+            for j, e in enumerate(n['entries']):
+                if not e['cls'] & 0x8000:
+                    continue
+                st['edge triples'] += 1
+                dr, dc = SIDE[e['cls'] & 0xe000]
+                far = L2.get((pc[0] + dr, pc[1] + dc))
+                if far is None or far[1] is None:
+                    st['far parcel off the given tiles'] += 1
+                    continue
+                fb = {y['upper'] & 0x3fff: y for y in far[1]['nodes']}.get(e['other'] & 0x3fff)
+                if x is not None and fb is not None and j < len(x['entries']) and tuple(x['entries'][j][1:]) == (fb['parcel'], fb['child']):
+                    st['the far block'] += 1
+                else:
+                    st['not the far block'] += 1
+                    bad.append((pc, k, j))
+    return result('l2_edge_triples', not bad, st, ['wrong: %r' % bad[:5]])
+
+
 def L2nodes(L2):
     """L2's (a) parts keyed the same way mirror_l1l2 wants: {pc: parsed record}."""
     return {pc: a for pc, (a, b) in L2.items()}
@@ -1240,6 +1270,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
     out.append(check_edges(L1, L2, lev4, lev5))
+    out.append(check_l2_edge_triples(L2))
     out.append(check_no_junction_on_parcel_line(L1, L2))
     out.append(check_node_order(lev4, lev5))
     out.append(check_l1_link_direction(L1, L2))

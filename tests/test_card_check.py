@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 17)
+        self.assertEqual(len(checks), 18)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -54,6 +54,31 @@ class TestL2Nflags(unittest.TestCase):
     def test_passes_on_no_l2_nodes_at_all(self):
         r = card_check.check_l2_nflags({})
         self.assertTrue(r['passed'])
+
+
+class TestL2EdgeTriples(unittest.TestCase):
+    def cards(self, child):
+        own = (dict(nodes=[node(x=2047, entries=[entry(cls=0x0404, other=1), entry(cls=0xa404, other=0)])]),
+               dict(nodes=[dict(upper=0, parcel=0x00c0, child=5, entries=[(1, 0x00c0, 6), (0, 0x0000, child)])]))
+        far = (dict(nodes=[node(x=0, entries=[entry(cls=0x0404, other=1), entry(cls=0xe404, other=0)])]),
+               dict(nodes=[dict(upper=0, parcel=0x0000, child=3, entries=[(1, 0x0000, 4), (0, 0x00c0, 5)])]))
+        return {(0, 0): own, (0, 1): far}
+
+    def test_the_far_nodes_block_passes(self):
+        r = card_check.check_l2_edge_triples(self.cards(3))
+        self.assertTrue(r['passed'])
+        self.assertEqual(r['counts']['the far block'], 2)
+
+    def test_the_far_level2_index_fails(self):
+        r = card_check.check_l2_edge_triples(self.cards(0))
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['not the far block'], 1)
+
+    def test_a_far_parcel_not_loaded_is_counted(self):
+        L2 = self.cards(3); del L2[(0, 1)]
+        r = card_check.check_l2_edge_triples(L2)
+        self.assertTrue(r['passed'])
+        self.assertEqual(r['counts']['far parcel off the given tiles'], 1)
 
 
 class TestCoarseGraphPresent(unittest.TestCase):
