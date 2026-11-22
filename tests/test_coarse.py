@@ -300,5 +300,16 @@ class TestCollapse(unittest.TestCase):
         self.assertEqual(sorted(l['length'] for l in per[(0, 0)]), [60000.0, 120000.0])
 
 
+    def test_a_one_way_link_does_not_join_a_two_way_one(self):
+        # stock QY8 B50R068R: a level-4 link and its end level-2 links are of one kind, 8,616 of 8,616
+        import lev_graph
+        def link(a, b, d):
+            return dict(a=a, b=b, length=100.0, cls=5, speed=50.0, direction=d, parcel=(0, 0),
+                        child=(0, 0), next_a=b, next_b=a, pa=(0, 0), pb=(0, 0))
+        per = {(0, 0): [link(1, 2, 0), link(2, 3, 1), link(3, 4, 1), link(4, 5, 0)]}
+        lev_graph.collapse(per)
+        self.assertEqual(sorted((l['direction'], l['length']) for l in per[(0, 0)]), [(0, 100.0), (0, 100.0), (1, 200.0)])
+
+
 if __name__ == '__main__':
     unittest.main()

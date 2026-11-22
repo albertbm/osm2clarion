@@ -190,6 +190,8 @@ def collapse(per):
                 if len(at) != 2 or len(owners[node]) != 1: continue
                 p, q = at; a, b = links[p], links[q]
                 if a['cls'] != b['cls'] or a.get('up') != b.get('up'): continue
+                # a one-way link and a two-way one stay apart, as rd_build.coarse_runs takes them to
+                if bool(a['direction']) != bool(b['direction']): continue
                 if shapes and (a.get('shape') is None or a.get('shape') != b.get('shape')): continue
                 # only two links that run the same way join: the shapes under the merged link
                 # all run its way then, as the unit takes them to (Navi.exe 0x3605a0)
