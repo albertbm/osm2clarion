@@ -78,11 +78,11 @@ unfolded = []     # characters no folding reached, dropped from the keys and rep
 
 def word_starts(s):
     """Where the factory cuts a name into keys (POINT018): the whole name, every later word
-    of two or more characters that starts with a letter or digit, and after a one-letter
-    elision (D'ARMES gives ARMES, BAMBERG'S gives no S)."""
+    of two or more characters whatever it starts with (&CO, '90, /KEMI; a lone & or / gets
+    none), and after a one-letter elision (D'ARMES gives ARMES, BAMBERG'S gives no S)."""
     out, p = [], 0
     for w in s.split(' '):
-        if p == 0 or (len(w) >= 2 and w[0].isalnum()):
+        if p == 0 or len(w) >= 2:
             out.append(p)
             if len(w) >= 4 and w[1] == "'":
                 out.append(p + 2)

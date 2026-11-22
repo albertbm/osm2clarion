@@ -412,6 +412,12 @@ class TestNonLatinKeys(unittest.TestCase):
             self.assertEqual(self.keys(name)[0], (whole, False), name)
         self.assertEqual(self.keys('ГЕЙТ 01'), [('ГЕЙТ 01', False), ('01', True)])
 
+    def test_later_word_any_start(self):
+        self.assertEqual(self.keys('ENZA &FAMIGLIA'), [('ENZA &FAMIGLIA', False), ('&FAMIGLIA', True)])
+        self.assertEqual(self.keys("AL '1"), [("AL '1", False), ("'1", True)])
+        self.assertEqual(self.keys('WETTERI OY /KEMI'), [('WETTERI OY /KEMI', False), ('OY /KEMI', True), ('/KEMI', True)])
+        self.assertEqual(self.keys('PIOLETS & SPA'), [('PIOLETS & SPA', False), ('SPA', True)])
+
     def test_brackets_fold_to_space(self):
         self.assertEqual(self.keys('HUNG(A)RY'), [('HUNG A RY', False), ('RY', True)])
         self.assertEqual(self.keys('TARNÓW (GMINA)'), [('TARNOW GMINA', False), ('GMINA', True)])

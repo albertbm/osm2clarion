@@ -96,7 +96,7 @@ def folded_words(name, fold):
                                    dict(addre_io.POINT_KEY_FOLD, **(fold or {}))).upper().split())
     starts, p = [], 0
     for w in s.split(' '):
-        if p == 0 or (len(w) >= 2 and w[0].isalnum()):
+        if p == 0 or len(w) >= 2:
             starts.append(p)
             if len(w) >= 4 and w[1] == "'":
                 starts.append(p + 2)
