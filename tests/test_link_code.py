@@ -17,11 +17,23 @@ class LinkCode(unittest.TestCase):
         fa_encode.FMT = fmt
         return fa_encode.shape_words([(1, 0, 1, [])], [(10, 10), (20, 20)], **kw)
 
+    def test_slip_ways(self):
+        def way(i, hw, d, a, b): return dict(id=i, hw=hw, dir=d, nodes=[[a, 64.0], [b, 64.0]])
+        m = 1 / (111320 * 0.4384)                       # one metre of longitude at 64 N
+        ways = [way(1, 'trunk_link', 1, 0, 70 * m), way(2, 'trunk_link', 1, 70 * m, 130 * m),   # 130 m in two pieces
+                way(3, 'primary_link', 1, 1, 1 + 80 * m),                                        # 80 m on its own
+                way(4, 'primary_link', 0, 2, 2 + 300 * m),                                       # long but two-way
+                way(5, 'motorway_link', 0, 3, 3 + 20 * m),                                       # any motorway link
+                way(6, 'primary', 1, 4, 4 + 500 * m)]
+        self.assertEqual(rd_build.slip_ways(ways), {1, 2, 5})
+
     def test_is_slip(self):
-        self.assertTrue(rd_build.is_slip(link('primary_link', 1)))
-        self.assertTrue(rd_build.is_slip(link('trunk_link', -1)))
-        self.assertFalse(rd_build.is_slip(link('primary_link', 0)))
-        self.assertFalse(rd_build.is_slip(link('primary', 1)))
+        rd_build.SLIP_WAYS = frozenset({7})
+        try:
+            self.assertTrue(rd_build.is_slip(link('primary_link', 1)[:3] + (7,) + link('primary_link', 1)[4:]))
+            self.assertFalse(rd_build.is_slip(link('primary_link', 1)))
+        finally:
+            rd_build.SLIP_WAYS = frozenset()
 
     def test_qy8_word3(self):
         w = self.words(clarion_format.X08_03, slip=True)

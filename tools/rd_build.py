@@ -369,9 +369,30 @@ def flip(c):
     """A chain of links turned to run the other way."""
     return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
 
+SLIP_METRES = 120     # shorter connectors are code 0 on the factory cards: 85% of link shapes under 60 m (UK B50R068R)
+SLIP_WAYS = frozenset()
+
+def slip_ways(ways):
+    """Ids of the ways that take link code 3: a motorway_link, or a one-way *_link whose
+    connector, the links joined through shared points, is SLIP_METRES long or more."""
+    links = [w for w in ways if w['hw'].endswith('_link')]
+    top = {}
+    def find(i):
+        while top.setdefault(i, i) != i: top[i] = top[top[i]]; i = top[i]
+        return i
+    first = {}
+    for w in links:
+        for p in map(tuple, w['nodes']):
+            if p in first: top[find(w['id'])] = find(first[p])
+            else: first[p] = w['id']
+    length = collections.Counter()
+    for w in links: length[find(w['id'])] += sum(dist(a, b) for a, b in zip(w['nodes'], w['nodes'][1:]))
+    return frozenset(w['id'] for w in links if w['hw'] == 'motorway_link'
+                     or w['dir'] != 0 and length[find(w['id'])] >= SLIP_METRES)
+
 def is_slip(l):
-    """A one-way *_link way: the factory's link code 3."""
-    return l[5].endswith('_link') and l[10] != 0
+    """The link's way is one of SLIP_WAYS: the factory's link code 3."""
+    return l[3] in SLIP_WAYS
 
 def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
@@ -1034,6 +1055,8 @@ def main():
     ways = [w for w in json.load(open(rpath)) if w['hw'] not in skip]
     derive_dir(ways)
     for w in ways: w['hw'] = fa_encode.road_kind(w['hw'], w.get('ref'))
+    global SLIP_WAYS
+    SLIP_WAYS = slip_ways(ways)   # before simplify, on the lengths OSM has
     if coarse:
         # from every way, before any cell is cut out, so all cells pick the same routes
         km5, km4 = fa_encode.pick_level5(ways)
