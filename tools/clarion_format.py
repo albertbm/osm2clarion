@@ -86,7 +86,7 @@ class Format:
         self.class_plain = class_plain  # the first link class whose word lacks 0x10
         self.reg_exit = reg_exit        # bits 8-11 of a regulation word
         self.oneway_end_words = oneway_end_words  # a one-way link's arriving end bars every entry, its leaving end itself
-        self.pairing_by_child = pairing_by_child  # part B lists a child parcel's nodes by child index at every level
+        self.pairing_by_child = pairing_by_child  # coarse part B lists a child parcel's nodes by child index; level 2 does in both formats
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""

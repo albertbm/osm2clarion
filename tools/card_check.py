@@ -512,6 +512,22 @@ def check_l2_edge_triples(L2):
     return result('l2_edge_triples', not bad, st, ['wrong: %r' % bad[:5]])
 
 
+def check_l2_block_order(L2):
+    """A level-2 record's part-B blocks run by cell, then by child node, in both formats.
+    Factory: 2,948 of 2,948 records of QY7 B58R050R, 2,005 of 2,005 of QY8 B48R060R."""
+    st = collections.Counter()
+    bad = []
+    for pc, (a, b) in L2.items():
+        if b is None:
+            continue
+        keys = [(x['parcel'], x['child']) for x in b['nodes']]
+        st['records'] += 1
+        if keys != sorted(keys):
+            st['out of child order'] += 1
+            bad.append(pc)
+    return result('l2_block_order', not bad, st, ['wrong: %r' % bad[:5]])
+
+
 def L2nodes(L2):
     """L2's (a) parts keyed the same way mirror_l1l2 wants: {pc: parsed record}."""
     return {pc: a for pc, (a, b) in L2.items()}
@@ -1353,6 +1369,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_l2_triple_w4(L1, L2))
     out.append(check_edges(L1, L2, lev4, lev5))
     out.append(check_l2_edge_triples(L2))
+    out.append(check_l2_block_order(L2))
     out.append(check_no_junction_on_parcel_line(L1, L2))
     out.append(check_node_order(lev4, lev5))
     out.append(check_l1_link_direction(L1, L2))

@@ -288,7 +288,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
             x, y = nodes[old]
             pairs[old] = ((y * 4 // 2048) << 14 | (x * 4 // 2048) << 6, pos_of[old])
     cellof = {old: pairs[old][0] for old in pos_of}
-    stream_order = sorted(pos_of, key=lambda old: (cellof[old], pairs[old][1] if FMT.pairing_by_child else 0, pos_of[old]))
+    # a cell's nodes by child node in both formats: 2,948 of 2,948 records of QY7 B58R050R, 2,005 of 2,005 of QY8 B48R060R
+    stream_order = sorted(pos_of, key=lambda old: (cellof[old], pairs[old][1], pos_of[old]))
     pb = [nn, 0xa100]   # part b: connection table
     for old in stream_order:
         cw, child = pairs[old]

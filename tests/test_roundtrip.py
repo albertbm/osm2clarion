@@ -754,8 +754,8 @@ class TestRoadGraph(unittest.TestCase):
                 want = [] if e['w5'] & 0xc000 == 0x8000 else [j << 12 | 0x3ff for j in leaving if j != k]
                 self.assertEqual(regs, want)
 
-    def test_qy7_part_b_lists_a_cell_by_child_node(self):
-        # 2,948 of 2,948 level-2 records of stock QY7 B58R050R; ours listed by own node
+    def test_level2_part_b_lists_a_cell_by_child_node(self):
+        # 2,948 of 2,948 level-2 records of stock QY7 B58R050R, 2,005 of 2,005 of QY8 B48R060R
         nodes = [(100, 200), (300, 240), (500, 300), (700, 400)]
         links = [(0, 1, 100), (1, 2, 100), (2, 3, 100)]
         pair = [(0, 9), (0, 4), (0, 7), (0, 2)]
@@ -767,7 +767,7 @@ class TestRoadGraph(unittest.TestCase):
             finally:
                 rd_encode.FMT = old
             got[fmt.name] = [(n['upper'], n['child']) for n in clarion_rd.parse_part_b(b)['nodes']]
-        self.assertEqual(got['x08-03'], [(0, 9), (1, 4), (2, 7), (3, 2)])
+        self.assertEqual(got['x08-03'], [(3, 2), (1, 4), (2, 7), (0, 9)])
         self.assertEqual(got['x08-02'], [(3, 2), (1, 4), (2, 7), (0, 9)])
 
     def test_parcel_edge_entry(self):

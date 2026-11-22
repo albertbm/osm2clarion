@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 20)
+        self.assertEqual(len(checks), 21)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -79,6 +79,19 @@ class TestL2EdgeTriples(unittest.TestCase):
         r = card_check.check_l2_edge_triples(L2)
         self.assertTrue(r['passed'])
         self.assertEqual(r['counts']['far parcel off the given tiles'], 1)
+
+
+class TestL2BlockOrder(unittest.TestCase):
+    def blocks(self, *keys):
+        return {(0, 0): (dict(nodes=[]), dict(nodes=[dict(upper=i, parcel=p, child=c, entries=[]) for i, (p, c) in enumerate(keys)]))}
+
+    def test_by_cell_then_child_passes(self):
+        self.assertTrue(card_check.check_l2_block_order(self.blocks((0, 2), (0, 9), (0x40, 1)))['passed'])
+
+    def test_by_own_node_fails(self):
+        r = card_check.check_l2_block_order(self.blocks((0, 9), (0, 2)))
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['out of child order'], 1)
 
 
 class TestCoarseGraphPresent(unittest.TestCase):
