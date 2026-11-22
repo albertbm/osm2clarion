@@ -391,7 +391,7 @@ class TestPoiPoint(unittest.TestCase):
         self.assertEqual(keys("BAMBERG'S"), ["BAMBERG'S"])
         self.assertEqual(keys('AUTOPOLIS S.A.'), ['AUTOPOLIS S A'])
         self.assertEqual(keys('4 SAISONS'), ['4 SAISONS', 'SAISONS'])
-        self.assertEqual(keys('GARÐABÆR (ÁLFTANES)'), ['GARDABAR (ALFTANES)'], 'as the settlement builders keyed card 030')
+        self.assertEqual(keys('GARÐABÆR (ÁLFTANES)'), ['GARDABAR ALFTANES', 'ALFTANES'], 'as the factory keys TARNÓW (GMINA)')
         self.assertEqual(keys('ADRIANO & CO'), ['ADRIANO & CO', 'CO'])
         self.assertEqual(keys('Daddi’s Pizza'), ["DADDI'S PIZZA", 'PIZZA'])
 
@@ -411,6 +411,10 @@ class TestNonLatinKeys(unittest.TestCase):
                             ('ЇЖАК ЄВРО', 'ИЖАК ЕВРО'), ('Пятёрочка', 'ПЯТЕРОЧКА')):
             self.assertEqual(self.keys(name)[0], (whole, False), name)
         self.assertEqual(self.keys('ГЕЙТ 01'), [('ГЕЙТ 01', False), ('01', True)])
+
+    def test_brackets_fold_to_space(self):
+        self.assertEqual(self.keys('HUNG(A)RY'), [('HUNG A RY', False), ('RY', True)])
+        self.assertEqual(self.keys('TARNÓW (GMINA)'), [('TARNOW GMINA', False), ('GMINA', True)])
 
     def test_oe_mirrors_qy7(self):
         self.assertEqual(self.keys('Sacré-Cœur'), [('SACRE COEUR', False), ('COEUR', True)])

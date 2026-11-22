@@ -68,10 +68,11 @@ def keyunits(s, kw):
 
 
 # the factory keys (POINT018): '.', '+' and ',' fold to a space (S.A.R.L. -> S A R L, P+R -> P R,
-# APOTEKA 36,6 -> 36 6), quotes vanish, runs of spaces collapse; brackets stay, as the settlement
-# builders keep them (GARDABAR (ALFTANES))
+# APOTEKA 36,6 -> 36 6), quotes vanish, runs of spaces collapse. Brackets fold to a space in
+# facility and area-name keys alike (HUNG(A)RY -> HUNG A RY): no key keeps one across 2,005
+# facility names and 159 Polish area names on the 2017 card
 PUNCT = {'\xa0': ' ', '\u2013': ' ', '\u2014': ' ', '\u2018': "'", '\u2019': "'", '\u201c': '', '\u201d': '', '"': '',
-         '.': ' ', '+': ' ', ',': ' '}
+         '.': ' ', '+': ' ', ',': ' ', '(': ' ', ')': ' '}
 unfolded = []     # characters no folding reached, dropped from the keys and reported
 
 

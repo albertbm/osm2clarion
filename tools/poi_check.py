@@ -92,7 +92,7 @@ def walk_trie(d, base, cr, kw):
 
 def folded_words(name, fold):
     """The upper-cased folded name and its word starts, as the trie keys are cut."""
-    s = ' '.join(addre_io.fold_key(name.translate(str.maketrans('.+', '  ', '"')),
+    s = ' '.join(addre_io.fold_key(name.translate(str.maketrans('.+()', '    ', '"')),
                                    dict(addre_io.POINT_KEY_FOLD, **(fold or {}))).upper().split())
     starts, p = [], 0
     for w in s.split(' '):

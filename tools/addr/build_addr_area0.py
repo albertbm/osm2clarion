@@ -122,7 +122,7 @@ def word_keys(name, kw):
 
 def point_word_keys(name, kw):
     """word_keys by the factory's POINT rule, which poi_point checks the ADM frame against."""
-    s = fold(name)
+    s = ' '.join(fold(name.replace('(', ' ').replace(')', ' ')).split())   # brackets: poi_point.PUNCT
     return [(keyunits(s[p:], kw), p > 0) for p in word_starts(s)]
 
 
