@@ -92,6 +92,30 @@ class TestDrives(unittest.TestCase):
         self.assertFalse(r['passed'])
         self.assertTrue(any('id 9' in n and 'not named' in n for n in r['notes']), r['notes'])
 
+    def long_stretch(self, between):
+        """Level-1 links 1-2 under level-2 link 1 and 9-11 under link 3, the six between
+        naming none; `between` adds level-2 links {id: node places}."""
+        named = {1: 1, 2: 1, 9: 3, 10: 3, 11: 3}
+        shapes, drawn, walked, nodes = tables(named, 12)
+        for up, places in between.items():
+            nodes[2][750, 7250, 4, up] = set(places)
+            drawn[2][750, 7250, 4, up] = None
+        return drive_check.judge(drive_check.Graph(line(12)), shapes, drawn, walked, nodes, 20), drawn, (shapes, walked, nodes)
+
+    def test_a_long_stretch_off_a_level_is_reported(self):
+        r = self.long_stretch({})[0]
+        self.assertEqual(r['counts']['L2 stretches not followed'], 1)
+        self.assertTrue(any('leaves it' in n and 'for 6 level-1 links' in n for n in r['notes']), r['notes'])
+
+    def test_a_long_stretch_is_followed_on_the_level_s_own_links(self):
+        r, drawn, (shapes, walked, nodes) = self.long_stretch({5: {2, 5}, 6: {5, 8}})
+        self.assertTrue(r['passed'], r)
+        self.assertEqual((r['counts']['L2 stretches not followed'], r['counts']['L2 stretches followed on its own links']), (0, 1))
+        del drawn[2][750, 7250, 4, 6]
+        r = drive_check.judge(drive_check.Graph(line(12)), shapes, drawn, walked, nodes, 20)
+        self.assertFalse(r['passed'])
+        self.assertTrue(any('id 6' in n and 'no shape' in n for n in r['notes']), r['notes'])
+
     def test_routes_that_never_reach_a_level_fail(self):
         shapes, drawn, walked, nodes = tables(WHOLE)
         shapes = {k: (True, {}) for k in shapes}
@@ -103,6 +127,17 @@ class TestDrives(unittest.TestCase):
         shapes, drawn, walked, nodes = tables(WHOLE)
         shapes = {(k[0], 4, k[2]): (True, {2: (751, 7250, 4, 1)} if k[2] == 5 else v[1]) for k, v in shapes.items()}
         self.assertTrue(self.judge(shapes, drawn, walked, nodes)['passed'])
+
+
+class TestLevelPath(unittest.TestCase):
+    def test_the_fewest_links_between_two(self):
+        at = {'a': {1}, 'b': {1, 2}, 'c': {2, 3}, 'd': {3}, 'e': {1, 3}}
+        meeting = {1: {'a', 'b', 'e'}, 2: {'b', 'c'}, 3: {'c', 'd', 'e'}}
+        self.assertEqual(drive_check.level_path(at, meeting, 'a', 'd', 5), ['e'])
+        del at['e']
+        meeting = {1: {'a', 'b'}, 2: {'b', 'c'}, 3: {'c', 'd'}}
+        self.assertEqual(drive_check.level_path(at, meeting, 'a', 'd', 5), ['b', 'c'])
+        self.assertIsNone(drive_check.level_path(at, meeting, 'a', 'd', 1))
 
 
 class TestGraph(unittest.TestCase):

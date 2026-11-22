@@ -19,8 +19,12 @@ and 5, then needs two things of every link it planned with:
 A route also may not fall off a level inside a junction. Where it runs from one link of a
 level to another over up to three level-1 links of the level's classes that name no link,
 the two links must meet at a node, or the level's own links between them are driven in
-their place; with neither, the unit cannot plan the way the road runs. And a long route
-with no link of a level at all means level 1 names none.
+their place; with neither, the unit cannot plan the way the road runs. Over a longer
+stretch, the fewest of the level's own links that join the two, no more of them than the
+stretch has level-1 links, are driven in its place. Where none do, the stretch is listed
+and counted but does not fail: a level need not carry every road of its classes, and no
+card has measured how often the factory leaves one. And a long route with no link of a
+level at all means level 1 names none.
 
 Apart from the routes, every level-2 edge triple must name the far node's own block (cell
 word, level-1 child), as all 31,826 on the stock QY7 Finland tiles do. Ours named the far
@@ -54,7 +58,7 @@ import rd_check
 import rd_encode
 from tile_scan import TileScan
 
-JUNCTION = 3                          # level-1 links a junction may hide from a level; more is a route on other roads
+JUNCTION = 3                          # level-1 links a junction may hide from a level; a longer stretch is followed or listed
 OFF_LEVEL = 0.1                       # share of the routes that may use no link of a level the card has
 
 
@@ -373,11 +377,34 @@ def add_edge_triples(r, st, per, notes):
     return r
 
 
+def level_path(at, meeting, first, last, most):
+    """The fewest links of a level, `most` at most, that run from link `first` to link `last`
+    meeting node to node, not counting those two; None when there is no such run."""
+    goal = at.get(last, set())
+    before, ring = {first: None}, [first]
+    for _ in range(most):
+        nxt = []
+        for z in ring:
+            for p in at.get(z, ()):
+                for y in meeting[p]:
+                    if y in before or y == last:
+                        continue
+                    before[y] = z
+                    if at[y] & goal:
+                        way = [y]
+                        while before[way[-1]] != first:
+                            way.append(before[way[-1]])
+                        return way[::-1]
+                    nxt.append(y)
+        ring = nxt
+    return None
+
+
 def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
     """Route over the graph and look every link up in the tables the functions above make.
 
     Returns card_check's result dict. Its notes list every miss once, where a route first met it."""
-    st, misses, left = collections.Counter(), {}, {}
+    st, misses, left, strayed, followed = collections.Counter(), {}, {}, {}, set()
     classes = {level: {key[2] for key in at} for level, at in nodes.items()}
     meeting = {level: collections.defaultdict(set) for level in nodes}
     for level, at in nodes.items():
@@ -432,8 +459,19 @@ def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
                                if z not in (last, key) and nodes[level][z] & nodes[level].get(key, set())}
                     for z in sorted(through):
                         use(level, z, graph.place[gap[0][0]])
-                    if not through and len(gap) <= JUNCTION and last[:2] in parcels[level] and key[:2] in parcels[level]:
+                    loaded = last[:2] in parcels[level] and key[:2] in parcels[level]
+                    if not through and len(gap) <= JUNCTION and loaded:
                         left.setdefault((level, gap[0][1]), (graph.place[gap[0][0]], len(gap)))
+                    elif not through and loaded:
+                        way = level_path(nodes[level], meeting[level], last, key, len(gap))
+                        for z in way or ():
+                            use(level, z, graph.place[gap[0][0]])
+                        if way is None:
+                            strayed.setdefault((level, gap[0][1]), (graph.place[gap[0][0]], len(gap)))
+                        else:
+                            followed.add((level, gap[0][1]))
+                    elif not through:
+                        st['L%d stretches into a parcel not loaded' % level] += 1
                 on[level] = (key, [])
                 used.add(level)
                 use(level, key, graph.place[i])
@@ -445,10 +483,15 @@ def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
              for (level, key), (what, place) in sorted(misses.items(), key=lambda kv: (kv[0][0], kv[1][1]))]
     notes += ['level %d: a route falls off it at %.4f,%.4f for %d level-1 links of its classes (class %d id %d in parcel %s the first)'
               % (level, *place, n, link[1], link[2], link[0]) for (level, link), (place, n) in sorted(left.items(), key=lambda kv: (kv[0][0], kv[1][0]))]
+    notes += ['level %d: a route leaves it at %.4f,%.4f for %d level-1 links of its classes and no run of its own links of that length joins the two ends (class %d id %d in parcel %s the first)'
+              % (level, *place, n, link[1], link[2], link[0]) for (level, link), (place, n) in sorted(strayed.items(), key=lambda kv: (kv[0][0], kv[1][0]))]
     ok = True
     for level in (1, 2, 4, 5):
         stuck = sum(k[0] == level and v[0].startswith('does not expand') for k, v in misses.items()) + sum(k[0] == level for k in left)
         st['L%d links driven' % level] = len(seen[level])
+        if level > 1:
+            st['L%d stretches not followed' % level] = sum(k[0] == level for k in strayed)
+            st['L%d stretches followed on its own links' % level] = sum(k[0] == level for k in followed)
         st['L%d not drawn' % level] = sum(k[0] == level for k in misses) + sum(k[0] == level for k in left) - stuck
         ok = ok and not st['L%d not drawn' % level]
         if level > 1:
