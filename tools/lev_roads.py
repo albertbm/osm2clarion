@@ -394,6 +394,7 @@ LINK_MAXPTS = 32          # points of one graph link's shape: the factory's long
 LAYER = 6                 # classes 3 to 7 at every coarse level; 0 to 2 would go in 7
 UPPER5 = 0x8000           # a level-4 shape's header word for its level-5 link, as fa_encode.UPPER_LEVEL[5]
 ONEWAY_ALONG, ONEWAY_AGAINST = 0x4000, 0x8000     # y bits of a one-way link's points, the graph entry's w5 bits
+RINGS = ('roundabout', 'circular')   # junction values of a ring, as fa_encode.JUNCTIONS
 RING = 0x7000             # word 3 of a roundabout ring's shape, the code its graph link has in w4
 ONEWAY_NAMED = 0x1000     # word 3 of a named one-way shape; an unnamed one keeps FMT.coarse_unnamed
 DIR_MESHES = {3: 8, 4: 88, 5: 88}
@@ -402,31 +403,37 @@ GRID = {3: 16, 4: 44, 5: 11}
 
 def chains(ways):
     """Join ways that meet end to end and share a class and a route number (or a name) into
-    one run, so a route split into many OSM ways draws as a few long shapes."""
+    one run, so a route split into many OSM ways draws as a few long shapes. A run holds one
+    direction: a one-way run goes the way its traffic does, and a roundabout stays apart."""
     groups = collections.defaultdict(list)
     for w in ways:
-        groups[(CLASS_CODE3[w['hw']], w.get('ref') or w.get('name') or ('way', w['id']))].append(w)
+        d = w.get('dir', 0); ring = w.get('junction') in RINGS
+        nodes = [tuple(p) for p in w['nodes']]
+        groups[(CLASS_CODE3[w['hw']], w.get('ref') or w.get('name') or ('way', w['id']), bool(d), ring)].append(
+            dict(w, nodes=nodes[::-1] if d < 0 else nodes))
     out = []
-    for (cls, key), gw in groups.items():
+    for (cls, key, oneway, ring), gw in groups.items():
         ends = collections.defaultdict(list)
         for i, w in enumerate(gw):
-            for e in (0, -1): ends[tuple(w['nodes'][e])].append(i)
+            for e in (0, -1): ends[w['nodes'][e]].append(i)
         left = set(range(len(gw)))
         while left:
-            i = next((i for i in sorted(left) if any(len(ends[tuple(gw[i]['nodes'][e])]) == 1 for e in (0, -1))),
+            i = next((i for i in sorted(left) if any(len(ends[gw[i]['nodes'][e]]) == 1 for e in (0, -1))),
                      min(left))
             left.discard(i)
-            pts = [tuple(p) for p in gw[i]['nodes']]
-            for _ in range(2):
+            pts = list(gw[i]['nodes'])
+            for back in (False, True):
                 while True:
-                    nxt = [j for j in ends.get(pts[-1], []) if j in left]
+                    # a one-way way joins only head to tail: its first point forward, its last going back
+                    nxt = [j for j in ends.get(pts[-1], []) if j in left
+                           and (not oneway or gw[j]['nodes'][-1 if back else 0] == pts[-1])]
                     if not nxt: break
                     j = nxt[0]; left.discard(j)
-                    seg = [tuple(p) for p in gw[j]['nodes']]
-                    if seg[-1] == pts[-1]: seg.reverse()
+                    seg = list(gw[j]['nodes'])
+                    if seg[-1] == pts[-1] and (back or not oneway): seg.reverse()
                     pts += seg[1:]
                 pts.reverse()
-            out.append(dict(hw=gw[i]['hw'], cls=cls, ref=gw[i].get('ref'), nodes=pts))
+            out.append(dict(hw=gw[i]['hw'], cls=cls, ref=gw[i].get('ref'), nodes=pts, dir=1 if oneway else 0, ring=ring))
     return out
 
 
@@ -538,8 +545,8 @@ def kept_names(plain, country):
 
 def put(D, level, row, col, items, country, keep):
     """Write one parcel's road shapes and route labels. items are (class, ref, points, link
-    id, level-5 link id, direction, ring), the last four None for a shape no graph link stands
-    behind. Returns (shapes, points, labels), or None where the parcel has no background
+    id, level-5 link id, direction, ring), link id and level-5 link id None for a shape no
+    graph link stands behind. Returns (shapes, points, labels), or None where the parcel has no background
     record to hang them on."""
     import fa_encode, rd_build
     if D is None or D['rows'][row] is None: return None
@@ -580,6 +587,7 @@ def build(levels, ways, origin, country, keep=False, only=(3, 4, 5)):
     stats = {}
     for level in only:
         sel = [dict(w) for w in ways if w['hw'] in LEVEL_CLASSES[level]]
+        rd_build.derive_dir(sel)
         runs = chains(sel)
         for r in runs: r['nodes'] = rd_build.simplify([list(p) for p in r['nodes']], TOLERANCE[level])
         per = collections.defaultdict(list)
@@ -587,7 +595,7 @@ def build(levels, ways, origin, country, keep=False, only=(3, 4, 5)):
             for k, run in parcel_runs(r['nodes'], level, origin):
                 for i in range(0, len(run) - 1, MAXPTS - 1):
                     piece = run[i:i + MAXPTS]
-                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece, None, None, None, None))
+                    if len(piece) > 1: per[k].append((r['cls'], r['ref'], piece, None, None, r['dir'], r['ring']))
         dirs = {(D['y'], (D['x'] + x_base) & 0xffff) if level == 3 else tuple(origin): D for D in levels[level]}
         nrec = nsh = npt = nlab = 0
         for (y0, x0, row, col), items in sorted(per.items()):

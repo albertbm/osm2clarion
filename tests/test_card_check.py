@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 19)
+        self.assertEqual(len(checks), 20)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -166,6 +166,28 @@ class TestCoarseRingCodes(unittest.TestCase):
 
     def test_a_plain_link_passes(self):
         self.assertTrue(self.run_rule(0x3000, 3)['passed'])
+
+
+class TestLevel3Direction(unittest.TestCase):
+    def run_rule(self, bits3, bits4):
+        line = [(25.0, 62.0), (25.001, 62.0), (25.002, 62.0)]
+        return card_check.check_level3_direction({'places': {3: [(line, [bits3] * 3)], 4: [((25.001, 62.0001), bits4)]}})
+
+    def test_one_way_at_both_passes(self):
+        r = self.run_rule(0x8000, 0x4000)
+        self.assertTrue(r['passed'])
+        self.assertEqual(r['counts']['one-way at both'], 1)
+
+    def test_two_way_drawn_one_way_fails(self):
+        self.assertFalse(self.run_rule(0x4000, 0)['passed'])
+
+    def test_one_way_drawn_two_way_fails(self):
+        self.assertFalse(self.run_rule(0, 0x4000)['passed'])
+
+    def test_a_far_shape_is_not_compared(self):
+        r = card_check.check_level3_direction({'places': {3: [([(25.0, 62.0), (25.002, 62.0)], [0, 0])], 4: [((25.001, 62.01), 0x4000)]}})
+        self.assertTrue(r['passed'])
+        self.assertEqual(sum(r['counts'].values()), 0)
 
 
 class TestRoadContinuity(unittest.TestCase):

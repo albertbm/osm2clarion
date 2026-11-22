@@ -101,6 +101,27 @@ class TestCoarseShapes(unittest.TestCase):
             finally:
                 fa_encode.FMT = old
 
+    def test_a_run_holds_one_direction(self):
+        def way(i, nodes, d=0, junction=None):
+            return dict(id=i, hw='primary', ref='5', nodes=[[x, 0.0] for x in nodes], dir=d, junction=junction)
+        runs = lev_roads.chains([way(1, [0, 1], 1), way(2, [1, 2], 1), way(3, [3, 2], -1), way(4, [3, 4]),
+                                 way(5, [4, 5, 4.5], 1, 'roundabout')])
+        got = sorted(([p[0] for p in r['nodes']], r['dir'], r['ring']) for r in runs)
+        self.assertEqual(got, [([0, 1, 2, 3], 1, False), ([3, 4], 0, False), ([4, 5, 4.5], 1, True)])
+
+    def test_a_one_way_way_does_not_join_head_on(self):
+        ways = [dict(id=1, hw='primary', ref='5', nodes=[[0, 0.0], [1, 0.0]], dir=1),
+                dict(id=2, hw='primary', ref='5', nodes=[[2, 0.0], [1, 0.0]], dir=1)]
+        self.assertEqual(sorted([p[0] for p in r['nodes']] for r in lev_roads.chains(ways)), [[0, 1], [2, 1]])
+
+    def test_level_3_takes_the_roads_direction(self):
+        # stock coarse files: level 3 is one-way where level 4 is, 0x4000 along the drawn points
+        along = lev_roads.shape(3, 4, [[(10, 20), (30, 40), (50, 60)]], direction=1)
+        self.assertEqual([y & 0xc000 for y in (along[8], along[10], along[12])], [0x4000] * 3)
+        both = lev_roads.shape(3, 4, [[(10, 20), (30, 40)]], direction=0)
+        self.assertEqual((both[3], both[8] & 0xc000, both[10] & 0xc000), (0, 0, 0), 'unnamed and two-way is plain')
+        self.assertEqual(lev_roads.shape(3, 4, [[(10, 20), (30, 40)]], direction=1, ring=True)[3], 0x7000)
+
     def test_layer_keeps_a_class_together(self):
         shapes = [lev_roads.shape(4, c, [[(0, 0), (9, 9)]], ids=[i]) for i, c in enumerate((5, 3, 7, 3, 10, 5), 1)]
         order = [(sh[2] >> 12, sh[-3]) for sh in lev_roads.by_layer(shapes)]

@@ -155,18 +155,24 @@ def load_lev_shapes(path):
     """{level: {(row, col): [(layer, class, links, level-5 word or None, named)]}}, and under
     'codes' {level: {(row, col): {(class, link id): word-3 code}}}, of the
     level-4 and level-5 road shapes, walked as the unit walks them (Navi.exe 0x516604), a
-    link as (id, first point, last point, y bits, points), or {} when path is None."""
+    link as (id, first point, last point, y bits, points), or {} when path is None. Under
+    'places', what level3_direction compares: {3: [([(lon, lat)], [y bits])] of each level-3
+    shape, 4: [((lon, lat), y bits)] of each level-4 link's middle point}."""
     if path is None:
         return {}
     data = path if isinstance(path, (bytes, bytearray)) else open(path, 'rb').read()
     out = {}
-    for layer in lev_file.read(data, decode=True)['sections'][0]['levels']:
-        if layer['level'] not in (4, 5):
+    lev = lev_file.read(data, decode=True)
+    for layer in lev['sections'][0]['levels']:
+        level = layer['level']
+        if level not in (3, 4, 5):
             continue
-        recs = out.setdefault(layer['level'], {})
-        codes = out.setdefault('codes', {}).setdefault(layer['level'], {})
+        recs = out.setdefault(level, {}) if level != 3 else {}
+        codes = out.setdefault('codes', {}).setdefault(level, {})
+        places = out.setdefault('places', {}).setdefault(level, [])
         for d in layer['dirs']:
             per = d['pairs'] // d['cols']
+            x0 = (d['x'] + (lev['fmt'].x_base if level == 3 else 1024)) & 0xffff   # levels 4 and 5 store x less 1024
             for row, rr in enumerate(d['rows'] or []):
                 for col in range(d['cols'] if rr else 0):
                     r = rr[col * per]
@@ -176,11 +182,24 @@ def load_lev_shapes(path):
                     if w[2] != 0x00fa or w[7] in (0, 0xffff):
                         continue
                     try:
+                        walked = list(coarse_walk(w[2 * w[7]:2 * (w[7] + w[8])]))
                         recs[row, col] = list(coarse_shapes(w[2 * w[7]:2 * (w[7] + w[8])]))
-                        codes[row, col] = {(cls, lid): code for _, cls, _, _, ids, _, _, code in coarse_walk(w[2 * w[7]:2 * (w[7] + w[8])])
-                                           for lid, _ in ids}
                     except IndexError:
                         recs[row, col] = []
+                        continue
+                    codes[row, col] = {(cls, lid): code for _, cls, _, _, ids, _, _, code in walked for lid, _ in ids}
+                    if level == 5:
+                        continue
+                    lon0, lat0, pw, ph = clarion_bg.parcel_geo(level, d['y'], x0, row, col)
+                    for _, _, _, _, ids, pts, way, _ in walked:
+                        geo = [(lon0 + x / 2048 * pw, lat0 + y / 2048 * ph) for x, y in pts]
+                        if level == 3:
+                            places.append((geo, way))
+                            continue
+                        for (lid, at), nxt in zip(ids, ids[1:] + [None]):
+                            end = nxt[1] if nxt else len(pts) - 1
+                            if end - at >= 2:
+                                places.append((geo[(at + end) // 2], way[(at + end) // 2]))
     return out
 
 
@@ -1021,6 +1040,42 @@ def check_coarse_ring_codes(lev4, lev5, coarse):
     return result('coarse_ring_codes', not bad, st, ['wrong: %r' % bad[:5]])
 
 
+NEAR_M = 60               # a level-3 shape this near a level-4 link's middle point is the same road
+
+
+def check_level3_direction(coarse):
+    """A level-3 shape is one-way where the level-4 link at the same place is, and two-way
+    where that is. Places with no level-3 shape within NEAR_M, or with both kinds, are left
+    out. Factory, whole card: QY8 30,685 of 31,114 one-way and 36,933 of 37,037 two-way; QY7
+    27,538 of 27,583 and 30,569 of 30,589. The limits are the QY8 shares, the lower."""
+    import math
+    st = collections.Counter()
+    places = (coarse or {}).get('places', {})
+    cell = 0.004
+    segs = collections.defaultdict(list)
+    for geo, way in places.get(3, ()):
+        for i, (a, b) in enumerate(zip(geo, geo[1:])):
+            for cx in range(int(min(a[0], b[0]) // cell), int(max(a[0], b[0]) // cell) + 1):
+                for cy in range(int(min(a[1], b[1]) // cell), int(max(a[1], b[1]) // cell) + 1):
+                    segs[cx, cy].append((a, b, way[i + 1] != 0))
+    for p, bits in places.get(4, ()):
+        k = 111320 * math.cos(math.radians(p[1]))
+        kinds = set()
+        cx, cy = int(p[0] // cell), int(p[1] // cell)
+        for a, b, oneway in (s for i in (-1, 0, 1) for j in (-1, 0, 1) for s in segs.get((cx + i, cy + j), ())):
+            ax, ay, bx, by = (a[0] - p[0]) * k, (a[1] - p[1]) * 111320, (b[0] - p[0]) * k, (b[1] - p[1]) * 111320
+            dx, dy = bx - ax, by - ay
+            t = max(0, min(1, -(ax * dx + ay * dy) / (dx * dx + dy * dy))) if dx or dy else 0
+            if math.hypot(ax + t * dx, ay + t * dy) <= NEAR_M:
+                kinds.add(oneway)
+        if len(kinds) == 1:
+            st['%s at level 4' % ('one-way' if bits else 'two-way')] += 1
+            st['%s at both' % ('one-way' if bits else 'two-way')] += (bits != 0) == kinds.pop()
+    ok = (st['one-way at both'] * 31114 >= st['one-way at level 4'] * 30685 and
+          st['two-way at both'] * 37037 >= st['two-way at level 4'] * 36933)
+    return result('level3_direction', ok, st, ['pass at the factory share: 30,685 of 31,114 one-way and 36,933 of 37,037 two-way'])
+
+
 GAP = 8                   # level units between two pieces of a road before it counts as a break; at level 1 any gap does
 # The limits are none, or the factory's own share on B50R068R where it has some.
 NAMED_BREAKS = {1: 0, 2: 3 / 7044, 4: 0, 5: 0}          # roads broken where level 1 names the level's links, or OSM has the way
@@ -1312,6 +1367,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_coarse_graph_present(L2, lev4, lev5))
     out.append(check_coarse_shapes(lev4, lev5, coarse))
     out.append(check_coarse_ring_codes(lev4, lev5, coarse))
+    out.append(check_level3_direction(coarse))
     out.append(check_road_continuity(drawn, L1, L2, lev4, lev5))
     return out
 
