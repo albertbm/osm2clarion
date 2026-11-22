@@ -105,8 +105,8 @@ def data_record(levels, nlevel, name_idx, category, subcategory=0xffff,
     return (struct.pack('>6H', *lv)
             + struct.pack('>HHH', flags, category, subcategory)
             + struct.pack('>HHHH', lat, lon, 0x800 | x, y)
-            + struct.pack('>HH', lang << 8, 0)
-            + struct.pack('>HI', name_idx, data_id)
+            + struct.pack('>H', lang << 8)
+            + struct.pack('>II', name_idx, data_id)
             + b'\0\0\0\0')
 
 
@@ -114,7 +114,7 @@ def parse_data_record(r):
     """The fields of one data record, named as data_record takes them."""
     w = struct.unpack('>20H', r)
     return dict(levels=w[:6], flags=w[6], category=w[7], subcategory=w[8], lat=w[9], lon=w[10],
-                x=w[11] & 0x7ff, y=w[12], lang=w[13] >> 8, name_idx=w[15], data_id=w[16] << 16 | w[17])
+                x=w[11] & 0x7ff, y=w[12], lang=w[13] >> 8, name_idx=w[14] << 16 | w[15], data_id=w[16] << 16 | w[17])
 
 
 def name_record(name, levels, nlevel, category, subcategory=0xffff,
@@ -344,8 +344,8 @@ def record_order(recs, names, fold=None):
     runs hold them: whole-name hits before later-word hits (flags), then the name, the
     area ladder, the position words and the name index (POINT018: all 42 SUB-CATEGORY
     runs, 52 of the 56 CATEGORY runs)."""
-    return sorted(recs, key=lambda r: (r[12:14], collate(parse_name_record(names[u16(r, 30)])['name'], fold),
-                                       r[:12], r[18:26], r[30:32]))
+    return sorted(recs, key=lambda r: (r[12:14], collate(parse_name_record(names[u32(r, 28)])['name'], fold),
+                                       r[:12], r[18:26], r[28:32]))
 
 
 def select_records(keys, recs, names, pred, fold=None):
@@ -490,11 +490,11 @@ def category_frames(at, area, cats, names, fold=None):
     for i, (code, keys, recs) in enumerate(cats):
         items, seen = [], set()
         for r in recs:
-            w = struct.unpack('>20H', r)
-            if w[15] not in seen:
-                seen.add(w[15])
-                items.append((w[15], code, w[8], w[9], w[10], w[11], w[12], w[13] >> 8,
-                              parse_name_record(names[w[15]])['name']))
+            w, ni = struct.unpack('>20H', r), u32(r, 28)
+            if ni not in seen:
+                seen.add(ni)
+                items.append((ni, code, w[8], w[9], w[10], w[11], w[12], w[13] >> 8,
+                              parse_name_record(names[ni])['name']))
         nb = nearby_frame(items, sub=any(it[2] != 0xffff for it in items), fold=fold)
         nl1 = len({(it[3] & L1_MASK, it[4] & L1_MASK) for it in items})
         struct.pack_into('>HIIHHHHHHHHH', t15, 28 * i,

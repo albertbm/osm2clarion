@@ -79,7 +79,7 @@ def main(argv=None):
     for k, start, n in p.keys:
         for i in range(start, start + n):
             w = struct.unpack('>20H', p.rec(i))
-            hits.setdefault(k, []).append((w[15], w[6]))
+            hits.setdefault(k, []).append((w[14] << 16 | w[15], w[6]))
 
     lw, ow, iy, ix = addre_io.parcel_point(a.lat, a.lon)
     idx = len(p.names)
@@ -145,7 +145,7 @@ def main(argv=None):
     # the category search frames: one category, this record, its parcel
     cat_keys, cat_recs = [], []
     for u, start, n in keys:
-        mine = [r for r in recs[start:start + n] if r[30:32] == struct.pack('>H', idx)]
+        mine = [r for r in recs[start:start + n] if r[28:32] == struct.pack('>I', idx)]
         if mine:
             cat_keys.append((u, len(cat_recs), len(mine))); cat_recs += mine
     at = frames.up(len(out))
@@ -165,7 +165,7 @@ def main(argv=None):
     print('%s at parcel %04x %04x xy %d,%d: records %d -> %d, names %d -> %d, %d -> %d bytes'
           % (a.name, lw, ow, ix, iy, p.nrec, q.nrec, len(p.names), len(q.names), len(plain), len(out)))
     print('name record:', names[-1].hex())
-    print('data record:', q.rec([i for i, r in enumerate(recs) if r[30:32] == struct.pack('>H', idx)][0]).hex())
+    print('data record:', q.rec([i for i, r in enumerate(recs) if r[28:32] == struct.pack('>I', idx)][0]).hex())
 
 
 if __name__ == '__main__':

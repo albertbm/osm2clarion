@@ -116,7 +116,7 @@ def check_trie(d, base, cr, kw, rec_at, nrec, want, reach, tag, problems):
             continue
         for i in range(start, start + n):
             r = d[rec_at + 40 * i:rec_at + 40 * (i + 1)]
-            ni = struct.unpack_from('>H', r, 30)[0]
+            ni = struct.unpack_from('>I', r, 28)[0]
             if ni not in want:
                 problems.append('%s: key %r record %d is name %d, not a facility of this frame' % (tag, key, i, ni))
                 continue

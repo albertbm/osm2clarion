@@ -329,7 +329,7 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     for k, start, n in p.keys:
         for i in range(start, start + n):
             w = struct.unpack('>20H', p.rec(i))
-            hits.setdefault(k, []).append((w[6], w[15], p.rec(i)))
+            hits.setdefault(k, []).append((w[6], w[14] << 16 | w[15], p.rec(i)))
     next_id = 1 + max([struct.unpack_from('>I', p.rec(i), 32)[0] for i in range(p.nrec)
                        if struct.unpack_from('>I', p.rec(i), 32)[0] != 0xffffffff] + [0])
     names = list(p.names)
@@ -388,7 +388,7 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
              ((i, point_io.parse_name_record(nr)) for i, nr in enumerate(names))}
 
     def by(pred):
-        return point_io.select_records(keys, recs, names, lambda r: pred(cs_of[struct.unpack_from('>H', r, 30)[0]]), fold)
+        return point_io.select_records(keys, recs, names, lambda r: pred(cs_of[struct.unpack_from('>I', r, 28)[0]]), fold)
     cats = [(code,) + by(lambda cs: cs[0] == code)
             for code in sorted({c for c, s in cs_of.values() if c != point_io.SETTLEMENT})]
     subs = [pair + by(lambda cs: cs == pair)
@@ -446,7 +446,7 @@ def main(argv):
     p, q = point_io.Point(d), point_io.Point(out)
     print('%s: names %d -> %d, records %d -> %d, %d -> %d bytes; categories %s'
           % (dest, len(p.names), len(q.names), p.nrec, q.nrec, len(d), len(out),
-             ' '.join('%d:%d' % (code, len({struct.unpack_from(">H", r, 30)[0] for r in cr})) for code, ck, cr in cats)))
+             ' '.join('%d:%d' % (code, len({struct.unpack_from(">I", r, 28)[0] for r in cr})) for code, ck, cr in cats)))
     if unfolded:
         print('  %d characters no folding reached, dropped from the keys: %s' % (len(unfolded), ''.join(sorted(set(unfolded)))))
     if problems:

@@ -432,6 +432,23 @@ class TestNonLatinKeys(unittest.TestCase):
         self.assertEqual(sorted(poi_point.unfolded), ['Ґ', '司', '寿'])
 
 
+class TestNameIndexWords(unittest.TestCase):
+    """A data record holds its name index in words 14 and 15, high word first."""
+    # a 2017-card Greek record; name 95,745 is the one its key '90 is cut from
+    GREEK = bytes.fromhex('000a00020000003b0000ffff40000014ffff9c8fd9ee08e403d73f00000176010050ebe100000000')
+
+    def test_factory_record(self):
+        f = point_io.parse_data_record(self.GREEK)
+        self.assertEqual(f['name_idx'], 95745)
+        self.assertEqual(point_io.data_record(nlevel=5, **dict(f, levels=f['levels'][:5])), self.GREEK)
+
+    def test_round_trip(self):
+        for idx in (0, 0xffff, 0x10000, 70000, 0x123456):
+            r = point_io.data_record((1, 2), 2, idx, 24, lat=5, lon=6, x=7, y=8)
+            self.assertEqual(point_io.parse_data_record(r)['name_idx'], idx)
+            self.assertEqual(struct.unpack_from('>I', r, 28)[0], idx)
+
+
 class TestTrieRootLeaf(unittest.TestCase):
     """A root leaf at record 0 has a zero pointer; the readers end the root at its all-ones key."""
 
