@@ -135,6 +135,7 @@ def build(old, pois, tile_recs, fmt):
         for i, f in enumerate(fields):
             if not sel(f):
                 continue
+            # no later-word flag: the QY7 factory rows never carry one (point_v5)
             for u, _later in inter_io.word_keys(point_v5.search_key(point_v5.text(f['name']).decode(fmt.codec))):
                 bykey[u].append(i)
         keys, rows = [], []

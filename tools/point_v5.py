@@ -5,8 +5,10 @@ Measured on POINT007 (Finland) of the 2014 QY7 card. The search frames are the X
 (point_io), packed the way an X08-02 ADDRE is, in this file order:
 
 * the main trie (cr 12, kw 1) and its 24-byte rows in zlib streams: ladder (5 halfwords),
-  ffff, flags (0x4000 on a later word), category, sub-category, language << 8, and the
-  FACILITY record index (u32). A row has no position, unlike X08-03.
+  ffff, flags, category, sub-category, language << 8, and the FACILITY record index (u32).
+  A row has no position, unlike X08-03. The flags word is 0 on every row of six factory
+  files (Finland, France, Greece, Poland, Hungary, Spain: 6.2 million main, category and
+  sub-category rows), later-word keys included, where X08-03 sets 0x4000.
 * slot 15, the nearby search: point_io's 28-byte table and parcel tree, with a leaf sorted by
   x, y, code, then the Latin-1 name (X08-03: code, y, x, collated name, language).
 * slot 278, CATEGORY: a 70-byte entry per category (no ffff word in the tail), then every
