@@ -110,7 +110,10 @@ def build(old, pois, tile_recs, fmt):
             st['facilities without a road'] += 1
             continue
         refs, fx, fy, _code = got
-        name = fmt.text(p['name'].upper())
+        name = point_v5.facility_text(p['name'].upper())
+        if name is None:
+            skipped.append(dict(name=p['name'], id=p['id'], why='a letter outside Latin-1 with no factory spelling'))
+            continue
         key = point_v5.search_key(name.decode(fmt.codec))
         if not key or not key.isascii():
             skipped.append(dict(name=p['name'], id=p['id'], why='no key the keyboard can type'))

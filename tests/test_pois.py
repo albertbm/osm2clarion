@@ -412,6 +412,9 @@ class TestNonLatinKeys(unittest.TestCase):
             self.assertEqual(self.keys(name)[0], (whole, False), name)
         self.assertEqual(self.keys('ГЕЙТ 01'), [('ГЕЙТ 01', False), ('01', True)])
 
+    def test_oe_mirrors_qy7(self):
+        self.assertEqual(self.keys('Sacré-Cœur'), [('SACRE COEUR', False), ('COEUR', True)])
+
     def test_unmeasured_letters_still_dropped(self):
         poi_point.unfolded.clear()
         self.assertEqual(self.keys('Sushi 寿司'), [('SUSHI', False)])

@@ -83,6 +83,19 @@ class Records(unittest.TestCase):
         self.assertEqual(point_v5.parse_row(ROW)['lang'], 9)
 
 
+class FacilityText(unittest.TestCase):
+    def test_factory_spellings(self):
+        for name, want in (('ÉLŐ ISTEN GYÜLEKEZETE', 'ÉLÔ ISTEN GYÜLEKEZETE'), ('KŰ', 'KÛ'),
+                           ('NADOLICE MAŁE', 'NADOLICE MALE'), ('CŒUR', 'COEUR'),
+                           ('LETIŠTĚ MIKKELI', 'LETISTE MIKKELI'), ('JOENSUUN ÖLJY', 'JOENSUUN ÖLJY')):
+            self.assertEqual(point_v5.facility_text(name), want.encode('latin-1'), name)
+        self.assertEqual(point_v5.search_key('ÉLÔ ISTEN'), 'ELO ISTEN')
+
+    def test_no_spelling_is_none(self):
+        for name in ('ПЯТЁРОЧКА', 'SUSHI 寿司', 'ĦAMRUN', 'ŊUORGAM'):
+            self.assertIsNone(point_v5.facility_text(name), name)
+
+
 class Nearby(unittest.TestCase):
     def test_leaf_order(self):
         # x first, then y, code and the Latin-1 name: Ö sorts after R, not with O

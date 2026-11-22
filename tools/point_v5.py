@@ -22,6 +22,7 @@ A FACILITY record is point_io's name record with two more bytes in its name head
 after the 1, 1, 0 run and a zero ahead of the 1, ff pair.
 """
 import struct
+import unicodedata
 import zlib
 
 import inter_io
@@ -183,6 +184,28 @@ def parse_name_record(r):
         if out[k][-1:] == b'\0' and len(out[k].rstrip(b'\0')) % 2:
             out[k] = out[k][:-1]
     return out
+
+
+# Spellings of letters outside Latin-1 in the factory's QY7 names, matched against the 2017
+# QY8 card's UTF-8 names for the same places: Ő -> Ô 6,310 times and Ű -> Û 748 (Hungary;
+# O 3, U 0), Ł -> L in 15,037 Polish names (dropped 97). No factory name has Œ on either
+# card; they spell the words with OE (COEUR 336, BOEUF 136, SOEUR 42 in France).
+NAME_FOLD = {'Œ': 'OE', 'œ': 'oe', 'Ő': 'Ô', 'ő': 'ô', 'Ű': 'Û', 'ű': 'û', 'Ł': 'L', 'ł': 'l'}
+
+
+def facility_text(name):
+    """A facility name in Latin-1, or None where a letter has no factory spelling. Other
+    letters lose their accent (ZAKLADNI SKOLA, GLEDALISCE, KNIZNICA)."""
+    out = []
+    for c in ''.join(NAME_FOLD.get(ch, ch) for ch in name):
+        if ord(c) < 256:
+            out.append(c)
+            continue
+        d = unicodedata.normalize('NFD', c)
+        if len(d) < 2 or ord(d[0]) > 127 or not all(unicodedata.category(m) == 'Mn' for m in d[1:]):
+            return None
+        out.append(d[0])
+    return ''.join(out).encode('latin-1')
 
 
 def search_key(name):
