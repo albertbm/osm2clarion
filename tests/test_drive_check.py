@@ -122,6 +122,41 @@ class TestGraph(unittest.TestCase):
         before = drive_check.Graph(L1).tree(0)
         self.assertEqual(before[2], (0, (PC, 4, 7)))
 
+    def test_a_one_way_link_is_driven_its_own_way_only(self):
+        L1 = line(3)
+        L1[PC]['nodes'][0]['entries'].append(dict(cls=0x0494, other=2, id=7, a=5, b=99, w5=0x8000))
+        L1[PC]['nodes'][2]['entries'].append(dict(cls=0x0494, other=0, id=7 | 0x2000, a=5, b=99, w5=0x4000))
+        g = drive_check.Graph(L1)
+        self.assertEqual(g.tree(0)[2], (1, (PC, 4, 2)))
+        self.assertEqual(g.tree(2)[0], (2, (PC, 4, 7)))
+        self.assertEqual(g.st['L1 link directions closed by one-way bits'], 1)
+
+    def detour(self, word=None):
+        """0-1-2 in a row, and 0-3-2 a little slower; word is a regulation word on node 1's
+        entry towards 2."""
+        L1 = line(3)
+        nodes = L1[PC]['nodes']
+        nodes[0]['entries'].append(dict(cls=0x0494, other=3, id=8, a=15, b=10))
+        nodes[2]['entries'].append(dict(cls=0x0494, other=3, id=9 | 0x2000, a=15, b=10))
+        nodes.append(dict(x=200, y=900, nflags=0, entries=[dict(cls=0x0494, other=0, id=8 | 0x2000, a=15, b=10),
+                                                         dict(cls=0x0494, other=2, id=9, a=15, b=10)]))
+        if word is not None:
+            nodes[1]['entries'][1].update(w5=1 << 6, extra=[word])
+        return drive_check.Graph(L1)
+
+    def test_a_barred_turn_is_not_taken(self):
+        self.assertEqual(self.detour().tree(0)[2], (1, (PC, 4, 2)))
+        self.assertEqual(self.detour(0x00ff).tree(0)[2], (3, (PC, 4, 9)))
+        self.assertEqual(self.detour(0xf0ff).tree(0)[2], (3, (PC, 4, 9)))
+
+    def test_a_turn_barred_from_another_entry_stays_open(self):
+        self.assertEqual(self.detour(0x10ff).tree(0)[2], (1, (PC, 4, 2)))
+
+    def test_a_route_over_the_barred_turn_goes_round(self):
+        g = self.detour(0x00ff)
+        best, before = g.states(0)
+        self.assertEqual([link[2] for i, link in g.path(before, g.ends(best)[2])], [8, 9])
+
     def test_the_layer_follows_the_class(self):
         self.assertEqual([drive_check.layer_of(c) for c in (0, 2, 3, 7, 8, 9, 10, 12)], [7, 7, 6, 6, 5, 4, 0, 0])
 

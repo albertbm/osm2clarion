@@ -7,7 +7,7 @@ for every link they use, at every level that has the link.
     drive_check.py --tiles TILE ... --lev LEV3456R.DAT [--routes N] [--seed S] [--json]
 
 A route is the quickest path between two level-1 nodes far apart, by the travel times in
-the graph. The unit plans the ends of such a route at level 1 and the rest at levels 2, 4
+the graph, going only where the one-way bits and regulation words let it. The unit plans the ends of such a route at level 1 and the rest at levels 2, 4
 and 5, then needs two things of every link it planned with:
 
   drawn     a road shape of the link's class and id in its parcel at its level, in the
@@ -228,7 +228,15 @@ def km(p, q):
 
 class Graph:
     """The level-1 graph as arrays: node i sits at place[i], and out[i] lists (node, tenths
-    of a second, link key or None for the step over a parcel line)."""
+    of a second, link key or None for the step over a parcel line, entry left by, entry
+    arrived by at the far node or -1).
+
+    A route goes the way the card lets it: never out along a link end with one-way bit
+    0x8000 (traffic arrives there) or towards one with 0x4000, and never from an entry into
+    one whose regulation words bar it unconditionally (low byte 0xff, from-entry in bits
+    12-15, 15 for every entry). Other words are counted and left open; the stock QY7 tiles
+    have 912,533 of them, all with low byte 0x01-0x0a, flag bit 7 clear. bars[i] maps an
+    entry of node i to the from-entries barred."""
 
     def __init__(self, L1):
         index = {}
@@ -237,31 +245,85 @@ class Graph:
                 index[pc, k] = len(index)
         self.place = [None] * len(index)
         self.out = [[] for _ in index]
+        self.bars = [None] * len(index)
+        self.st = collections.Counter()
+        back = {}
+        for pc in L1:
+            for k, nd in enumerate(L1[pc]['nodes']):
+                at = back[pc, k] = {}
+                for t, e in enumerate(nd['entries']):
+                    at['edge' if e['cls'] & 0x8000 else e['cls'] & 0xf, e['cls'] & 0xe000 if e['cls'] & 0x8000 else e['id'] & 0x1fff, e['other'] & 0x3fff] = t
         for (pc, k), i in index.items():
             nd = L1[pc]['nodes'][k]
             self.place[i] = where((pc, nd['x'], nd['y']))
-            for e in nd['entries']:
+            for t, e in enumerate(nd['entries']):
+                regs = e.get('extra', ())[:(e.get('w5', 0) >> 6) & 0x3f]
+                barred = {w >> 12 for w in regs if w & 0xff == 0xff}
+                self.st['L1 regulation words other than 0xff'] += sum(w & 0xff != 0xff for w in regs)
+                if barred:
+                    self.bars[i] = self.bars[i] or {}
+                    self.bars[i][t] = barred
                 if e['cls'] & 0x8000:
                     far = card_check.cross(L1, pc, e)
                     if far is not None:
-                        self.out[i].append((index[far], 0, None))
+                        arr = back[far].get(('edge', card_check.OPPOSITE[e['cls'] & 0xe000], k), -1)
+                        self.out[i].append((index[far], 0, None, t, arr))
                 elif (pc, e['other'] & 0x3fff) in index:
-                    self.out[i].append((index[pc, e['other'] & 0x3fff], max(1, rd_encode.unscaled(e['a'], rd_encode.TIME_UNITS)),
-                                        (pc, e['cls'] & 0xf, e['id'] & 0x1fff)))
+                    far = pc, e['other'] & 0x3fff
+                    arr = back[far].get((e['cls'] & 0xf, e['id'] & 0x1fff, k), -1)
+                    there = L1[pc]['nodes'][far[1]]['entries'][arr].get('w5', 0) & 0xc000 if arr >= 0 else 0
+                    if e.get('w5', 0) & 0xc000 == 0x8000 or there == 0x4000:
+                        self.st['L1 link directions closed by one-way bits'] += 1
+                        continue
+                    self.out[i].append((index[far], max(1, rd_encode.unscaled(e['a'], rd_encode.TIME_UNITS)),
+                                        (pc, e['cls'] & 0xf, e['id'] & 0x1fff), t, arr))
+
+    def states(self, start):
+        """Quickest paths from one node over (node, entry arrived by) states, a state packed
+        as node << 4 | entry + 1: ({state: time}, {state: (state before, link key)})."""
+        s0 = start << 4
+        best, before, heap = {s0: 0}, {s0: (None, None)}, [(0, s0)]
+        while heap:
+            t, s = heapq.heappop(heap)
+            if t > best[s]:
+                continue
+            i, came = s >> 4, (s & 15) - 1
+            bars = self.bars[i]
+            for j, dt, link, leave, arr in self.out[i]:
+                if bars and leave in bars and (15 in bars[leave] or came in bars[leave]):
+                    continue
+                if link is None and leave == came:
+                    continue            # straight back over the parcel line it just crossed
+                n = j << 4 | arr + 1
+                if t + dt < best.get(n, 1 << 60):
+                    best[n] = t + dt
+                    before[n] = (s, link)
+                    heapq.heappush(heap, (t + dt, n))
+        return best, before
+
+    @staticmethod
+    def ends(best):
+        """{node: its quickest state} over a states() result."""
+        out = {}
+        for s, t in best.items():
+            if s >> 4 not in out or t < best[out[s >> 4]]:
+                out[s >> 4] = s
+        return out
 
     def tree(self, start):
         """Quickest-path tree from one node: {node: (node before, link key)}."""
-        best, before, heap = {start: 0}, {start: (None, None)}, [(0, start)]
-        while heap:
-            t, i = heapq.heappop(heap)
-            if t > best[i]:
-                continue
-            for j, dt, link in self.out[i]:
-                if t + dt < best.get(j, 1 << 60):
-                    best[j] = t + dt
-                    before[j] = (i, link)
-                    heapq.heappush(heap, (t + dt, j))
-        return before
+        best, before = self.states(start)
+        return {i: ((before[s][0] >> 4 if before[s][0] is not None else None), before[s][1])
+                for i, s in self.ends(best).items()}
+
+    def path(self, before, s):
+        """[(node the link is left from, link key)] up to state s."""
+        out = []
+        while before[s][0] is not None:
+            if before[s][1] is not None:
+                out.append((before[s][0] >> 4, before[s][1]))
+            s = before[s][0]
+        return out[::-1]
 
     def routes(self, count, seed=1, per=12):
         """[(start, end, [(node the link is left from, link key)])] for `count` routes, `per` from each start.
@@ -283,15 +345,11 @@ class Graph:
             if len(out) >= count:
                 break
             start = pick()
-            before = self.tree(start)
-            ends = [j for j in (pick() for _ in range(20 * per)) if j in before and km(self.place[start], self.place[j]) >= far]
+            best, before = self.states(start)
+            reach = self.ends(best)
+            ends = [j for j in (pick() for _ in range(20 * per)) if j in reach and km(self.place[start], self.place[j]) >= far]
             for end in ends[:min(per, count - len(out))]:
-                path, i = [], end
-                while before[i][0] is not None:
-                    if before[i][1] is not None:
-                        path.append((before[i][0], before[i][1]))
-                    i = before[i][0]
-                out.append((start, end, path[::-1]))
+                out.append((start, end, self.path(before, reach[end])))
         return out
 
 
@@ -382,6 +440,7 @@ def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
         for level in (2, 4, 5):
             st['L%d routes with no link' % level] += bool(nodes[level]) and level not in used
     st['km'] = round(st['km'])
+    st.update(graph.st)
     notes = ['level %d link class %d id %d in parcel %s at %.4f,%.4f: %s' % (level, key[-2], key[-1], key[:-2] if level > 1 else key[0], *place, what)
              for (level, key), (what, place) in sorted(misses.items(), key=lambda kv: (kv[0][0], kv[1][1]))]
     notes += ['level %d: a route falls off it at %.4f,%.4f for %d level-1 links of its classes (class %d id %d in parcel %s the first)'
