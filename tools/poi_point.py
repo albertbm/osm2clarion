@@ -91,10 +91,12 @@ def word_starts(s):
 
 def word_keys(name, kw, fold=None):
     """One key per word start, the whole remainder from it, and whether it is a later word."""
-    s = ' '.join(addre_io.fold_key(''.join(PUNCT.get(c, c) for c in name), fold).upper().split())
-    if not s.isascii():
-        unfolded.extend(c for c in s if not c.isascii())
-        s = ' '.join(''.join(c if c.isascii() else ' ' for c in s).split())
+    s = ' '.join(addre_io.fold_key(''.join(PUNCT.get(c, c) for c in name),
+                                   dict(addre_io.POINT_KEY_FOLD, **(fold or {}))).upper().split())
+    keep = addre_io.POINT_KEY_LETTERS
+    if any(not c.isascii() and c not in keep for c in s):
+        unfolded.extend(c for c in s if not c.isascii() and c not in keep)
+        s = ' '.join(''.join(c if c.isascii() or c in keep else ' ' for c in s).split())
     return [(keyunits(s[p:], kw), p > 0) for p in word_starts(s)]
 
 

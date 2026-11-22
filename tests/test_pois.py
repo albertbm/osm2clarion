@@ -396,6 +396,29 @@ class TestPoiPoint(unittest.TestCase):
         self.assertEqual(keys('Daddi’s Pizza'), ["DADDI'S PIZZA", 'PIZZA'])
 
 
+class TestNonLatinKeys(unittest.TestCase):
+    """QY8 keys keep Greek and Cyrillic letters, folded as the 2017 card's facility keys are."""
+
+    def keys(self, name):
+        return [(b''.join(u[i:i + 2].rstrip(b'\0') for i in range(0, len(u), 2)).decode(), later)
+                for u, later in poi_point.word_keys(name, 2)]
+
+    def test_factory_samples(self):
+        for name, whole in (('ЦЕНТРАЛНА КООПЕРАТИВНА БАНКА', 'ЦЕНТРАЛНА КООПЕРАТИВНА БАНКА'),
+                            ('АЎТАСЭРВАЛЮКС', 'АУТАСЭРВАЛЮКС'), ('КАЗАНЦІП', 'КАЗАНЦИП'),
+                            ('ГЕЙТ 01', 'ГЕЙТ 01'), ('ΑΛΣΟΣ ΚΑΤΣΙΜΠΑΛΗ-ΜΟΡΕΛΛΑ', 'ΑΛΣΟΣ ΚΑΤΣΙΜΠΑΛΗ ΜΟΡΕΛΛΑ'),
+                            ('ΕΘΝ. ΠΑΡΚ. ΘΡΑΚΗΣ', 'ΕΘΝ ΠΑΡΚ ΘΡΑΚΗΣ'), ('ΚΑΪΚΙ', 'ΚΑΙΚΙ'),
+                            ('ЇЖАК ЄВРО', 'ИЖАК ЕВРО'), ('Пятёрочка', 'ПЯТЕРОЧКА')):
+            self.assertEqual(self.keys(name)[0], (whole, False), name)
+        self.assertEqual(self.keys('ГЕЙТ 01'), [('ГЕЙТ 01', False), ('01', True)])
+
+    def test_unmeasured_letters_still_dropped(self):
+        poi_point.unfolded.clear()
+        self.assertEqual(self.keys('Sushi 寿司'), [('SUSHI', False)])
+        self.assertEqual(self.keys('ҐАНОК')[0], ('АНОК', False))
+        self.assertEqual(sorted(poi_point.unfolded), ['Ґ', '司', '寿'])
+
+
 class TestTrieRootLeaf(unittest.TestCase):
     """A root leaf at record 0 has a zero pointer; the readers end the root at its all-ones key."""
 

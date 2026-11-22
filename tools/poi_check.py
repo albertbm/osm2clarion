@@ -92,7 +92,8 @@ def walk_trie(d, base, cr, kw):
 
 def folded_words(name, fold):
     """The upper-cased folded name and its word starts, as the trie keys are cut."""
-    s = ' '.join(addre_io.fold_key(name.translate(str.maketrans('.+', '  ', '"')), fold).upper().split())
+    s = ' '.join(addre_io.fold_key(name.translate(str.maketrans('.+', '  ', '"')),
+                                   dict(addre_io.POINT_KEY_FOLD, **(fold or {}))).upper().split())
     starts, p = [], 0
     for w in s.split(' '):
         if p == 0 or (len(w) >= 2 and w[0].isalnum()):
@@ -109,7 +110,7 @@ def check_trie(d, base, cr, kw, rec_at, nrec, want, reach, tag, problems):
     `reach` reachable under each of its words."""
     seen = collections.defaultdict(set)
     for k, start, n in walk_trie(d, base, cr, kw):
-        key = bytes(k[i] for i in range(0, len(k), kw)).decode('latin-1') if kw > 1 else k.decode('latin-1')
+        key = b''.join(k[i:i + kw].rstrip(b'\0') for i in range(0, len(k), kw)).decode('utf-8') if kw > 1 else k.decode('latin-1')
         if start + n > nrec:
             problems.append('%s: key %r points past the record run (%d+%d of %d)' % (tag, key, start, n, nrec))
             continue

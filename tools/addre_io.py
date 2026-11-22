@@ -68,6 +68,13 @@ def unaddr(a):
 KEY_FOLD = {'Æ': 'A', 'æ': 'a', 'Ø': 'O', 'ø': 'o',
             'Đ': 'D', 'đ': 'd', 'Ł': 'L', 'ł': 'l'}
 
+# QY8 POINT keys keep Greek and Cyrillic letters (Bulgaria, Greece, Belarus and Ukraine on the
+# 2017 card, 228,897 such facility names). Accents go as above (Ё -> Е, Ў -> У, Ϊ -> Ι), but
+# Й stays Й, and І, Ї -> И, Є -> Е: 55,966 Й, 80,406 І, 6,292 Ї, 1,488 Є, none otherwise.
+POINT_KEY_FOLD = {'Й': 'Й', 'й': 'й', 'І': 'И', 'і': 'и', 'Ї': 'И', 'ї': 'и', 'Є': 'Е', 'є': 'е'}
+# the only non-ASCII letters in those keys
+POINT_KEY_LETTERS = frozenset('ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ' + ''.join(map(chr, range(0x410, 0x430))))
+
 
 def fold_key(s, extra=None):
     """The search key the factory stores for a display name. `extra` adds mappings.
