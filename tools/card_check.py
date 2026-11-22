@@ -647,10 +647,10 @@ def check_l2_nflags(L2, fmt=None):
     return result('l2_nflags', ok, st)
 
 
-def check_roundabouts(L1, L2, SH1):
+def check_roundabouts(L1, L2, SH1, fmt=None):
     """Roundabout ring entries carry w4 & 0x7000 == 0x7000 at L1 and L2, and a section-1
     ring string's header word 3 (fa_encode.shape_words: cls, ring-flag, name, ...) is
-    0x7004. Not a clean 100%% invariant even on factory - Koln and a UK tile disagree
+    0x7004 on QY8 and 0x7000 on QY7. Not a clean 100%% invariant even on factory - Koln and a UK tile disagree
     on it - so this reports counts and passes if the two sides are at least mutually
     consistent where both are present."""
     st = collections.Counter()
@@ -673,9 +673,9 @@ def check_roundabouts(L1, L2, SH1):
             if not sh['ok']:
                 continue
             hdr3 = w[sh['at'] + 3] if sh['at'] + 3 < len(w) else None
-            flagged = hdr3 == 0x7004
+            flagged = hdr3 == 0x7000 | (fmt or clarion_format.DEFAULT).shape_w3   # 0x7004 on QY8, 0x7000 on QY7
             st['1:section-1 shapes'] += 1
-            st['1:section-1 ring strings (hdr3==0x7004)'] += flagged
+            st['1:section-1 ring strings (code 7 in word 3)'] += flagged
             if flagged:
                 ends = sh['ends']
                 both_ring = all((p in {(x, y) for pc2, x, y in ring_nodes[1]}) for pair in ends for p in pair)
@@ -683,10 +683,50 @@ def check_roundabouts(L1, L2, SH1):
     # the w4&0x7000 mask and the header-word-3 flag should agree on every ring string this
     # writer produced; whether the factory's OWN two fields agree is unsettled (Koln and
     # a UK tile disagree), so this only gates on our own internal consistency
-    total_rings = st['1:section-1 ring strings (hdr3==0x7004)']
+    total_rings = st['1:section-1 ring strings (code 7 in word 3)']
     consistent = st['1:ring strings with ring-flagged entries at both ends']
     ok = total_rings == 0 or consistent == total_rings
     return result('roundabouts', ok, st)
+
+
+def check_graph_words(L1, L2, lev4, lev5, fmt=None):
+    """A link entry's class word and regulation words have the format's form at every level.
+    X08-03: bit 7 set in the class word, 0x10 under class 10, exit nibble 0, the arriving end of
+    a one-way link barred from every entry (f0ff). X08-02: bit 7 clear, 0x10 under class 11,
+    exit nibble 3, no word on an arriving end and none from a leaving end to itself (stock
+    LEV3456R and B58R050R: 402,607 of 402,608 arriving ends, 293,371 of 293,374 words)."""
+    fmt = fmt or clarion_format.DEFAULT
+    st = collections.Counter()
+    bad = []
+    levels = ((1, L1), (2, L2nodes(L2)), (4, {pc: a for pc, (a, b) in lev4.items()}), (5, {pc: a for pc, (a, b) in lev5.items()}))
+    for level, recs in levels:
+        for pc, a in recs.items():
+            for k, nd in enumerate(a['nodes']):
+                for j, e in enumerate(nd['entries']):
+                    if e['cls'] & 0x8000:
+                        continue
+                    st['L%d entries' % level] += 1
+                    cls = e['cls'] & 0xf
+                    wrong = []
+                    if e['cls'] & 0xf0 != fmt.class_flag | (0x10 if cls < fmt.class_plain else 0):
+                        wrong.append('class word')
+                    words = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                    if any(w >> 8 & 0xf != fmt.reg_exit for w in words):
+                        wrong.append('regulation exit nibble')
+                    arriving, leaving = e['w5'] & 0xc000 == 0x8000, e['w5'] & 0xc000 == 0x4000
+                    if fmt.oneway_end_words:
+                        if arriving and not any(w >> 12 == 15 for w in words):
+                            wrong.append('arriving end with no word from every entry')
+                    else:
+                        if arriving and words:
+                            wrong.append('arriving end with a word')
+                        if leaving and any(w >> 12 == j for w in words):
+                            wrong.append('leaving end with a word from itself')
+                    for what in wrong:
+                        st['L%d %s' % (level, what)] += 1
+                    if wrong and len(bad) < 5:
+                        bad.append((level, pc, k, j, wrong))
+    return result('graph_words', not any(' entries' not in k and v for k, v in st.items()), st, ['wrong: %r' % bad])
 
 
 def check_length_time_units(L1, L2):
@@ -1374,7 +1414,8 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_node_order(lev4, lev5))
     out.append(check_l1_link_direction(L1, L2))
     out.append(check_l2_nflags(L2, fmt))
-    out.append(check_roundabouts(L1, L2, SH1))
+    out.append(check_roundabouts(L1, L2, SH1, fmt))
+    out.append(check_graph_words(L1, L2, lev4, lev5, fmt))
     out.append(check_upper_link_shapes(L1, L2, SH1))
     out.append(check_l2_nodes_on_l1(L1, L2))
     out.append(check_traffic_shapes(SH1))

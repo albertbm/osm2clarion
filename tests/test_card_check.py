@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 21)
+        self.assertEqual(len(checks), 22)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -92,6 +92,25 @@ class TestL2BlockOrder(unittest.TestCase):
         r = card_check.check_l2_block_order(self.blocks((0, 9), (0, 2)))
         self.assertFalse(r['passed'])
         self.assertEqual(r['counts']['out of child order'], 1)
+
+
+class TestGraphWords(unittest.TestCase):
+    def run_rule(self, fmt, **kw):
+        L1 = {(0, 0): dict(nodes=[node(entries=[entry(**kw)])])}
+        return card_check.check_graph_words(L1, {}, {}, {}, card_check.clarion_format.get(fmt))
+
+    def test_each_format_passes_its_own_form(self):
+        self.assertTrue(self.run_rule('x08-03', cls=0x0898, w5=0x8040, extra=[0xf0ff])['passed'])
+        self.assertTrue(self.run_rule('x08-02', cls=0x0818, w5=0x8000)['passed'])
+        self.assertTrue(self.run_rule('x08-02', cls=0x0a1a, w5=0x0040, extra=[0x13ff])['passed'])
+
+    def test_the_other_formats_form_fails(self):
+        self.assertFalse(self.run_rule('x08-02', cls=0x0898)['passed'])
+        self.assertFalse(self.run_rule('x08-03', cls=0x0818)['passed'])
+        self.assertFalse(self.run_rule('x08-02', cls=0x0818, w5=0x8040, extra=[0xf3ff])['passed'])
+        self.assertFalse(self.run_rule('x08-02', cls=0x0818, w5=0x0040, extra=[0x10ff])['passed'])
+        self.assertFalse(self.run_rule('x08-03', cls=0x0898, w5=0x8000)['passed'])
+        self.assertFalse(self.run_rule('x08-02', cls=0x0818, w5=0x4040, extra=[0x03ff])['passed'])
 
 
 class TestCoarseGraphPresent(unittest.TestCase):
