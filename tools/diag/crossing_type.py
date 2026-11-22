@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """A hand port of the QY8 unit's crossing classifier, run on a roads.json.
 
-Navi.exe (G214) FUN_005e75c8 takes a table of the links at a node, row 0 the link the route
+The unit's navigation program takes a table of the links at a node, row 0 the link the route
 arrives on, row 1 the link it leaves on, the rest the other arms, and returns the crossing
 type: 0 no manoeuvre, 0x13 a branch among roads, 0x14 leaving onto a link that is not a road
 code (a slip), other values the motorway types. Each row has a heading in tenths of a degree,
@@ -13,16 +13,16 @@ end, the heading that first segment's, class and code from shape words 2 and 3. 
 word 3 has bits 11-9 or 5-4 set is reported 'unread': the ported rules take them as 0.
 
 What is ported: the path for ranks 5 and up (classes 3 to 9), which is all of Iceland, with
-helpers 005eb378, 005ec790, 005eb3e0, 005eb3a0, 005ea628, 005ebc98, 005eb72c, 005eb8d8,
-005eb52c, 005e59f4 and the code-7 part of 005e3c4c.
+its helpers: the road test, the rank, the heading band tests, the side tests, the code rules and
+the code-7 part of the ring test.
 
 What is not, and how a node that needs it is reported:
-  - the motorway rules (rank under 5) and 005ec80c                       -> 'unread'
-  - 005ebf98, which pairs the code-1 rows of a divided road and can turn their headings:
-    read, and a node where it would turn a pair is 'unread'; the code-1 rules of 005e75c8
+  - the motorway rules (rank under 5) and one further helper           -> 'unread'
+  - the pairing step, which pairs the code-1 rows of a divided road and can turn their headings:
+    read, and a node where it would turn a pair is 'unread'; the code-1 rules of the classifier
     for three links are ported
-  - 005eba88's side test (its last arguments did not decompile): left out, the rest kept
-  - 005eb17c's sector numbers come from an unrecovered jump table: taken in angle order
+  - the straightest-arm side test (its last arguments were not recovered): left out, the rest kept
+  - the sector test's numbers come from an unrecovered jump table: taken in angle order
 Assumed, not read: the entry heading is the travel direction into the node; an arm traffic
 cannot enter is the closed one; settings 0 and 4 are 1000 and 0; shape word 3's other fields
 are 0, as on our cards; headings come from OSM points, where the unit uses the first segment
@@ -46,12 +46,12 @@ Arm = collections.namedtuple('Arm', 'key h leave arrive cls code plain way f8')
 
 
 def road(code):
-    """005eb378: the codes that count as a road."""
+    """Link codes that count as a road."""
     return code in (0, 1, 4, 5)
 
 
 def rank(cls):
-    """005ec790."""
+    """The rank of a class: 0 for motorways, 5 for classes 3 to 7, 11 for 8 and 9, else 15."""
     return 0 if cls < 3 else 5 if cls < 8 else 11 if cls < 10 else 15
 
 
@@ -66,22 +66,22 @@ def sdiff(a, b):
 
 
 def within(a, b, t):
-    """005eb3e0 on two rows: 0 when b is inside t of a, else 2."""
+    """On two rows: 0 when b is inside t of a, else 2."""
     return 0 if -t < sdiff(a.h, b.h) < t else 2
 
 
 def rel(e, x):
-    """The exit's heading seen from the reversed entry; 1800 is straight on (005eb3a0, 005eb17c)."""
+    """The exit's heading seen from the reversed entry; 1800 is straight on."""
     return (x.h - (e.h + 1800)) % 3600
 
 
 def in_band(e, x, lo, hi):
-    """005eb3a0: 0 inside the band."""
+    """0 when the exit lies inside the band."""
     return 0 if lo <= rel(e, x) <= hi else 0xffff
 
 
 def sector(e, x):
-    """005eb17c. The bands are read; their numbers are assumed to run in angle order."""
+    """The sector of the exit. The bands are read; their numbers are assumed to run in angle order."""
     v = rel(e, x)
     for k, top in enumerate((100, 200, 1350, 1700, 1900, 2250, 3400, 3500)):
         if v <= top: return k
@@ -89,7 +89,7 @@ def sector(e, x):
 
 
 def sides(rows, t, lo, hi, ref, open_only, side=0):
-    """005ea628 and 005ebc98: which side of the reference row other arms of rank lo..hi lie on, within t."""
+    """Which side of the reference row other arms of rank lo..hi lie on, within t."""
     left = right = False
     for a in rows[2:]:
         if open_only and a.closed: continue
@@ -108,20 +108,20 @@ def nearest(rows, ref):
     return best
 
 
-def eba88(rows):
-    """005eba88 without its side test: the route is straighter than every other arm."""
+def route_straightest(rows):
+    """Without the side test: the route is straighter than every other arm."""
     return 1 if adiff(rows[1].h, rows[0].h) < nearest(rows, 0) else 0
 
 
-def eb8d8(rows):
+def continues_straight(rows):
     e, x = rows[0], rows[1]
     if not road(x.code) or within(e, x, 470): return 0
     if not any(within(e, a, 470) == 0 and (road(a.code) or a.code == 3) for a in rows[2:]): return 1
     if not any(within(e, a, 470) == 0 and not a.closed and a.rank <= x.rank for a in rows[2:]): return 1
-    return eba88(rows)
+    return route_straightest(rows)
 
 
-def eb52c(rows):
+def arm_as_straight(rows):
     e, x = rows[0], rows[1]
     best, arm = 3600, None
     for a in rows[2:]:
@@ -131,18 +131,18 @@ def eb52c(rows):
     return 0
 
 
-def eb72c(rows):
+def branch_by_code(rows):
     e, x = rows[0], rows[1]
     arms = [a for a in rows[2:] if not a.closed]
     if road(e.code):
         if not road(x.code): return 0x14 if x.code != 6 else UNREAD
         return 0x13 if any(road(a.code) for a in arms) else 0
     if e.code != 3 or x.code != 3 or any(a.code != 3 for a in arms): return 0x13
-    return 0 if eba88(rows) == 1 else 0x13
+    return 0 if route_straightest(rows) == 1 else 0x13
 
 
 def pairs_rewritten(rows):
-    """005ebf98 as far as it is read: it pairs an arriving code-1 row with the code-1 row that
+    """The pairing step as far as it is read: it pairs an arriving code-1 row with the code-1 row that
     carries it on, and turns both to their mean heading when a plain road of the same rank
     leaves about opposite to that mean. True when it would turn a pair; the turning itself is
     not ported, so such a node is unread. The exact-heading matches it also tests are left out."""
@@ -170,7 +170,7 @@ def pairs_rewritten(rows):
 
 
 def classify(rows):
-    """005e75c8, the path for ranks of 5 and up."""
+    """The classifier for ranks of 5 and up."""
     n = len(rows); e, x = rows[0], rows[1]
     if any(not r.plain for r in rows) or e.rank < 5 or x.rank < 5: return UNREAD
     if any(r.code == 1 for r in rows) and pairs_rewritten(rows): return UNREAD
@@ -198,10 +198,10 @@ def classify(rows):
     if n == 3:
         a = rows[2]
         if e.code in (0, 1) and dev < 200 and x.code == 3 and a.code == 3 and e.cls == x.cls == a.cls: return 0
-    go_8770 = False
+    wide_check = False
     if sides(rows, 300, 0, 15, 1, True) == 0:
         if sides(rows, 470, 0, 15, 1, True) != 0:
-            go_8770 = True
+            wide_check = True
         else:
             if n == 3 or not opened:
                 best, cls = 3600, None
@@ -214,22 +214,22 @@ def classify(rows):
                 if x.code != 3: return 0
                 if e.code not in (0, 1): return 0 if dev < nearest(rows, 0) else 0x13
                 return 0x13
-            if e.rank != x.rank: return eb72c(rows)
-            if eba88(rows) != 1: return 0x13
+            if e.rank != x.rank: return branch_by_code(rows)
+            if route_straightest(rows) != 1: return 0x13
             if e.code not in (0, 1): return 0
             return 0x13 if x.code == 3 else 0
     else:
         sec = sector(e, x)
         if sec in (3, 5) and any(sector(e, a) == sec for a in rows[2:]) and sides(rows, 470, 0, x.rank, 0, True) != 0:
-            return eb72c(rows)
-        go_8770 = True
-    assert go_8770
+            return branch_by_code(rows)
+        wide_check = True
+    assert wide_check
     if sides(rows, 1800, 0, x.rank, 0, True) == 0:
-        if x.rank < e.rank: return eb72c(rows)
+        if x.rank < e.rank: return branch_by_code(rows)
         if road(e.code) and x.code == 3: return 0x13
-        if eb52c(rows) != 2: return 0
-        if n > 3 and any(r.f8 for r in rows): return UNREAD   # 005e59f4 reads that field; not ported
-        return 0x13   # 005e59f4 is never 1 while the field is 0
+        if arm_as_straight(rows) != 2: return 0
+        if n > 3 and any(r.f8 for r in rows): return UNREAD   # the ring test reads that field; not ported
+        return 0x13   # the ring test is never 1 while the field is 0
     route_near = within(e, x, 210) == 0
     arm_near = any(not a.closed and within(e, a, 210) == 0 for a in rows[2:])
     if route_near and arm_near:
@@ -239,8 +239,8 @@ def classify(rows):
         if best <= dev: return 0x13
         if not road(e.code) or not road(x.code) or near90 != 1: return 0x13
         return 0 if first_side == 3 else 0x13
-    if eb8d8(rows) != 1 or e.rank < x.rank: return eb72c(rows)
-    return 0x13 if eb52c(rows) == 2 else 0
+    if continues_straight(rows) != 1 or e.rank < x.rank: return branch_by_code(rows)
+    return 0x13 if arm_as_straight(rows) == 2 else 0
 
 
 def dist_m(a, b):
@@ -323,7 +323,7 @@ def tile_nodes(path):
             at = S['at']; w3 = w[at + 3]
             c = w3 >> 12; c = 7 if c == 8 else c
             plain = (w3 & 0xe30) == 0          # word 3 bits 11-9 and 5-4, which the ported rules take as 0
-            f8 = (w3 >> 6) & 7                 # bits 8-6, read by 005e59f4 only
+            f8 = (w3 >> 6) & 7                 # bits 8-6, read by the ring test only
             idx = list(S['points'])
             P = [(w[i] & 0x7ff, w[i + 1] & 0x7ff, w[i + 1] & 0xc000, S['points'][i][0]) for i in idx]
             for k, (x, y, _, role) in enumerate(P):
