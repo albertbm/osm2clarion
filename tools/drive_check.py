@@ -22,8 +22,13 @@ the two links must meet at a node, or the level's own links between them are dri
 their place; with neither, the unit cannot plan the way the road runs. And a long route
 with no link of a level at all means level 1 names none.
 
+Apart from the routes, every level-2 edge triple must name the far node's own block (cell
+word, level-1 child), as all 31,826 on the stock QY7 Finland tiles do. Ours named the far
+node's level-2 index wherever a road crossed a tile line, and 300 routes never saw it.
+
 Every miss is listed with its place. Exit status 1 when a driven link is not drawn or does
-not expand, or when a tenth of the routes use no link of a level the card has.
+not expand, when a tenth of the routes use no link of a level the card has, or when an edge
+triple is wrong.
 
 No link may fail to expand because every one that did was a fault: our Iceland card had 4
 of 5,595 at level 2 and 5 of 1,505 at level 4, from junctions sharing a level-2 unit,
@@ -74,8 +79,13 @@ def load_level2_shapes(paths):
 class Card:
     """What the lookups need of a card, read with card_check's loaders."""
 
-    def __init__(self, tiles, lev):
-        self.L1, self.L2, self.SH1 = card_check.load_road_tiles(tiles)
+    def __init__(self, tiles, lev, names=None):
+        self.L1, self.L2, self.SH1, self.tile_of = {}, {}, {}, {}
+        for t, name in zip(tiles, names or tiles):
+            l1, l2, sh1 = card_check.load_road_tiles([t])
+            self.L1.update(l1), self.L2.update(l2), self.SH1.update(sh1)
+            name = os.path.basename(name)[:-4] if isinstance(name, str) else '?'
+            self.tile_of.update((pc, name) for pc in l2)
         self.SH2 = load_level2_shapes(tiles)
         levd = card_check.load_lev(lev)
         self.lev = {4: levd.get(4, {}), 5: levd.get(5, {})}
@@ -163,6 +173,48 @@ def link_nodes(card):
     return out
 
 
+def edge_triples(L1, L2, tile_of=None):
+    """Every level-2 part-B edge triple against the far node's own block, which is what the
+    factory writes (stock QY7 Finland: 31,826 of 31,826). Returns (Counter, per-tile Counters,
+    notes for each wrong triple)."""
+    st, per, notes = collections.Counter(), collections.defaultdict(collections.Counter), []
+    blocks = {pc: {x['upper'] & 0x3fff: x for x in b['nodes']} for pc, (a, b) in L2.items()}
+    for pc, (a, b) in sorted(L2.items()):
+        T = per[(tile_of or {}).get(pc, '?')]
+        for k, nd in enumerate(a['nodes']):
+            blk = blocks[pc].get(k)
+            if blk is None:
+                continue
+            for j, (e, (w0, w2, w4)) in enumerate(zip(nd['entries'], blk['entries'])):
+                if not e['cls'] & 0x8000:
+                    continue
+                T['L2 edge triples'] += 1
+                dr, dc = card_check.SIDE[e['cls'] & 0xe000]
+                fpc, other = (pc[0] + dr, pc[1] + dc), e['other'] & 0x3fff
+                if fpc not in L2:
+                    T['L2 edge triples off the card'] += 1
+                    continue
+                fb = blocks[fpc].get(other)
+                what = []
+                if fb is None:
+                    what.append('far node %d has no block' % other)
+                    T['L2 edge triples far node with no block'] += 1
+                elif (w2, w4) != (fb['parcel'], fb['child']):
+                    what.append('names (%04x, %d), far block is (%04x, %d)%s' % (w2, w4, fb['parcel'], fb['child'],
+                                ', the far level-2 index' if w4 == other else ''))
+                    T['L2 edge triples wrong'] += 1
+                far1 = L1.get((fpc[0] * 4 + (w2 >> 14), fpc[1] * 4 + (w2 >> 6 & 3)))
+                if far1 is not None and w4 >= len(far1['nodes']):
+                    what.append('child %d past the %d nodes of its level-1 record' % (w4, len(far1['nodes'])))
+                    T['L2 edge triples child out of range'] += 1
+                if what:
+                    notes.append('level 2 edge triple in parcel %s node %d entry %d, far %s node %d: %s'
+                                 % (pc, k, j, fpc, other, '; '.join(what)))
+    for T in per.values():
+        st.update(T)
+    return st, dict(per), notes
+
+
 def where(node):
     """(lat, lon) of a level-1 node given as (parcel, x, y)."""
     pc, x, y = node
@@ -244,8 +296,23 @@ class Graph:
 
 
 def drive(card, count=300, seed=1):
-    """Run the lookups over `count` routes on a card."""
-    return judge(Graph(card.L1), level1_shapes(card), drawn_links(card), walks(card), link_nodes(card), count, seed)
+    """Run the lookups over `count` routes on a card, then check its edge triples."""
+    r = judge(Graph(card.L1), level1_shapes(card), drawn_links(card), walks(card), link_nodes(card), count, seed)
+    return add_edge_triples(r, *edge_triples(card.L1, card.L2, card.tile_of))
+
+
+def add_edge_triples(r, st, per, notes):
+    """Fold the edge triple counts into a drive result; any wrong one fails it."""
+    bad = st['L2 edge triples wrong'] + st['L2 edge triples child out of range'] + st['L2 edge triples far node with no block']
+    for k in ('L2 edge triples', 'L2 edge triples wrong', 'L2 edge triples child out of range',
+              'L2 edge triples far node with no block', 'L2 edge triples off the card'):
+        r['counts'][k] = st[k]
+    tiles = ['%s %d of %d wrong, %d out of range' % (t, T['L2 edge triples wrong'], T['L2 edge triples'], T['L2 edge triples child out of range'])
+             for t, T in sorted(per.items()) if T['L2 edge triples wrong'] or T['L2 edge triples child out of range'] or T['L2 edge triples far node with no block']]
+    r['notes'] = notes + (['edge triples by tile: ' + '; '.join(tiles)] if tiles else []) + r['notes'] + [
+        'pass at every level-2 edge triple naming the far node\'s own (cell, level-1 child)']
+    r['passed'] = r['passed'] and not bad
+    return r
 
 
 def judge(graph, shapes, drawn, walked, nodes, count=300, seed=1):
@@ -343,11 +410,12 @@ def main(argv):
     args = ap.parse_args(argv)
     if args.card:
         files = card_check.extract_card(args.card)
-        tiles = [files[k] for k in sorted(files) if k.upper().startswith('MAPAL001/') and not k.upper().endswith('LEV3456R.DAT')]
+        names = [k for k in sorted(files) if k.upper().startswith('MAPAL001/') and not k.upper().endswith('LEV3456R.DAT')]
+        tiles = [files[k] for k in names]
         lev = next((v for k, v in files.items() if k.upper().endswith('LEV3456R.DAT')), None)
     else:
-        tiles, lev = args.tiles, args.lev
-    r = drive(Card(tiles, lev), args.routes, args.seed)
+        tiles, lev, names = args.tiles, args.lev, None
+    r = drive(Card(tiles, lev, names), args.routes, args.seed)
     card_check.print_report(os.path.basename(args.card or 'tiles'), [r])
     if args.json:
         print(json.dumps(r, indent=2, default=str))

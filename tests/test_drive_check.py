@@ -130,6 +130,40 @@ class TestGraph(unittest.TestCase):
         self.assertEqual(drive_check.parent(4, (3001, 29003), (90, 900)), ((3001 - 2880) // 64, (29003 - 28800) // 64))
 
 
+def two_parcels(w4, child=2):
+    """Two level-2 parcels side by side, left node 0 crossing to right node 0 through one edge
+    triple naming (cell 0x0000, w4); the right node's own block names (0x0000, child)."""
+    left, right = (750, 7250), (750, 7251)
+    L2 = {left: (dict(nodes=[dict(entries=[dict(cls=0xa000, other=0)])]),
+                 dict(nodes=[dict(upper=0, parcel=0x00c0, child=0, entries=[(0, 0x0000, w4)])])),
+          right: (dict(nodes=[dict(entries=[dict(cls=0xe000, other=0)])]),
+                  dict(nodes=[dict(upper=0, parcel=0x0000, child=child, entries=[(0, 0x00c0, 0)])]))}
+    L1 = {(3000, 29004): dict(nodes=[{}] * 3), (3000, 29003): dict(nodes=[{}])}
+    return L1, L2, {left: 'B1', right: 'B2'}
+
+
+class TestEdgeTriples(unittest.TestCase):
+    def test_a_triple_naming_the_far_block_passes(self):
+        st, per, notes = drive_check.edge_triples(*two_parcels(2))
+        self.assertEqual((st['L2 edge triples'], st['L2 edge triples wrong'], notes), (2, 0, []))
+
+    def test_a_triple_naming_the_far_level_2_index_is_wrong(self):
+        st, per, notes = drive_check.edge_triples(*two_parcels(0))
+        self.assertEqual((st['L2 edge triples wrong'], per['B1']['L2 edge triples wrong']), (1, 1))
+        self.assertIn('the far level-2 index', notes[0])
+
+    def test_a_child_past_the_level_1_record_is_reported(self):
+        st, per, notes = drive_check.edge_triples(*two_parcels(5, 5))
+        self.assertEqual((st['L2 edge triples wrong'], st['L2 edge triples child out of range']), (0, 1))
+        self.assertIn('past the 3 nodes', notes[0])
+
+    def test_a_wrong_triple_fails_the_drive(self):
+        r = card_check.result('drives', True, {}, [])
+        self.assertFalse(drive_check.add_edge_triples(r, *drive_check.edge_triples(*two_parcels(0)))['passed'])
+        r = card_check.result('drives', True, {}, [])
+        self.assertTrue(drive_check.add_edge_triples(r, *drive_check.edge_triples(*two_parcels(2)))['passed'])
+
+
 class TestWalkOffTheTiles(unittest.TestCase):
     def test_a_walk_that_ends_at_an_unloaded_parcel_says_so(self):
         shapes = [((10, 10), (2048, 10)), ((2048 * 3, 10), (2048 * 3 + 5, 10))]
