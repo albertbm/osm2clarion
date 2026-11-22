@@ -80,7 +80,7 @@ class Point:
 
     def _trie(self):
         o, n = 0x1100, 0
-        while u32(self.d, o):
+        while self.d[o + 8:o + 8 + self.kw] != b'\xff' * self.kw:
             n += 1
             o += self.cr
         self.nroot = n
@@ -582,7 +582,8 @@ def trie_keys(d, base, cr, kw, recw=REC_W):
     def crec(o):
         return (u32(d, o), u16(d, o + 4), d[o + 8:o + 8 + kw], int.from_bytes(d[o + 8 + kw:o + cr], 'big'))
     o, root = base, []
-    while u32(d, o):
+    # the root ends at its all-ones key; a leaf at record 0 also has a zero pointer
+    while d[o + 8:o + 8 + kw] != b'\xff' * kw:
         root.append(crec(o))
         o += cr
     keys, stack = [], [(c, b'') for c in root]

@@ -71,7 +71,7 @@ def walk_trie(d, base, cr, kw):
         return (struct.unpack_from('>I', d, o)[0], struct.unpack_from('>H', d, o + 4)[0],
                 d[o + 8:o + 8 + kw], int.from_bytes(d[o + 8 + kw:o + cr], 'big'))
     o, root = base, []
-    while struct.unpack_from('>I', d, o)[0]:
+    while d[o + 8:o + 8 + kw] != b'\xff' * kw:
         root.append(crec(o))
         o += cr
     out, stack = [], [(c, b'') for c in root]

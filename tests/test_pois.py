@@ -396,6 +396,26 @@ class TestPoiPoint(unittest.TestCase):
         self.assertEqual(keys('Daddi’s Pizza'), ["DADDI'S PIZZA", 'PIZZA'])
 
 
+class TestTrieRootLeaf(unittest.TestCase):
+    """A root leaf at record 0 has a zero pointer; the readers end the root at its all-ones key."""
+
+    def test_round_trip(self):
+        import poi_check
+        for keys in ([(b'A', 0, 1), (b'BC', 1, 1)], [(b'7', 0, 2), (b'AB', 2, 1), (b'AC', 3, 1)],
+                     [(b'AB', 0, 1), (b'AC', 1, 2)]):
+            node, _first, _n = addre_io.build_trie(keys, 12, 1, 20)
+            d = bytes(0x1100) + node + bytes(64)
+            self.assertEqual(point_io.trie_keys(d, 0x1100, 12, 1), keys)
+            self.assertEqual(poi_check.walk_trie(d, 0x1100, 12, 1), keys)
+
+    def test_factory_root(self):
+        d = factory_point()
+        o, n = 0x1100, 0
+        while struct.unpack_from('>I', d, o)[0]:
+            o, n = o + d[0x1032] * 2, n + 1
+        self.assertEqual(point_io.Point(d).nroot, n, 'factory roots open on nodes, so both ends agree')
+
+
 class TestFacilityRefs(unittest.TestCase):
     """poi_point.facility_refs / nearest_link_refs: real refs into a facility's own parcel,
     read from our own built tiles (never a factory one)."""
