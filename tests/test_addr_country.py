@@ -300,6 +300,29 @@ class Join(unittest.TestCase):
         self.assertEqual(self.ranges([(1, 50, 'S'), (3, 150, 'S'), (5, 250, 'S')]),
                          [(1, [(0x54, 1, 1)], 1), (2, [(0x54, 3, 3)], 1), (3, [(0x54, 5, 5)], 1)])
 
+    def two_streets(self, west, east):
+        """Two KATU 10 km apart in one kunta, each one link; west and east list their houses."""
+        recs = []
+        for k, lon in enumerate((25.74, 25.94)):
+            pts = [dict(word=55 + 5 * i, link=1, role='end' if i else 'start', lon=lon + 0.002 * i, lat=62.24) for i in range(2)]
+            recs.append(dict(code=list(addre_io.parcel_words(62.24, lon + 0.001)), unit=22,
+                             shapes=[dict(label='1=KATU', at=48, links=[dict(id=1, way=7)], points=pts)]))
+        rows = [dict(street='Katu', num=str(n), letter='', post=1, town='', lat=62.2401, lon=lon + 0.0001 + 0.0002 * i)
+                for lon, nums in ((25.74, west), (25.94, east)) for i, n in enumerate(nums)]
+        ents, _ = build_addr_country.group(rows, lambda r: (None, (6, 1, 1)), lambda s: s, lambda r: [r['street']])
+        (e,), _ = build_addr_country.place(addr_links.Links(recs, named_only=True), ents, addr_links.NAME_REACH, join_up=True)
+        return sorted((r['la'], r['lo_word'], [(it['first'], it['last']) for it in r['items']]) for r in e['ranges'])
+
+    def test_a_second_street_of_the_name_keeps_its_numbers(self):
+        west, east = self.two_streets((1, 3, 5, 7), (1, 3, 5, 7))
+        self.assertEqual((west[2], east[2]), ([(1, 7)], [(1, 7)]))
+        self.assertNotEqual(west[:2], east[:2])
+
+    def test_two_streets_of_the_name_join_their_numbers_apart(self):
+        # no 7 or 9 laid on the way from the east street's 5 to the west street's 11
+        west, east = self.two_streets((1, 11), (1, 5))
+        self.assertEqual((west[2], east[2]), ([(1, 11)], [(1, 5)]))
+
 
 class Settlements(unittest.TestCase):
     def test_a_range_goes_under_the_settlements_of_its_addresses(self):

@@ -25,6 +25,7 @@ import frames  # noqa: E402
 import shape_index  # noqa: E402
 
 NAME_REACH = 1500.0       # metres from the address centroid to a road of the street's name
+STREET_GAP = 250.0        # metres: links of one name this close are one street, whatever their numbers
 ACCESS_REACH = 500.0      # metres to any road, for a street with no road of its own name
 CELL = (0.1, 0.05)        # lon, lat degrees of a cell of the by-name grid, about 5 km
 
@@ -252,7 +253,8 @@ class Others:
 class Street:
     """The whole links of one street as a graph of their end nodes. `others` holds the id
     of each link with a house of another street of the name, the same road in the next
-    municipality: this street's numbers stay off those."""
+    municipality: this street's numbers stay off those. `apart` maps each link to its
+    piece: links that meet or come within STREET_GAP of each other."""
 
     def __init__(self, links, cands, others=()):
         self.chains, self.at, self.beyond = {}, collections.defaultdict(list), set()
@@ -271,6 +273,83 @@ class Street:
             self.chains[id(ch)] = ch
             for end, node in enumerate(ch['ends']):
                 self.at[node].append((ch, end))
+        self.apart = self._apart()
+
+    def _apart(self):
+        """{id(link): piece}: the connected pieces, those within STREET_GAP joined."""
+        piece = self.pieces()
+        self._geom = {}
+        if len(set(piece.values())) < 2:
+            return piece
+        runs = collections.defaultdict(list)
+        for ch in self.chains.values():
+            runs[piece[id(ch)]] += [[(P['lon'], P['lat']) for P in it[3]] for it, _ in ch['parts']]
+        lat0 = math.radians(next(iter(self.chains.values()))['ends'][0][1])
+        k = np.array([111320 * math.cos(lat0), 111320])
+        for n, rs in runs.items():
+            vert = np.concatenate([np.array(r) for r in rs]) * k
+            segs = np.concatenate([np.hstack([np.array(r[:-1]), np.array(r[1:])]) for r in rs if len(r) > 1]
+                                  or [np.zeros((0, 4))]) * np.tile(k, 2)
+            self._geom[n] = (vert, segs, vert.min(0), vert.max(0))
+        keys = sorted(runs)
+        root = {n: n for n in keys}
+
+        def find(n):
+            while root[n] != n:
+                n = root[n]
+            return n
+        for i, m in enumerate(keys):
+            for n in keys[i + 1:]:
+                if find(m) != find(n) and self.gap(m, n, STREET_GAP) <= STREET_GAP:
+                    root[find(n)] = find(m)
+        for n in keys:
+            r = find(n)
+            if r != n:
+                (v0, s0, lo0, hi0), (v1, s1, lo1, hi1) = self._geom[r], self._geom.pop(n)
+                self._geom[r] = (np.concatenate([v0, v1]), np.concatenate([s0, s1]), np.minimum(lo0, lo1), np.maximum(hi0, hi1))
+        return {c: find(n) for c, n in piece.items()}
+
+    def gap(self, m, n, limit=None):
+        """Metres between two pieces of apart; past `limit`, the gap between their boxes."""
+        (vm, sm, lom, him), (vn, sn, lon_, hin) = self._geom[m], self._geom[n]
+        box = float(np.hypot(*np.maximum(0, np.maximum(lom - hin, lon_ - him))))
+        if limit is not None and box > limit:
+            return box
+
+        def near(p, s):
+            if not len(s):
+                return math.inf
+            a, b = s[:, :2], s[:, 2:]
+            d = b - a
+            size = (d * d).sum(1)
+            best = math.inf
+            for c in range(0, len(p), 256):
+                q = p[c:c + 256, None, :]
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    t = np.where(size == 0, 0, np.clip(((q - a) * d).sum(2) / size, 0, 1))
+                best = min(best, float(np.hypot(*np.moveaxis(a + t[..., None] * d - q, 2, 0)).min()))
+            return best
+        return min(near(vm, sn), near(vn, sm))
+
+    def streets(self, nums):
+        """{piece: street} for the pieces of apart in nums ({piece: its house numbers}). The
+        nearest pieces join first, but never two with a number in common: that is a second
+        street of the name, numbered on its own."""
+        keys = sorted(nums)
+        if len(keys) < 2:
+            return {n: n for n in keys}
+        root, have = {n: n for n in keys}, {n: set(nums[n]) for n in keys}
+
+        def find(n):
+            while root[n] != n:
+                n = root[n]
+            return n
+        for _, m, n in sorted((self.gap(m, n), m, n) for i, m in enumerate(keys) for n in keys[i + 1:]):
+            a, b = find(m), find(n)
+            if a != b and not have[a] & have[b]:
+                root[b] = a
+                have[a] |= have[b]
+        return {n: find(n) for n in keys}
 
     def way(self, ca, sa, cb, sb):
         """[(link, forwards, from, to)] from sa metres along ca to sb along cb, the shortest
@@ -376,9 +455,15 @@ def join(street, grouped):
         if a[5] is b[5]:
             return None if a[0] == b[0] else b[0] > a[0]
         return street.way(a[5], a[0], b[5], b[0])[0][1]
-    houses = sorted((r for rows in grouped.values() for r in rows if id(r[5]) in street.chains), key=lambda r: r[2])
+    every = sorted((r for rows in grouped.values() for r in rows if id(r[5]) in street.chains), key=lambda r: r[2])
+    nums = collections.defaultdict(set)
+    for r in every:
+        nums[street.apart[id(r[5])]].add(r[2])
+    of = street.streets(nums)
     new = []
-    for parity in (0, 1):
+    # two streets of one name number on their own
+    for parity, s in sorted({(p, of[street.apart[id(r[5])]]) for r in every for p in (0, 1)}):
+        houses = [r for r in every if of[street.apart[id(r[5])]] == s]
         run = [r for r in houses if r[2] % 2 == parity]
         for a, b in zip(run, run[1:]):
             if b[2] - a[2] > 2 and a[5] is not b[5]:
@@ -418,14 +503,26 @@ def house_rows(links, e, reach=None):
         matched, unmatched = match_near(cands, adr, reach)
         if not matched:
             return {}, cands, unmatched
-    # a number is one place on its street: of several buildings, the one nearest the road
+    # a number is one place on its street: of several buildings, the one nearest the road;
+    # a second street of the name keeps its own
+    street = Street(links, cands)
+    piece = lambda m: street.apart.get(id(links.whole(m[0])), id(links.whole(m[0])))
     nearest = {}
-    for m in matched:
-        num = m[4]['num']
-        if num.isdigit() and int(num) and (int(num) not in nearest or m[3] < nearest[int(num)][3]):
-            nearest[int(num)] = m
+    for step in (0, 1):
+        if step:
+            nums = collections.defaultdict(set)
+            for p, n in nearest:
+                nums[p].add(n)
+            of = street.streets({p: ns for p, ns in nums.items() if p in street._geom})
+            matched, nearest = list(nearest.values()), {}
+        for m in matched:
+            num = m[4]['num']
+            if num.isdigit() and int(num):
+                key = (of.get(piece(m), piece(m)) if step else piece(m), int(num))
+                if key not in nearest or m[3] < nearest[key][3]:
+                    nearest[key] = m
     grouped = collections.defaultdict(list)
-    for num, (c, side, along, dist, a) in nearest.items():
+    for (_, num), (c, side, along, dist, a) in nearest.items():
         chain = links.whole(c)
         fwd = dict((id(it), f) for it, f in chain['parts'])[id(c)]
         along = chain['start'][id(c)] + (along if fwd else chain['size'][id(c)] - along)
