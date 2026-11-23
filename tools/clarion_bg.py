@@ -239,7 +239,8 @@ def parse_record(d):
     gi = bg_slot(w)
     geo_off, geo_len = w[gi], w[gi + 1]
     base = 4 * geo_off
-    table = []; nlayers = 1 << 30 if geo_off != 0xffff else 0
+    # the table ends at its first offset, or at geo_len when every pair is empty
+    table = []; nlayers = geo_len if geo_off != 0xffff else 0
     while len(table) < nlayers:
         off, ln = struct.unpack_from('>HH', d, base + 4*len(table)); table.append((off, ln))
         if off != 0xffff: nlayers = min(nlayers, off)

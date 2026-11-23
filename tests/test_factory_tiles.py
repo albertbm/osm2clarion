@@ -3,10 +3,12 @@
 
     OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_QY7_TILE=B58R050R.DAT python3 -m unittest tests.test_factory_tiles
 """
-import os, struct, sys, unittest
+import contextlib, glob, io, os, struct, sys, tempfile, unittest, unittest.mock
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
-import clarion_format, clarion_rd, clarion_tile, rd_check
+import bg_decode, clarion_bg, clarion_format, clarion_rd, clarion_tile, inflate_tile, rd_check, tile_grid
+import test_format
 from tile_scan import TileScan
 
 QY8_ENV, QY7_ENV = 'OSM2CLARION_FACTORY_TILE', 'OSM2CLARION_QY7_TILE'
@@ -78,6 +80,63 @@ class ExtendedSlots(unittest.TestCase):
         for path in tiles():
             with open(path, 'rb') as f: d = f.read()
             self.assertTrue(clarion_tile.write_tile(clarion_tile.read_tile(d)) == d, path)
+
+
+class Qy7Readers(unittest.TestCase):
+    def test_empty_layer_table_stops_at_its_length(self):
+        """26 empty pairs, then a names section whose first word reads as an offset if the scan runs on."""
+        w = [0x8000, 2, 0xfa, 0xffff, 0xffff, 0, 0, 0xffff, 0, 11, 26, 37, 2] + [0xffff, 0] * 4 + [0]
+        d = struct.pack('>22H', *w) + b'\xff\xff\x00\x00' * 26 + struct.pack('>4H', 6, 0, 0xffff, 0)
+        rec = clarion_bg.parse_record(d)
+        self.assertEqual((rec['nlayers'], rec['layers']), (26, {}))
+        self.assertEqual(clarion_bg.build_record(rec), d)
+
+    def test_grid_box_with_zero_fill(self):
+        """An X08-02 header pads its tables with 00, so the box is found by offset, not by skipping ff."""
+        h = bytearray(0x600)
+        h[0x2ac:0x2ba] = struct.pack('>HBBBB4H', 3, 1, 2, 2, 0, 0x1040, 0x0f00, 0x04b0, 0x0690)
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, 'B60R050R.DAT'), 'wb') as f: f.write(h)
+            (name, B, R, latlo, lathi, lonlo, lonhi, size), = tile_grid.boxes(d)
+        self.assertEqual((latlo, lonlo, lonhi), (64.0, 20.0, 28.0))
+        self.assertEqual((B * 2 / 3, 108 - R), (latlo, lonhi))
+
+    def test_inflate_tile_reads_both_formats(self):
+        for fmt in (clarion_format.X08_02, clarion_format.X08_03):
+            blob, recs = test_format.sec2_level2_tile(fmt)
+            with tempfile.TemporaryDirectory() as d:
+                src = os.path.join(d, 't.DAT')
+                with open(src, 'wb') as f: f.write(blob)
+                with unittest.mock.patch.object(sys, 'argv', ['inflate_tile.py', src, os.path.join(d, 'out')]), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    inflate_tile.main()
+                out = sorted(glob.glob(os.path.join(d, 'out', '*')))
+                self.assertEqual([os.path.splitext(o)[1] for o in out], ['.bin', '.bin'], fmt.name)
+                with open(out[0], 'rb') as f: self.assertEqual(f.read(), test_format.PLAIN)
+
+    @needs_tile(QY7_ENV)
+    def test_factory_background_decodes_inside_its_cell(self):
+        path = os.environ[QY7_ENV]
+        name = os.path.basename(path)
+        lat0, lon1 = int(name[1:3], 16) * 2 / 3, 108 - int(name[4:7], 16)
+        with open(path, 'rb') as f: d = f.read()
+        n = 0
+        for f in bg_decode.decode_tile(d):
+            n += 1
+            for lon, lat in f['coords']:
+                if not (lon1 - 8 <= lon <= lon1 and lat0 <= lat <= lat0 + 16 / 3):
+                    self.fail('%r is outside %s' % ((lon, lat), name))
+        self.assertGreater(n, 0)
+
+    @needs_tile(QY7_ENV)
+    def test_factory_grid_box(self):
+        path = os.environ[QY7_ENV]
+        with tempfile.TemporaryDirectory() as d:
+            os.symlink(os.path.abspath(path), os.path.join(d, os.path.basename(path)))
+            (name, B, R, latlo, lathi, lonlo, lonhi, size), = tile_grid.boxes(d)
+        self.assertLess(latlo, lathi)
+        self.assertLess(abs(latlo - B * 2 / 3), 5.4)
+        self.assertLess(abs(lonhi - (108 - R)), 8.1)
 
 
 if __name__ == '__main__':

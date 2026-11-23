@@ -12,6 +12,9 @@ the outliers by size.
 import os, struct, sys
 
 
+BOX_OFF = 0x2ac
+
+
 def sgn(v):
     return v - 65536 if v > 32767 else v
 
@@ -24,10 +27,7 @@ def boxes(dirname):
             continue
         path = os.path.join(dirname, f)
         d = open(path, 'rb').read(0x600)
-        i = 0x1e0
-        while i < 0x600 and d[i] == 0xff:
-            i += 1
-        a, b, c, dd = struct.unpack('>HHHH', d[i+6:i+14])
+        a, b, c, dd = struct.unpack_from('>4H', d, BOX_OFF + 6)   # the first row: section 1, level 2
         rows.append((f, int(f[1:3], 16), int(f[4:7], 16),
                      sgn(b) / 60, sgn(a) / 60, sgn(c) / 60, sgn(dd) / 60,
                      os.path.getsize(path)))
