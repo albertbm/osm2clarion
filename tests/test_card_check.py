@@ -27,7 +27,7 @@ class TestEmptyInputs(unittest.TestCase):
 
     def test_run_all_on_nothing(self):
         checks = card_check.run_all({}, {}, {}, {}, {})
-        self.assertEqual(len(checks), 22)
+        self.assertEqual(len(checks), 23)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
 
@@ -485,6 +485,40 @@ class TestTrafficShapes(unittest.TestCase):
         r = card_check.check_traffic_shapes(self.record(1))
         self.assertFalse(r['passed'])
         self.assertEqual((r['counts']['main set'], r['counts']['main']), (1, 3))
+
+
+class TestShapeLinkCodes(unittest.TestCase):
+    def run_rule(self, level, ring, w4):
+        import fa_encode
+        plain = fa_encode.build_record(level, 96, 898, 7, 9, [(100, 100), (300, 300)], [[(1, 0, 1, [])]],
+                                       hws=['primary'], country=352, rings=[ring])[0]
+        graph = dict(nodes=[node(entries=[entry(id=1, cls=0x0494, w4=w4)]), node(entries=[entry(id=0x2001, cls=0x0494, w4=w4)])])
+        if level == 1:
+            return card_check.check_shape_link_codes({(0, 0): graph}, {}, {(0, 0): plain}, {})
+        return card_check.check_shape_link_codes({}, {(0, 0): (graph, None)}, {}, {(0, 0): plain})
+
+    def test_a_ring_shape_over_ring_links_passes(self):
+        for level in (1, 2):
+            r = self.run_rule(level, True, 0x7002)
+            self.assertTrue(r['passed'], r)
+            self.assertEqual(r['counts']['%d:shape links' % level], 1)
+
+    def test_a_plain_shape_over_a_ring_link_fails(self):
+        for level in (1, 2):
+            r = self.run_rule(level, False, 0x7000)
+            self.assertFalse(r['passed'])
+            self.assertEqual(r['counts']['%d:code differs' % level], 1)
+
+    def test_a_ring_shape_over_a_plain_link_fails(self):
+        for level in (1, 2):
+            self.assertFalse(self.run_rule(level, True, 0x0002)['passed'])
+
+    def test_a_shape_link_the_graph_lacks_is_counted_not_failed(self):
+        import fa_encode
+        plain = fa_encode.build_record(1, 96, 898, 7, 9, [(100, 100), (300, 300)], [[(1, 0, 1, [])]], hws=['primary'], country=352)[0]
+        r = card_check.check_shape_link_codes({(0, 0): dict(nodes=[])}, {}, {(0, 0): plain}, {})
+        self.assertTrue(r['passed'])
+        self.assertEqual(r['counts']['1:shape links of no graph link'], 1)
 
 
 class TestHierarchyCodes(unittest.TestCase):

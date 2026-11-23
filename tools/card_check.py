@@ -107,6 +107,19 @@ def load_road_tiles(paths, errors=None):
     return L1, L2, SH1
 
 
+def load_l2_shapes(paths):
+    """{(row, col): plain record} of the level-2 road shapes of tile files or bytes."""
+    out = {}
+    for p in paths:
+        with TileScan(p) as t:
+            for pc, rec in rd_check.shape_records(t, 2).items():
+                try:
+                    out[clarion_bg.parcel_rowcol(2, *pc)] = rec.plain()
+                except Exception:
+                    continue
+    return out
+
+
 def tiles_format(paths):
     """The format of the first tile, or None when there is none: the tiles of a card share one."""
     for p in paths:
@@ -696,6 +709,38 @@ def check_roundabouts(L1, L2, SH1, fmt=None):
     consistent = st['1:ring strings with ring-flagged entries at both ends']
     ok = total_rings == 0 or consistent == total_rings
     return result('roundabouts', ok, st)
+
+
+def check_shape_link_codes(L1, L2, SH1, SH2):
+    """A shape's link code, the top nibble of word 3, is the w4 code of each of its links
+    in the graph, at levels 1 and 2. Factory: 3,812,205 of 3,812,205 level-1 links and
+    187,373 of 187,373 level-2 links on five tiles of both formats, codes 0 to 9."""
+    st = collections.Counter()
+    bad = []
+    l1 = {pc: (w, shapes) for pc, w, shapes in road_shapes(SH1)}
+    l2 = {}
+    for pc, pl in (SH2 or {}).items():
+        try:
+            l2[pc] = (struct.unpack('>%dH' % (len(pl) // 2), pl), fa_encode.parse_record(pl, 2)[2])
+        except Exception:
+            continue
+    for level, recs, drawn in ((1, L1, l1), (2, L2nodes(L2), l2)):
+        for pc, (w, shapes) in drawn.items():
+            if pc not in recs:
+                continue
+            code = {(e['cls'] & 0xf, e['id'] & 0x1fff): e['w4'] >> 12
+                    for n in recs[pc]['nodes'] for e in n['entries'] if not e['cls'] & 0x8000}
+            for S in shapes:
+                for lid in S['links'] if S['length'] else ():
+                    g = code.get((S['cls'], lid & 0x1fff))
+                    if g is None:
+                        st['%d:shape links of no graph link' % level] += 1
+                        continue
+                    st['%d:shape links' % level] += 1
+                    if g != w[S['at'] + 3] >> 12:
+                        st['%d:code differs' % level] += 1
+                        bad.append((level, pc, S['cls'], lid & 0x1fff, w[S['at'] + 3] >> 12, g))
+    return result('shape_link_codes', not bad, st, ['wrong (level, parcel, class, link, shape code, graph code): %r' % bad[:5]])
 
 
 def check_graph_words(L1, L2, lev4, lev5, fmt=None):
@@ -1420,7 +1465,7 @@ def check_road_continuity(drawn, L1, L2, lev4, lev5):
     return result('road_continuity', ok, st, notes)
 
 
-def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=None):
+def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=None, SH2=None):
     out = []
     out.append(check_expansion(L1, L2))
     out.append(check_l2_triple_w4(L1, L2))
@@ -1432,6 +1477,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_l1_link_direction(L1, L2))
     out.append(check_l2_nflags(L2, fmt))
     out.append(check_roundabouts(L1, L2, SH1, fmt))
+    out.append(check_shape_link_codes(L1, L2, SH1, SH2))
     out.append(check_graph_words(L1, L2, lev4, lev5, fmt))
     out.append(check_upper_link_shapes(L1, L2, SH1))
     out.append(check_l2_nodes_on_l1(L1, L2))
@@ -1616,14 +1662,15 @@ def main(argv):
             L1.update(l1); L2.update(l2); SH1.update(sh1)
         levd = load_lev(lev)
         checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(lev),
-                         tiles_format(tiles[k] for k in sorted(tiles)), load_drawn_roads([tiles[k] for k in sorted(tiles)], lev, args.roads))
+                         tiles_format(tiles[k] for k in sorted(tiles)), load_drawn_roads([tiles[k] for k in sorted(tiles)], lev, args.roads),
+                         load_l2_shapes(tiles[k] for k in sorted(tiles)))
         checks.append(check_tiles([c for c in args.cells.split(',') if c], per_tile, errors))
     else:
         errors = collections.Counter()
         L1, L2, SH1 = load_road_tiles(args.tiles, errors)
         levd = load_lev(args.lev)
         checks = run_all(L1, L2, SH1, levd.get(4, {}), levd.get(5, {}), levd.get('origin'), load_lev_shapes(args.lev),
-                         tiles_format(args.tiles), load_drawn_roads(args.tiles, args.lev, args.roads))
+                         tiles_format(args.tiles), load_drawn_roads(args.tiles, args.lev, args.roads), load_l2_shapes(args.tiles))
         checks.append(check_tiles([], {'tiles': (len(L1), len(L2))}, errors))
 
     print_report(os.path.basename(args.card or 'tiles'), checks)
@@ -1633,7 +1680,7 @@ def main(argv):
         L1f, L2f, SH1f = load_road_tiles(args.factory)
         levf = load_lev(args.factory_lev)
         fchecks = run_all(L1f, L2f, SH1f, levf.get(4, {}), levf.get(5, {}), levf.get('origin'), load_lev_shapes(args.factory_lev),
-                          tiles_format(args.factory), load_drawn_roads(args.factory, args.factory_lev))
+                          tiles_format(args.factory), load_drawn_roads(args.factory, args.factory_lev), load_l2_shapes(args.factory))
         print_report('factory (%s)' % ', '.join(os.path.basename(f) for f in args.factory), fchecks)
         report['factory'] = dict(checks=fchecks)
 
