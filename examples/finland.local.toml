@@ -1,4 +1,5 @@
-# Test only: read Finnish addresses from OSM instead of the Ryhti register. Pass it with
-# --local FILE in generate mode; area mode reads the profile alone, so edit [addr] there.
+# Test only: read Finnish addresses from OSM instead of the Ryhti register. build.py reads a
+# local file in generate mode only, and Finland builds in area mode, so copy [addr] into
+# profiles/finland.toml to use it.
 [addr]
 source = "osm"
