@@ -32,6 +32,53 @@ class TestEmptyInputs(unittest.TestCase):
             self.assertTrue(c['passed'], c['name'])
 
 
+class TestExpansion(unittest.TestCase):
+    def run_rule(self, **statuses):
+        walks = [((0, 0), 0, 1, st.replace('_', ' '), 100, 100, [], 7) for st, n in statuses.items() for _ in range(n)]
+        old = card_check.expand_l2_links
+        card_check.expand_l2_links = lambda L1, L2: iter(walks)
+        try: return card_check.check_expansion({}, {})
+        finally: card_check.expand_l2_links = old
+
+    def test_the_factory_share_passes_and_one_more_fails(self):
+        self.assertTrue(self.run_rule(ok=34785, through_another_L2_node=191)['passed'])
+        self.assertFalse(self.run_rule(ok=34784, through_another_L2_node=192)['passed'])
+
+    def test_one_dead_end_fails(self):
+        r = self.run_rule(ok=99999, dead_end=1)
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['dead end'], 1)
+
+
+class TestNodeOrder(unittest.TestCase):
+    @staticmethod
+    def rec(*keys):
+        return dict(nodes=[node(ncls=c, x=x, y=y) for c, x, y in keys])
+
+    def test_class_then_x_then_y_passes(self):
+        a = self.rec((3, 9, 9), (7, 1, 5), (7, 1, 6), (7, 2, 0))
+        self.assertTrue(card_check.check_node_order({(0, 0): (a, None)}, {}, {(0, 0): a}, {(0, 0): (a, None)})['passed'])
+
+    def test_one_level_1_record_out_of_order_fails(self):
+        good, bad = self.rec((7, 1, 5), (7, 2, 0)), self.rec((7, 2, 0), (7, 1, 5))
+        L1 = {(0, k): good for k in range(999)}; L1[1, 0] = bad
+        r = card_check.check_node_order({}, {}, L1, {})
+        self.assertFalse(r['passed'])
+        self.assertEqual(r['counts']['1:ordered'], 999)
+
+    def test_level_2_counts_too(self):
+        bad = self.rec((8, 0, 0), (7, 0, 0))
+        self.assertFalse(card_check.check_node_order({}, {}, {}, {(0, 0): (bad, None)})['passed'])
+
+    def test_coarse_records_pass_at_the_factory_share(self):
+        good, bad = self.rec((7, 1, 5), (7, 2, 0)), self.rec((7, 2, 0), (7, 1, 5))
+        lev4 = {(0, k): (good, None) for k in range(509)}
+        lev4.update({(1, k): (bad, None) for k in range(4)})
+        self.assertTrue(card_check.check_node_order(lev4, {})['passed'])
+        lev4[2, 0] = (bad, None)
+        self.assertFalse(card_check.check_node_order(lev4, {})['passed'])
+
+
 class TestL2Nflags(unittest.TestCase):
     def test_fails_when_l2_has_nodes_but_no_flags(self):
         L2 = {(0, 0): (dict(nodes=[node(nflags=0), node(nflags=0)]), None)}
@@ -174,6 +221,7 @@ class TestCoarseShapes(unittest.TestCase):
         for nd in lev4[0, 0][0]['nodes']: nd['entries'][0]['w5'] = 0x4000
         r = card_check.check_coarse_shapes(lev4, {}, {4: self.shapes(1)})
         self.assertEqual(r['counts']["L4 one-way bits not the link's"], 1)
+        self.assertFalse(r['passed'])
 
     def test_nothing_loaded_passes(self):
         self.assertTrue(card_check.check_coarse_shapes({}, {}, {})['passed'])
@@ -449,6 +497,9 @@ class TestHierarchyCodes(unittest.TestCase):
         self.assertTrue(card_check.check_hierarchy_codes(L1(0x4), {(0, 0): plain})['passed'])
         self.assertTrue(card_check.check_hierarchy_codes(L1(0x7004), {(0, 0): plain})['passed'], 'ring bits aside')
         self.assertFalse(card_check.check_hierarchy_codes(L1(0x2), {(0, 0): plain})['passed'])
+        many = L1(0x4)
+        many[0, 0]['nodes'] += many[0, 0]['nodes'] * 999 + L1(0x2)[0, 0]['nodes']
+        self.assertFalse(card_check.check_hierarchy_codes(many, {(0, 0): plain})['passed'], 'one wrong entry is enough')
         qy7 = card_check.clarion_format.get('x08-02')
         self.assertTrue(card_check.check_hierarchy_codes(L1(0x2), {(0, 0): plain}, qy7)['passed'], 'QY7: 1 for any words')
         self.assertFalse(card_check.check_hierarchy_codes(L1(0x4), {(0, 0): plain}, qy7)['passed'])

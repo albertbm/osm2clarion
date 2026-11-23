@@ -341,10 +341,13 @@ def result(name, ok, counts, notes=()):
     return dict(name=name, passed=bool(ok), counts=dict(counts), notes=list(notes))
 
 
+EXPANSION_BAD = 191 / 34976     # the factory's worst tile, QY7 B60R050R; QY8 B50R068R has 22 of 100,658
+
+
 def check_expansion(L1, L2):
     """Every L2 link unfolds into a continuous, same-class L1 path of about the same
-    length. Factory is not 100%: a through-node/ambiguous class of link is accepted
-    on measured card data, so the threshold is a ratio, not zero."""
+    length. The factory has a few that pass another L2 node or fork on the way, and none
+    that ends in a dead end: 0 of 372,268 links on four tiles of both formats."""
     st = collections.Counter()
     for pc2, k, f, status, l1len, l2len, path, cls in expand_l2_links(L1, L2):
         st['links'] += 1
@@ -355,9 +358,10 @@ def check_expansion(L1, L2):
         st[status] += 1
     total = st['links']
     bad = total - st['ok']
-    ok = total == 0 or bad / total <= 0.03
+    ok = bad <= EXPANSION_BAD * total and not st['dead end']
     return result('expansion', ok, st, [
-        'bad/total = %d/%d (%.2f%%), pass threshold <= 3%%' % (bad, total, 100 * bad / total if total else 0)])
+        'bad/total = %d/%d (%.2f%%), pass at the factory share of %.2f%% and no dead end (%d)'
+        % (bad, total, 100 * bad / total if total else 0, 100 * EXPANSION_BAD, st['dead end'])])
 
 
 def check_l2_triple_w4(L1, L2):
@@ -556,15 +560,19 @@ def check_no_junction_on_parcel_line(L1, L2):
     return result('no_junction_on_parcel_line', bad_total == 0, st, bad)
 
 
-def check_node_order(lev4, lev5):
-    """Nodes within an L4/L5 record are ordered by class, then x, then y.
-    Measured on factory at 509/513 (L4) and 42/42 (L5): close to exact, but no simple
-    key fits every within-class case, so this is a >=95% threshold, not exact -
-    and it is NOT applied to L1/L2, where a direct test here showed the x,y part of the
-    key does not hold (84% on one factory L2 tile); only the LEV-level claim is measured."""
+COARSE_ORDERED = 509 / 513      # QY8 level-4 records in class-then-x order; level 5 has 42 of 42
+
+
+def check_node_order(lev4, lev5, L1=None, L2=None):
+    """Nodes of a record are in class order, and ours by x then y within a class.
+    Factory, class: every level-1 and level-2 record of five tiles in both formats, 509 of
+    513 and 380 of 385 at level 4. QY8 orders a class by x as well (47,192 of 47,192 level-1
+    records with y after it, 1,689 of 1,689 at level 2, 509 of 513 at level 4, y unordered
+    from level 2 up). QY7 does not order a class by x; the writer does on both."""
     st = collections.Counter()
     bad = []
-    for level, recs in ((4, {pc: a for pc, (a, b) in lev4.items()}),
+    for level, recs in ((1, L1 or {}), (2, L2nodes(L2 or {})),
+                        (4, {pc: a for pc, (a, b) in lev4.items()}),
                         (5, {pc: a for pc, (a, b) in lev5.items()})):
         for pc, a in recs.items():
             keys = [(n['ncls'], n['x'], n['y']) for n in a['nodes']]
@@ -573,9 +581,10 @@ def check_node_order(lev4, lev5):
                 st['%d:ordered' % level] += 1
             elif len(bad) < 10:
                 bad.append((level, pc))
-    total = sum(v for k, v in st.items() if k.endswith('records'))
-    ordered = sum(v for k, v in st.items() if k.endswith('ordered'))
-    return result('node_order', total == 0 or ordered / total >= 0.95, st, bad)
+    fine = sum(st['%d:ordered' % lv] == st['%d:records' % lv] for lv in (1, 2))
+    coarse = st['4:records'] + st['5:records']
+    ok = fine == 2 and st['4:ordered'] + st['5:ordered'] >= COARSE_ORDERED * coarse
+    return result('node_order', ok, st, bad)
 
 
 def check_l1_link_direction(L1, L2):
@@ -939,8 +948,8 @@ def check_hierarchy_codes(L1, SH1, fmt=None):
                     continue
                 st['entries'] += 1
                 st['code is not the word count'] += (e['w4'] >> 1 & 3) != (n if count else min(n, 1))
-    return result('hierarchy_codes', st['code is not the word count'] <= 0.005 * st['entries'], st,
-                  ['link entries whose w4 code is not %s: %d (factory 0, pass at 0.5%%)'
+    return result('hierarchy_codes', not st['code is not the word count'], st,
+                  ['link entries whose w4 code is not %s: %d (factory 0 of 7,573,540 on four tiles, pass at none)'
                    % ('their shape\'s word count' if count else '1 under a shape with words, else 0', st['code is not the word count'])])
 
 
@@ -994,19 +1003,26 @@ def check_coarse_link_words(L1, L2, SH1, lev4, lev5, origin):
         st['L%d links' % lv] += 1
         st['L%d %s' % (lv, status)] += 1
     n = st['L4 links'] + st['L5 links']
-    ok = (st['words out of order'] <= 0.001 * st['shapes with words']
-          and st['L4 names of no link'] + st['L5 names of no link'] <= 0.02 * n
-          and st['L4 backwards'] + st['L5 backwards'] <= 0.005 * n
-          and st['L4 not named'] <= 0.15 * st['L4 links'])
+    # factory, QY7 B60R050R and QY8 B50R068R: no words out of order on 136,011 shapes, no name
+    # of no link, none backwards; 852 of 9,067 level-4 links unnamed on the QY8 tile, 0 on the other
+    ok = (not st['words out of order']
+          and not st['L4 names of no link'] + st['L5 names of no link']
+          and not st['L4 backwards'] + st['L5 backwards']
+          and st['L4 not named'] <= 852 / 9067 * st['L4 links'])
     return result('coarse_link_words', ok, st,
-                  ['level-4 links no level-1 shape names: %d of %d (want 15%% or less); coarse links with a shape drawn backwards: %d (want 0.5%% or less)'
+                  ['level-4 links no level-1 shape names: %d of %d (want the factory share of 9.4%% or less); coarse links with a shape drawn backwards: %d (want none)'
                    % (st['L4 not named'], st['L4 links'], st['L4 backwards'] + st['L5 backwards'])])
 
 
 LINK_POINTS = 32          # the most one coarse link has on the factory card
+# the stock cards' own shares, levels 4 and 5 together: QY8 (796,572 links) and QY7 (547,701)
+LOOSE = 335 / 796572      # links without a shape, shapes without a link; QY7 224
+APART = 416 / 547701      # shape links not between their link's nodes; QY8 329
+NO_LEVEL5_WORD = 8 / 138453   # level-4 shapes without or with a wrong level-5 word; QY8 1 of 198,137
+WRONG_WAY = {False: 11 / 547701, True: 12283 / 796572}   # one-way bits not the link's, QY7 and QY8
 
 
-def check_coarse_shapes(lev4, lev5, coarse):
+def check_coarse_shapes(lev4, lev5, coarse, fmt=None):
     """The level-4 and level-5 road shapes are the graph's links, drawn: every graph link has
     a shape link of its class and id running between its two nodes and every shape link a
     graph link, so no road the graph carries has a gap. A level-4 shape names its level-5
@@ -1061,15 +1077,16 @@ def check_coarse_shapes(lev4, lev5, coarse):
     words = st['L4 shapes not naming their level-5 link'] + st['L4 shapes naming no level-5 link']
     numbered = st['L4 with a route number'] >= 0.4 * st['L4 numbered-class links']
     ways = st['L4 one-way bits not the link\'s'] + st['L5 one-way bits not the link\'s']
-    ok = (loose <= 0.002 * n and apart <= 0.005 * n and words <= 0.005 * max(1, st['L4 links level 5 has'])
-          and st['class runs'] <= 2 * st['classes in a layer'] and numbered and ways <= 0.02 * n
+    wrong_way = WRONG_WAY[fmt is None or fmt.level_count]
+    ok = (loose <= LOOSE * n and apart <= APART * n and words <= NO_LEVEL5_WORD * st['L4 links level 5 has']
+          and st['class runs'] <= 2 * st['classes in a layer'] and numbered and ways <= wrong_way * n
           and not st['links of more than %d points' % LINK_POINTS])
     return result('coarse_shapes', ok, st,
-                  ['links without a shape or shapes without a link: %d of %d (want 0.2%% or less); not node to node: %d (0.5%%)' % (loose, n, apart),
-                   'level-4 shapes without or with a wrong level-5 word: %d of %d (want 0.5%% or less)' % (words, st['L4 links level 5 has']),
+                  ['links without a shape or shapes without a link: %d of %d (want %.3f%% or less); not node to node: %d (%.3f%%)' % (loose, n, 100 * LOOSE, apart, 100 * APART),
+                   'level-4 shapes without or with a wrong level-5 word: %d of %d (want %.3f%% or less)' % (words, st['L4 links level 5 has'], 100 * NO_LEVEL5_WORD),
                    'class runs %d for %d classes in their layers (want at most two a class)' % (st['class runs'], st['classes in a layer']),
                    'links drawn with more than %d points: %d (want none)' % (LINK_POINTS, st['links of more than %d points' % LINK_POINTS]),
-                   'shape links whose one-way bits are not the graph link\'s: %d (want 2%% or less)' % ways,
+                   'shape links whose one-way bits are not the graph link\'s: %d (want %.3f%% or less)' % (ways, 100 * wrong_way),
                    'level-4 links of classes 3 to 5 with a route number: %d of %d (want 40%% or more)' % (st['L4 with a route number'], st['L4 numbered-class links'])])
 
 
@@ -1411,7 +1428,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_l2_edge_triples(L2))
     out.append(check_l2_block_order(L2))
     out.append(check_no_junction_on_parcel_line(L1, L2))
-    out.append(check_node_order(lev4, lev5))
+    out.append(check_node_order(lev4, lev5, L1, L2))
     out.append(check_l1_link_direction(L1, L2))
     out.append(check_l2_nflags(L2, fmt))
     out.append(check_roundabouts(L1, L2, SH1, fmt))
@@ -1423,7 +1440,7 @@ def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=N
     out.append(check_hierarchy_codes(L1, SH1, fmt))
     out.append(check_length_time_units(L1, L2))
     out.append(check_coarse_graph_present(L2, lev4, lev5))
-    out.append(check_coarse_shapes(lev4, lev5, coarse))
+    out.append(check_coarse_shapes(lev4, lev5, coarse, fmt))
     out.append(check_coarse_ring_codes(lev4, lev5, coarse))
     out.append(check_level3_direction(coarse))
     out.append(check_road_continuity(drawn, L1, L2, lev4, lev5))
