@@ -43,6 +43,7 @@ def to_geojson(feats):
     return dict(type='FeatureCollection', features=out)
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     d = open(sys.argv[1], 'rb').read()
     gj = to_geojson(decode_tile(d))
     json.dump(gj, open(sys.argv[2], 'w'))

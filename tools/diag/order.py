@@ -13,6 +13,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from fatread import Fat
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 BYTES_READ = [0]
 _orig = Fat.rd
 def rd(self, off, n):

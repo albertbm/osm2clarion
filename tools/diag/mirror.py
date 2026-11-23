@@ -12,6 +12,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from fatread import Fat32
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 img, out = sys.argv[1], sys.argv[2]
 os.makedirs(out, exist_ok=True)
 nd = nf = 0

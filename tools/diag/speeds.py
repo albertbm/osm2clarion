@@ -8,6 +8,9 @@ sys.path.insert(0, os.path.dirname(HERE))
 from tile_scan import TileScan
 import clarion_rd
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 def run(path, lab):
     for lev in (1, 2):
         sp=[]; am=collections.Counter(); bn=collections.Counter(); amax=bmax=0

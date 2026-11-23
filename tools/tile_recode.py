@@ -61,6 +61,7 @@ def sha(path):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     if len(sys.argv) != 3:
         sys.exit(__doc__)
     src, out = sys.argv[1:]

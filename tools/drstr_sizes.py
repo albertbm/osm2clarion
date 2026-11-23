@@ -41,6 +41,7 @@ def set_sizes(d, dirname, sizes):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     src, dest, args = sys.argv[1], sys.argv[2], sys.argv[3:]
     d = open(src, 'rb').read()
     while args:

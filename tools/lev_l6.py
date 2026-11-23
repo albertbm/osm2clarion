@@ -121,4 +121,5 @@ def main():
     print(f'level 6: box x {x0}..{x1} -> {nx0}..{x1}, record {len(pl)} -> {len(new_pl)} bytes at {pos:#x}, sea shapes added {added}, code {[hex(v) for v in rec["hdr"][:2]]}')
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     main()

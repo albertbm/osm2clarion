@@ -57,6 +57,7 @@ class Pass2(osmium.SimpleHandler):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     src, dest = sys.argv[1], sys.argv[2]
     p1 = Pass1(); p1.apply_file(src)
     p2 = Pass2(p1.want); p2.apply_file(src)

@@ -11,6 +11,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import lev_coarse
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 which = sys.argv[1]
 cb = importlib.import_module('clarion_bg_old' if which == 'old' else 'clarion_bg')
 print('clarion_bg: %s' % cb.__file__)

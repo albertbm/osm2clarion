@@ -26,5 +26,6 @@ def sha256(path):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     for p in sys.argv[1:]:
         print('%s  %s' % (sha256(p), p))

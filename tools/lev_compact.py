@@ -76,4 +76,5 @@ def main():
     print(f'{len(d)} -> {len(out)} bytes, {kept} blocks')
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     main()

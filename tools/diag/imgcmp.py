@@ -7,6 +7,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from fatread import Fat32
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 def take(p):
     with Fat32(p) as fs:
         out = {}

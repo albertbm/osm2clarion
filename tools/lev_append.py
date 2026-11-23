@@ -111,4 +111,5 @@ def main():
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     main()

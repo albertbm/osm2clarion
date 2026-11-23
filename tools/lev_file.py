@@ -219,6 +219,7 @@ def first_diff(a, b):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     args = sys.argv[1:]
     if args[:1] != ['--check']:
         sys.exit(__doc__)

@@ -48,6 +48,8 @@ import cardcopy  # noqa: E402
 import cards_log  # noqa: E402
 from card_scope import SCOPE, card_files, cmp_lst, drstr_check  # noqa: E402
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
 _CONFIG_FILE = os.path.abspath(os.path.expanduser(_config_path()))
 CONFIG = json.load(open(_CONFIG_FILE))
 CARDS = os.environ.get('CARDS_DIR', os.path.join(OSM_ROOT, 'cards'))   # build.py sets it from --out

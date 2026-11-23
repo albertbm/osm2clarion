@@ -178,6 +178,7 @@ def decode_code(code):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     argv = sys.argv[1:]
     side = None
     if '--sidecar' in argv:

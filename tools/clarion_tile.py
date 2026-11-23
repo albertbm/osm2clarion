@@ -190,6 +190,7 @@ def write_tile(t, order=None):
     return bytes(out)
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     import sys
     for fn in sys.argv[1:]:
         d = open(fn, 'rb').read()

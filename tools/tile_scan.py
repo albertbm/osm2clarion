@@ -185,6 +185,7 @@ class TileScan:
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     import sys, collections
     for path in sys.argv[1:]:
         with TileScan(path) as t:

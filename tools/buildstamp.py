@@ -268,6 +268,7 @@ def save_diff_if_dirty(repo, dest_path):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     import sys
     if len(sys.argv) >= 2 and sys.argv[1] == 'post-step':
         # post-step <manifest.json> <name> <args text> <image>

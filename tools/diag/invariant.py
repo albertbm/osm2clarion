@@ -8,6 +8,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 import clarion_tile, clarion_bg
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 for fn in sys.argv[1:]:
     d = open(fn, 'rb').read()
     t = clarion_tile.read_tile(d)

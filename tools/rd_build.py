@@ -1504,4 +1504,5 @@ def place_shapes(recs, bydir, level=1):
 place_shapes.untouched = place_shapes.blank = place_shapes.lost = 0
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     main()

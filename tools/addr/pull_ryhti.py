@@ -110,6 +110,9 @@ def pull(out, bbox, get=fetch):
 
 
 if __name__ == '__main__':
+    import os, sys
+    sys.path.append(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
+    import cli_help; cli_help.help_exit(__doc__)
     if len(sys.argv) != 6:
         sys.exit(__doc__)
     pull(sys.argv[1], ','.join(sys.argv[2:6]))

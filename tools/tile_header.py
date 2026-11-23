@@ -125,6 +125,7 @@ def check(h):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     if sys.argv[1:2] != ['--check']:
         sys.exit(__doc__)
     bad = 0

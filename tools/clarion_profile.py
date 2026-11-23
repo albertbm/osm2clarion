@@ -181,6 +181,7 @@ def take_arg(argv, flag='--profile'):
 
 
 if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
     P = load(sys.argv[1] if len(sys.argv) > 1 else 'iceland')
     print(P)
     for k in ('description', 'country', 'format', 'coastline', 'roads', 'cells', 'bounds', 'mesh_origin',

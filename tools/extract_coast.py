@@ -5,7 +5,10 @@ Needs osmium, which nothing else in the chain does.
 
     ./extract_coast.py iceland-latest.osm.pbf coast_iceland.json
 """
-import osmium, json, sys
+import json, sys
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+import osmium
 class H(osmium.SimpleHandler):
     def __init__(self): super().__init__(); self.ways = []
     def way(self, w):

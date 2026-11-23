@@ -7,6 +7,9 @@ sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.dirname(HERE))
 from tile_scan import TileScan
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 a, b = sys.argv[1], sys.argv[2]
 def grab(p):
     with TileScan(p) as t:

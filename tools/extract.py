@@ -6,6 +6,9 @@ import sys, struct, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fatread import Fat
 
+if __name__ == '__main__':
+    import cli_help; cli_help.help_exit(__doc__)
+
 img, path, dest = sys.argv[1], sys.argv[2], sys.argv[3]
 f = Fat(img); f.open_part(f.parts[0][2])
 clus, size = None, None
