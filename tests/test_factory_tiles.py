@@ -3,10 +3,10 @@
 
     OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_QY7_TILE=B58R050R.DAT python3 -m unittest tests.test_factory_tiles
 """
-import os, sys, unittest
+import os, struct, sys, unittest
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
-import clarion_rd, rd_check
+import clarion_format, clarion_rd, clarion_tile, rd_check
 from tile_scan import TileScan
 
 QY8_ENV, QY7_ENV = 'OSM2CLARION_FACTORY_TILE', 'OSM2CLARION_QY7_TILE'
@@ -52,6 +52,32 @@ class LinkSize(unittest.TestCase):
                         bad += bool(rec.get('error')) or len(rec['nodes']) != rec['nnodes'] or rec['consumed'] != rec['unit_len']
                     self.assertGreater(n, 0, path)
                     self.assertEqual(bad, 0, '%s level %d' % (path, level))
+
+
+class ExtendedSlots(unittest.TestCase):
+    def test_flagged_pair_and_its_extra_record(self):
+        """An extended slot: the road pair has bit 31, the next two pairs size one extra record."""
+        fmt = clarion_format.X08_02
+        main, sub = fmt.deflate(b'ab' * 40), fmt.deflate(b'cd' * 12)
+        body = struct.pack('>II', 0x80000000 | len(main) // 2, 40)
+        body += struct.pack('>4H', len(sub) // 2, 0xffff, 0xffff, 0xffff) + struct.pack('>4H', 12, 0, 0, 0)
+        body += b'\xff' * (1024 - len(body))
+        block = 0x1000
+        d = bytes(block) + main + sub
+        head = struct.pack('>6H', 0x2146, 32, 32, 90, 30, 0x92)
+        d = head + struct.pack('>I', clarion_tile.enc_addr(block)) + body + d[12 + 4 + 1024:]
+        D = clarion_tile.read_dir(d, 0, box=(0, 0, 0, 0), nslots=1, section=1, typ=0x92, fmt=fmt, wide=True)
+        s = D['slots'][0]
+        self.assertTrue(s['ext'])
+        self.assertEqual([(r['k'], r.get('sub', 0), r['raw']) for r in s['recs']], [(0, 0, main), (0, 1, sub)])
+        self.assertEqual(clarion_tile.dir_size(D), 12 + 4 + 1024)
+        self.assertEqual(clarion_tile.dir_bytes(D, {0: block}), d[:12 + 4 + 1024])
+
+    @needs_tile()
+    def test_factory_tile_round_trips(self):
+        for path in tiles():
+            with open(path, 'rb') as f: d = f.read()
+            self.assertTrue(clarion_tile.write_tile(clarion_tile.read_tile(d)) == d, path)
 
 
 if __name__ == '__main__':

@@ -3,6 +3,7 @@
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import clarion_format
+from tile_scan import ABSENT, EXT_BYTES, is_extended
 
 SLOTS = 32
 LEVEL_OFF, BBOX_OFF, SECT_OFF, TABLE1_OFF = 0x1ac, 0x2ac, 0x800, 0x1000
@@ -46,7 +47,7 @@ def read_tile(d):
                 for k in range(gcnt):
                     y1, y0, x0, x1, z, tg = w[o+2+6*k:o+8+6*k]
                     D = read_dir(d, addr_of((z << 16) | tg), box=(y1, y0, x0, x1), nslots=16 if level == 3 else SLOTS,
-                                section=sid, typ=typ, fmt=fmt)
+                                section=sid, typ=typ, fmt=fmt, wide=level in (1, 2))
                     di = len(L['dirs']); L['dirs'].append(D)
                     t['order'].append((D['off'], 'dir', si, li, di))
                     if D['slots']:
@@ -58,32 +59,58 @@ def read_tile(d):
     t['order'].sort()
     return t
 
-def read_dir(d, off, box, nslots=SLOTS, section=1, typ=None, fmt=clarion_format.DEFAULT):
-    """typ is the level's type from the level table, which decides the slot body size."""
+def read_dir(d, off, box, nslots=SLOTS, section=1, typ=None, fmt=clarion_format.DEFAULT, wide=False):
+    """typ is the level's type from the level table, which decides the slot body size.
+    wide: the level may hold extended slots (tile_scan.is_extended). Such a slot has 'ext'
+    set and a longer body, and a record after a flagged road pair carries 'sub' 1 to 4."""
     kind, a, b, y, x, dtyp = struct.unpack_from('>HHHHHH', d, off)
     body = clarion_format.slot_body(section, typ)   # not the kind word; 0x2146/0x2346 are section 1 too
     D = dict(off=off, kind=kind, ab=(a, b), y=y, x=x, typ=dtyp, box=box, body=body, slots={}, nslots=nslots)
     p = off + 12
     for i in range(nslots):
-        tag = struct.unpack_from('>I', d, p)[0]
-        raw = d[p+4:p+4+body]
+        tag, ln0, x0 = struct.unpack_from('>III', d, p)
+        ext = wide and bool(is_extended(ln0, x0))
+        size = body + (EXT_BYTES if ext else 0)
+        raw = d[p+4:p+4+size]
         if tag != 0xffffffff:
-            words = struct.unpack_from('>%dI' % (body//4), raw)
+            words = struct.unpack_from('>%dI' % (size//4), raw)
             recs = []
             q = addr_of(tag)
-            for k in range(body//8):
+            per = (4 if section == 1 else 3) if ext else 1
+            k = 0
+            while k < size//8:
                 ln, X = words[2*k], words[2*k+1]
-                if ln in (0xffffffff, 0x7fffffff): continue
-                # zlib records: ln = compressed words, X = inflated words.
-                # raw records (no zlib magic): two parts of ln and X words.
-                n = 2*ln if fmt.is_zlib(d[q:q+2]) else 2*(ln + X)
-                recs.append(dict(k=k, raw=d[q:q+n], words=X)); q += n
+                lead = ext and k % per == 0
+                if ln not in ABSENT:
+                    flagged = wide and ln >> 31
+                    if wide: ln &= 0x7fffffff
+                    # zlib records: ln = compressed words, X = inflated words.
+                    # raw records (no zlib magic): two parts of ln and X words.
+                    n = 2*ln if fmt.is_zlib(d[q:q+2]) else 2*(ln + X)
+                    recs.append(dict(k=k, raw=d[q:q+n], words=X)); q += n
+                    if lead and flagged:
+                        lens = struct.unpack_from('>4H', raw, 8*(k+1))
+                        subw = struct.unpack_from('>4H', raw, 8*(k+2))
+                        for j in range(4):
+                            if lens[j] == 0xffff: continue
+                            n = 2*lens[j] if fmt.is_zlib(d[q:q+2]) else 2*(lens[j] + subw[j])
+                            recs.append(dict(k=k, sub=j+1, raw=d[q:q+n], words=subw[j])); q += n
+                k += 3 if lead else 1
             D['slots'][i] = dict(tag=tag, body=raw, recs=recs, block_off=addr_of(tag), block_end=q)
+            if ext: D['slots'][i]['ext'] = True
         else:
             D.setdefault('empty_bodies', {})[i] = raw
-        p += 4 + body
+        p += 4 + size
     D['end'] = p
     return D
+
+def dir_size(D):
+    """Bytes of a directory: its header, then a tag and a body per slot, an extended slot's body being longer."""
+    n = 12
+    for i in range(D.get('nslots', SLOTS)):
+        s = D['slots'].get(i)
+        n += 4 + (len(s['body']) if s else len(D.get('empty_bodies', {}).get(i, b'')) or D['body'])
+    return n
 
 def dir_bytes(D, slot_addrs):
     out = bytearray(struct.pack('>HHHHHH', D['kind'], *D['ab'], D['y'], D['x'], D['typ']))
@@ -127,7 +154,7 @@ def write_tile(t, order=None):
             where[o[1:]] = pos; pos = pad256(pos + 2*nw)
         elif kind == 'dir':
             D = t['sections'][o[2]]['levels'][o[3]]['dirs'][o[4]]
-            where[o[1:]] = pos; pos = pad256(pos + 12 + D.get('nslots', SLOTS)*(4 + D['body']))
+            where[o[1:]] = pos; pos = pad256(pos + dir_size(D))
         else:
             D = t['sections'][o[2]]['levels'][o[3]]['dirs'][o[4]]
             for i in sorted(D['slots']):
