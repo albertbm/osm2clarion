@@ -192,6 +192,9 @@ class TestLevel2Chains(unittest.TestCase):
         west['full'] = [q, (-21.8995, 64.1301), p]
         links = next(iter(rd_build.build_graphs([east, west], 'B60R080R', 2, True).values()))['links']
         self.assertEqual(sorted(l[3] for l in links), [1, 2, 2], 'the side simplify left no point is cut at one it took')
+        del west['full']; east['full'] = [p, (-21.8995, 64.1299), q]
+        links = next(iter(rd_build.build_graphs([east, west], 'B60R080R', 2, True).values()))['links']
+        self.assertEqual(sorted(l[3] for l in links), [1, 1, 2], 'whichever side has a point to cut at is the one cut')
 
 
     def test_level2_keeps_junctions_of_one_unit_apart(self):

@@ -281,17 +281,22 @@ def build_graphs(ways, cell, level=1, chain=True, force=frozenset()):
                     if part[0][0] != part[-1][0]: cands.append((part, wy, rid))
         del P['runs'], P['touch'], P['touch_pts']
         # Two links between one pair of nodes: a crescent that leaves a street and comes back
-        # to it, or the two sides of a split road. The shortest stays whole and each other
-        # one is cut at a middle point, which becomes a node, so both roads are on the map.
-        # One with no point to cut at is the same path twice and is dropped.
+        # to it, or the two sides of a split road. One stays whole and each other one is cut
+        # at a middle point, which becomes a node, so both roads are on the map. The one that
+        # stays is one with no point to cut at, else the shortest. A second with no point
+        # is the same path twice and is dropped.
         pairs = collections.defaultdict(list)
         for i, (part, wy, rid) in enumerate(cands):
             pairs[frozenset((part[0][0], part[-1][0]))].append(i)
         def length(part): return sum(dist(part[j][1], part[j + 1][1]) for j in range(len(part) - 1))
+        def has_middle(i, ends):
+            part, wy, _ = cands[i]
+            inner = part[1:-1] if len(part) > 2 else dropped_point(part, wy, pc, level, ends)
+            return any(key not in ends for key, _ in inner)
         cut_at = {}
         for ends, idx in pairs.items():
             if len(idx) == 1: continue
-            short = min(idx, key=lambda i: length(cands[i][0]))
+            short = min(idx, key=lambda i: (has_middle(i, ends), length(cands[i][0])))
             for i in idx:
                 if i == short: continue
                 part = cands[i][0]
