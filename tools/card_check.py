@@ -377,15 +377,19 @@ def check_expansion(L1, L2):
         % (bad, total, 100 * bad / total if total else 0, 100 * EXPANSION_BAD, st['dead end'])])
 
 
-def check_l2_triple_w4(L1, L2):
-    """L2 part-B link triples: w4 is a real entry of the L1 child the triple names
-    Factory is 100%."""
+def check_l2_triple_w4(L1, L2, fmt=None):
+    """L2 part-B link triples: w4 is a real entry of the L1 child the triple names, in the
+    child's own cell. Factory QY8 is 100%. QY7 has a second form where the child is an edge
+    node and the link runs on across the line: the next parcel's cell and the node at the
+    child's point there (4,539 of 4,539 triples with a foreign cell on B60R050R and B50R068R)."""
+    across = fmt is not None and fmt.next_across
     st = collections.Counter()
     bad = []
     for pc, (a, b) in L2.items():
         for x in b['nodes']:
             k = x['upper'] & 0x3fff
-            own1 = L1.get((pc[0] * 4 + (x['parcel'] >> 14), pc[1] * 4 + (x['parcel'] >> 6 & 3)))
+            own_pc = (pc[0] * 4 + (x['parcel'] >> 14), pc[1] * 4 + (x['parcel'] >> 6 & 3))
+            own1 = L1.get(own_pc)
             cn = own1['nodes'][x['child']] if own1 and x['child'] < len(own1['nodes']) else None
             if k >= len(a['nodes']):
                 continue
@@ -393,6 +397,15 @@ def check_l2_triple_w4(L1, L2):
                 if e['cls'] & 0x8000:
                     continue
                 st['link'] += 1
+                if across and cn is not None and w2 != x['parcel']:
+                    there = (pc[0] * 4 + (w2 >> 14), pc[1] * 4 + (w2 >> 6 & 3))
+                    n = L1[there]['nodes'][w4] if there in L1 and w4 < len(L1[there]['nodes']) else None
+                    twin = (n is not None and l1_units(there, n['x'], n['y']) == l1_units(own_pc, cn['x'], cn['y'])
+                            and any(z['cls'] & 0x8000 and z['other'] & 0x3fff == w4 for z in cn['entries']))
+                    st['names the twin across a parcel line'] += twin
+                    if not twin:
+                        bad.append((pc, k, x['child'], w2, w4))
+                    continue
                 st['w2==own cell'] += w2 == x['parcel']
                 if cn is None:
                     st['child unresolved'] += 1
@@ -402,8 +415,8 @@ def check_l2_triple_w4(L1, L2):
                 st['w4 adjacent to own L1 child'] += ok
                 if not ok:
                     bad.append((pc, k, x['child'], w4))
-    passed = st['link'] == 0 or (st['w4 adjacent to own L1 child'] == st['link'] and
-                                  st['w2==own cell'] == st['link'])
+    plain = st['link'] - st['names the twin across a parcel line']
+    passed = not bad and st['w4 adjacent to own L1 child'] == plain and st['w2==own cell'] == plain
     return result('l2_triple_w4', passed, st, ['bad examples: %r' % bad[:5]])
 
 
@@ -1468,7 +1481,7 @@ def check_road_continuity(drawn, L1, L2, lev4, lev5):
 def run_all(L1, L2, SH1, lev4, lev5, origin=None, coarse=None, fmt=None, drawn=None, SH2=None):
     out = []
     out.append(check_expansion(L1, L2))
-    out.append(check_l2_triple_w4(L1, L2))
+    out.append(check_l2_triple_w4(L1, L2, fmt))
     out.append(check_edges(L1, L2, lev4, lev5))
     out.append(check_l2_edge_triples(L2))
     out.append(check_l2_block_order(L2))

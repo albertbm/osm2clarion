@@ -350,8 +350,8 @@ holds a rule for each unless noted.
   runs on across the line, the triple names the node at the same point in the next parcel,
   with that parcel's cell word: 2,348 of 34,976 triples on B60R050R and 2,191 of 182,194 on
   B50R068R, every triple whose cell word is not the node's own. QY8 has none (0 of 54,440 on
-  B58R060R). The writer puts no level-2 node on a level-1 line and writes the node's own
-  cell on both. No card rule for the QY7 form.
+  B58R060R). The writer does the same on QY7 where a level-2 node lands on a level-1 line
+  (`Format.next_across`), and `l2_triple_w4` accepts that form on QY7 only.
 - Level-2 part B, edge triples. An edge triple carries the far node's own block: its
   cell word and level-1 child (31,826 of 31,826 on four QY7 tiles, 5,324 of 5,324 on four
   QY8 tiles).

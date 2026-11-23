@@ -305,7 +305,8 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
             else:
                 # factory: w4 is the L1 node next along the link from the twin (36,326/36,326 on B30R070R)
                 assert nxt is not None or not l1_next, 'node %d has a link with no level-1 node next along it' % pos_of[old]
-                pb += [other, cw, other if nxt is None else nxt]
+                # a (cell, node) pair is the twin across a level-1 parcel line, in that parcel (Format.next_across)
+                pb += [other, *nxt] if isinstance(nxt, tuple) else [other, cw, other if nxt is None else nxt]
     pb += [hdr[0], hdr[1]]
     partb, _ = record_head(level, y0, x0, row, col, [(0xffffffff, 0), (0x1b, len(pb))], country)
     partb += struct.pack('>%dH' % len(pb), *pb)

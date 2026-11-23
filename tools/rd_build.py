@@ -791,7 +791,8 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to, link=None):
     """The L1 node next along an L2 link from its end's L1 twin: the far end of the twin's L1
     link under that L2 link (class, id). Factory: 344,147 of 344,147 link ends on five tiles
     of both formats, where heading alone names another node on 2%. A twin with no such link
-    takes the neighbour that heads the L2 link's way."""
+    takes the neighbour that heads the L2 link's way. Returns the node's index, or on QY7
+    (cell word, index) for the twin across a parcel line."""
     if pair is None or l1_adj is None: return None
     cell, idx = pair
     # L1 directories are one mesh unit, L2's four (l1_twin): rebase the absolute L1 address
@@ -800,6 +801,14 @@ def l1_next_node(pair, pc, l1_adj, geo_from, geo_to, link=None):
     if not nbrs: return None
     own = [n for n in nbrs if link is not None and n[2] == link]
     if len(own) == 1: return own[0][0]
+    if not own and link is not None and FMT.next_across:
+        # the twin is an edge node and the link runs on across the line: QY7 names the node at the
+        # same point in the next parcel, with that parcel's cell (4,539 of 4,539 such factory triples)
+        for twin, _, _, npc in nbrs:
+            if not npc: continue
+            row, col = npc[0] * 32 + npc[2] - pc[0] * 32 - pc[2] * 4, npc[1] * 32 + npc[3] - pc[1] * 32 - pc[3] * 4
+            if 0 <= row < 4 and 0 <= col < 4 and any(m[2] == link for m in l1_adj.get(npc, {}).get(twin, ())):
+                return (row << 14) | (col << 6), twin
     if not own and link is not None: l1_next_node.by_heading += 1
     k = math.cos(math.radians(geo_from[1]))
     dx, dy = (geo_to[0] - geo_from[0]) * k, geo_to[1] - geo_from[1]
@@ -814,6 +823,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                    l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None, coarse=False, l2_keys=frozenset()):
     out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.regs_covered = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
+    encode_parcels.l1_next_across = 0
     encode_parcels.unpaired = []
     encode_parcels.index = {}; encode_parcels.signposts = {}
     for pc, P in parcels.items():
@@ -868,6 +878,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                 l1_next.append((l1_next_node(l1_pair[idx[a]], pc, l1_adj, ga, gb, link),
                                 l1_next_node(l1_pair[idx[b]], pc, l1_adj, gb, ga, link)))
             encode_parcels.l1_next_missing += sum(x is None for pair in l1_next for x in pair)
+            encode_parcels.l1_next_across += sum(isinstance(x, tuple) for pair in l1_next for x in pair)
         # the factory marks a roundabout ring's own links (not its approach/exit spokes) with
         # w4's top 3 bits all set, both ends alike, at both L1 and L2, measured on the Koln
         # and UK factory tiles, never on a plain one-way link's entries
@@ -1141,15 +1152,16 @@ def main():
         upper = upper_links(ways, l2_parcels, parcels, set(l2)) if level == 1 else coarse_runs(parcels) if coarse else None
         turned = follow_upper(parcels, upper, upper_links.against) if level == 1 else 0
         if level == 1:
-            # per node: (neighbour, its place, the (class, id) of the level-2 link over the link between)
+            # per node: (neighbour, its place, the (class, id) of the level-2 link over the link between, None),
+            # and for the twin across a parcel line (twin, its place, None, its parcel)
             for pc, P in parcels.items():
                 if P['ring']: continue   # indexed above all the same: a twin across the cell line pairs with a ring node
                 adj = l1_adj.setdefault(pc, {})
                 for l, up in zip(P['links'], upper[pc]):
                     a, b = l[0], l[1]
                     over = (fa_encode.layer_class(l[5], 1)[1], up) if up is not None else None
-                    adj.setdefault(P['index'][a], []).append((P['index'][b], P['nodes'][b]['geo'], over))
-                    adj.setdefault(P['index'][b], []).append((P['index'][a], P['nodes'][a]['geo'], over))
+                    adj.setdefault(P['index'][a], []).append((P['index'][b], P['nodes'][b]['geo'], over, None))
+                    adj.setdefault(P['index'][b], []).append((P['index'][a], P['nodes'][a]['geo'], over, None))
                 # the parcel-edge twin, same point: chosen only when the node has no real link
                 for key, nd in P['nodes'].items():
                     if not nd['edge']: continue
@@ -1157,7 +1169,7 @@ def main():
                     tw = (0 if nd['edge'] == 'right' else 2047 if nd['edge'] == 'left' else gx,
                           0 if nd['edge'] == 'top' else 2047 if nd['edge'] == 'bottom' else gy)
                     twin = parcels[npc]['index'].get(tw) if npc in parcels else None
-                    if twin is not None: adj.setdefault(P['index'][key], []).append((twin, nd['geo'], None))
+                    if twin is not None: adj.setdefault(P['index'][key], []).append((twin, nd['geo'], None, npc))
         regs, tstats = map_turns(parcels, turns, level) if (turns and level == 1) else ({}, None)
         recs = encode_parcels(parcels, level, no_names=(level == 2 and no_l2_names), chain=chain, regs=regs,
                               oneway_regs=oneway_regs, l2_geo=(l2_geo if level == 1 else None),
@@ -1214,6 +1226,7 @@ def main():
                           f'across the edge, left without an edge entry')
         if level == 2:
             report.append(f'level 2: link ends without an L1 next node {encode_parcels.l1_next_missing}, '
+                          f'named across a level-1 parcel line {encode_parcels.l1_next_across}, '
                           f'named by heading for want of a level-1 link of theirs at the twin {l1_next_node.by_heading}')
             report.append(f'level 2: L1 twins by nearest node {encode_parcels.l1_near} (max {l1_nearest.max_m:.1f} m, '
                           f'{l1_nearest.other_way} on another road), '

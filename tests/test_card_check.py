@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'tools'))
 
 import card_check
+import clarion_format
 
 
 def node(ncls=0, x=0, y=0, nflags=0, entries=()):
@@ -30,6 +31,30 @@ class TestEmptyInputs(unittest.TestCase):
         self.assertEqual(len(checks), 23)
         for c in checks:
             self.assertTrue(c['passed'], c['name'])
+
+
+class TestL2TripleW4(unittest.TestCase):
+    def cards(self, w2, w4):
+        # a level-2 node whose child is level-1 node 0 of parcel (0, 0), an edge node on its east line
+        child = node(x=2047, y=500, entries=[entry(other=1, id=1, cls=0x0497), entry(other=3, cls=0xa797)])
+        L1 = {(0, 0): dict(nodes=[child, node(x=1900, y=500)]),
+              (0, 1): dict(nodes=[node(), node(), node(), node(x=0, y=500), node(x=100, y=500)])}
+        a = dict(nodes=[node(entries=[entry(other=1, id=1, cls=0x0497)]), node()])
+        b = dict(nodes=[dict(upper=0, parcel=0, child=0, entries=[(1, w2, w4)])])
+        return L1, {(0, 0): (a, b)}
+
+    def test_a_neighbour_in_the_own_cell_passes_on_both(self):
+        for fmt in (clarion_format.X08_03, clarion_format.X08_02):
+            self.assertTrue(card_check.check_l2_triple_w4(*self.cards(0, 1), fmt)['passed'])
+
+    def test_the_twin_across_the_line_is_qy7s_form_only(self):
+        r = card_check.check_l2_triple_w4(*self.cards(0x0040, 3), clarion_format.X08_02)
+        self.assertTrue(r['passed'], r)
+        self.assertEqual(r['counts']['names the twin across a parcel line'], 1)
+        self.assertFalse(card_check.check_l2_triple_w4(*self.cards(0x0040, 3), clarion_format.X08_03)['passed'])
+
+    def test_another_node_of_the_next_parcel_fails(self):
+        self.assertFalse(card_check.check_l2_triple_w4(*self.cards(0x0040, 4), clarion_format.X08_02)['passed'])
 
 
 class TestExpansion(unittest.TestCase):

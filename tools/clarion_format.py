@@ -52,7 +52,7 @@ class Format:
                  codec, shape_w19, ends_by_link, shape_w3=0x0004, shape_w5=0x8004, twoway=0x1000,
                  ferry_style=0x001e, tail_runs=True, area_items=False, label_flags=0x2000, coarse_unnamed=(0x3000, 0x4000), l3_points=0, marker_shift=0,
                  level_count=True, refer_v5=False, style_every_link=False, colon_names=False, slip_code=0x3000,
-                 class_flag=0x80, class_plain=10, reg_exit=0, oneway_end_words=True, pairing_by_child=False):
+                 class_flag=0x80, class_plain=10, reg_exit=0, oneway_end_words=True, pairing_by_child=False, next_across=False):
         self.name, self.unit = name, unit
         self.ident = ident              # UTF-16BE strings by offset
         self.consts = consts            # raw hex by offset, outside the 0xff fill
@@ -87,6 +87,7 @@ class Format:
         self.reg_exit = reg_exit        # bits 8-11 of a regulation word
         self.oneway_end_words = oneway_end_words  # a one-way link's arriving end bars every entry, its leaving end itself
         self.pairing_by_child = pairing_by_child  # coarse part B lists a child parcel's nodes by child index; level 2 does in both formats
+        self.next_across = next_across  # a level-2 link triple may name the twin across a level-1 parcel line, with that parcel's cell
 
     def text(self, s):
         """Label bytes. A letter outside Latin-1 loses its accent rather than the label."""
@@ -140,7 +141,7 @@ X08_02 = Format(
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
     shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000, marker_shift=1,
     level_count=False, refer_v5=True, style_every_link=True, colon_names=True, slip_code=0,
-    class_flag=0, class_plain=11, reg_exit=3, oneway_end_words=False, pairing_by_child=True)
+    class_flag=0, class_plain=11, reg_exit=3, oneway_end_words=False, pairing_by_child=True, next_across=True)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
 DEFAULT = X08_03
