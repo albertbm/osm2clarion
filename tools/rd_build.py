@@ -394,6 +394,10 @@ def is_slip(l):
     """The link's way is one of SLIP_WAYS: the factory's link code 3."""
     return l[3] in SLIP_WAYS
 
+def link_code(l):
+    """The link code in graph w4 and in shape word 3: 7 on a ring, the format's slip code, else 0."""
+    return 0x7000 if l[11] in ('roundabout', 'circular') else FMT.slip_code if is_slip(l) else 0
+
 def chain_links(links):
     """Reorder links so the ones drawn as one shape are consecutive; chains sharing a node, class, name and ref join."""
     chains = {}
@@ -435,12 +439,13 @@ def link_ids(links, level=1):
     return out
 
 def link_groups(links, chain=True, upper=None):
-    """Link positions grouped into shapes, broken before a group passes MAX_POINTS and where
-    the level-2 link (upper, from upper_links) changes: a shape names one."""
+    """Link positions grouped into shapes, broken before a group passes MAX_POINTS, where the
+    level-2 link (upper, from upper_links) changes, since a shape names one, and where the
+    link code changes: no factory shape has links that differ in it (0 of 195,027 at level 2)."""
     groups = []; npts = 0
     for k, l in enumerate(links):
         n = len(l[8]) + 1
-        same = upper is None or upper[k - 1] == upper[k]
+        same = (upper is None or upper[k - 1] == upper[k]) and (not k or link_code(links[k - 1]) == link_code(l))
         if chain and groups and links[k - 1][9] == l[9] and same and npts + n <= MAX_POINTS:
             groups[-1].append(k); npts += n
         else:
@@ -861,7 +866,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         # the factory marks a roundabout ring's own links (not its approach/exit spokes) with
         # w4's top 3 bits all set, both ends alike, at both L1 and L2, measured on the Koln
         # and UK factory tiles, never on a plain one-way link's entries
-        link_w4 = [0x7000 if l[11] in ('roundabout', 'circular') else FMT.slip_code if is_slip(l) else 0 for l in P['links']]
+        link_w4 = [link_code(l) for l in P['links']]
         # w4 bits 1-2 (KIWI link direction, 7.A.8): 0 on a level-1-only link, 1-3 on a link that an
         # upper-level link integrates. Factory B58R060R: set on 190,880/190,880 L1 links that an L2
         # link expands to, clear on 95,412/95,412 side links at the same nodes and on every class

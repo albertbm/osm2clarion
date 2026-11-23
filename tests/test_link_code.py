@@ -35,6 +35,20 @@ class LinkCode(unittest.TestCase):
         finally:
             rd_build.SLIP_WAYS = frozenset()
 
+    def test_a_shape_ends_where_the_link_code_changes(self):
+        # one chain: a one-way slip piece, a two-way piece of the same connector, a ring piece
+        a = ((10, 10), (20, 10), 200.0, 1, None, 'trunk_link', None, None, [], 0, 1, None)
+        b = ((20, 10), (30, 10), 60.0, 2, None, 'trunk_link', None, None, [], 0, 0, None)
+        ring = ((30, 10), (40, 10), 60.0, 3, None, 'trunk_link', None, None, [], 0, 1, 'roundabout')
+        rd_build.SLIP_WAYS = frozenset({1})
+        try:
+            self.assertEqual(rd_build.link_groups([a, b, ring]), [[0], [1], [2]])
+            self.assertEqual(rd_build.link_groups([b, b]), [[0, 1]])
+            rd_build.SLIP_WAYS = frozenset({1, 2})
+            self.assertEqual(rd_build.link_groups([a, b, ring]), [[0, 1], [2]])
+        finally:
+            rd_build.SLIP_WAYS = frozenset()
+
     def test_qy8_word3(self):
         w = self.words(clarion_format.X08_03, slip=True)
         self.assertEqual(w[3], 0x3004)

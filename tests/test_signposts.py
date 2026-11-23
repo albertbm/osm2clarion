@@ -369,12 +369,12 @@ class TestParcelInvariants(unittest.TestCase):
         # nodes: 0 road start, 1 junction, 2 road end, 3 ramp end, 4 crossing road end, 5 the other
         nodes = [(100, 1000), (1000, 1000), (1900, 1000), (1700, 1300), (1000, 100), (1000, 1900)]
         idx = {n: i for i, n in enumerate(nodes)}
-        # (from, to, length, way, name, hw, ref, maxspeed, inner, chain id, dir)
-        L = [(nodes[0], nodes[1], 900, 10, 'VESTURLANDSVEGUR', 'trunk', '1', None, [(500, 1000)], 0, 0),
-             (nodes[1], nodes[2], 900, 10, 'VESTURLANDSVEGUR', 'trunk', '1', None, [], 0, 0),
-             (nodes[1], nodes[3], 800, 20, None, 'trunk_link', None, None, [(1300, 1100)], 1, 1),
-             (nodes[4], nodes[1], 900, 30, 'X', 'secondary', None, None, [], 2, 0),
-             (nodes[1], nodes[5], 900, 30, 'X', 'secondary', None, None, [], 2, 0)]
+        # (from, to, length, way, name, hw, ref, maxspeed, inner, chain id, dir, junction)
+        L = [(nodes[0], nodes[1], 900, 10, 'VESTURLANDSVEGUR', 'trunk', '1', None, [(500, 1000)], 0, 0, None),
+             (nodes[1], nodes[2], 900, 10, 'VESTURLANDSVEGUR', 'trunk', '1', None, [], 0, 0, None),
+             (nodes[1], nodes[3], 800, 20, None, 'trunk_link', None, None, [(1300, 1100)], 1, 1, None),
+             (nodes[4], nodes[1], 900, 30, 'X', 'secondary', None, None, [], 2, 0, None),
+             (nodes[1], nodes[5], 900, 30, 'X', 'secondary', None, None, [], 2, 0, None)]
         groups = rd_build.link_groups(L, True)
         ids = rd_build.link_ids(L, 1)
         chains = rd_build.chains_of(L, idx, True, ids, groups)
@@ -422,10 +422,10 @@ class TestParcelInvariants(unittest.TestCase):
         # reaches Vesturlandsvegur, the road the ramp is signed for, and must stay unsigned.
         nodes = [(-1000, 1000), (0, 1000), (500, 1000), (1000, 1000), (1500, 1000)]
         idx = {n: i for i, n in enumerate(nodes)}
-        L = [(nodes[0], nodes[1], 1000, 1, 'Grove', 'secondary', None, None, [], 10, 0),
-             (nodes[1], nodes[2], 500, 20, None, 'trunk_link', None, None, [], 11, 0),
-             (nodes[2], nodes[3], 500, 20, None, 'trunk_link', None, None, [], 11, 0),
-             (nodes[3], nodes[4], 500, 2, 'Vesturlandsvegur', 'trunk', None, None, [], 12, 0)]
+        L = [(nodes[0], nodes[1], 1000, 1, 'Grove', 'secondary', None, None, [], 10, 0, None),
+             (nodes[1], nodes[2], 500, 20, None, 'trunk_link', None, None, [], 11, 0, None),
+             (nodes[2], nodes[3], 500, 20, None, 'trunk_link', None, None, [], 11, 0, None),
+             (nodes[3], nodes[4], 500, 2, 'Vesturlandsvegur', 'trunk', None, None, [], 12, 0, None)]
         groups = rd_build.link_groups(L, True)
         found = rd_build.find_signposts(L, nodes, idx, groups, {20: {'destination': 'Vesturlandsvegur'}}, upper=True)
         self.assertEqual(len(found), 1)
