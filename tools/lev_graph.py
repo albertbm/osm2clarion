@@ -192,6 +192,8 @@ def collapse(per):
                 if a['cls'] != b['cls'] or a.get('up') != b.get('up'): continue
                 # a one-way link and a two-way one stay apart, as rd_build.coarse_runs takes them to
                 if bool(a['direction']) != bool(b['direction']): continue
+                # nor two link codes: a factory level-4 link and its end level-2 links share one, 24,373 of 24,373
+                if a.get('w4', 0) >> 12 != b.get('w4', 0) >> 12: continue
                 if shapes and (a.get('shape') is None or a.get('shape') != b.get('shape')): continue
                 # only two links that run the same way join: the shapes under the merged link
                 # all run its way then, as the unit takes them to (Navi.exe 0x3605a0)

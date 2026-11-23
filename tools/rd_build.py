@@ -369,7 +369,7 @@ def flip(c):
     """A chain of links turned to run the other way."""
     return [(l[1], l[0]) + l[2:8] + (l[8][::-1], l[9], -l[10]) + l[11:] for l in reversed(c)]
 
-SLIP_METRES = 120     # shorter connectors are code 0 on the factory cards: 85% of link shapes under 60 m (UK B50R068R)
+SLIP_METRES = 120     # fitted: the rule then matches 87.1% of the factory's one-way class 6-7 shapes on UK B50R068R, 88.2% on QY7 Finland
 SLIP_WAYS = frozenset()
 
 def slip_ways(ways):
@@ -625,16 +625,16 @@ def levels_above(links, level, up):
 
 def coarse_runs(parcels):
     """Per level-2 parcel, a number per link that changes where the level-4 graph can keep a
-    node: a junction, a chain's end, a change of one-way sense, a loop closing on itself. A
-    level-2 shape names one level-4 link, so link_groups ends it there (lev_graph.collapse
-    joins no further)."""
+    node: a junction, a chain's end, a change of one-way sense or of link code, a loop closing
+    on itself. A level-2 shape names one level-4 link, so link_groups ends it there
+    (lev_graph.collapse joins no further)."""
     out = {}
     for pc, P in parcels.items():
         if P.get('ring'): continue
         L = P['links']; deg = collections.Counter(k for l in L for k in l[:2]); runs = []; seen = set()
         for k, l in enumerate(L):
             joined = (k and L[k - 1][9] == l[9] and L[k - 1][1] == l[0] and deg[l[0]] == 2 and L[k - 1][10] == l[10]
-                      and l[1] not in seen)
+                      and link_code(L[k - 1]) == link_code(l) and l[1] not in seen)
             if not joined: seen = {l[0]}
             seen.add(l[1])
             runs.append(runs[-1] if joined else k)

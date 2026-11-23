@@ -331,6 +331,15 @@ class TestCollapse(unittest.TestCase):
         lev_graph.collapse(per)
         self.assertEqual(sorted((l['direction'], l['length']) for l in per[(0, 0)]), [(0, 100.0), (0, 100.0), (1, 200.0)])
 
+    def test_a_ring_link_does_not_join_the_road_through_it(self):
+        import lev_graph
+        def link(a, b, w4):
+            return dict(a=a, b=b, length=100.0, cls=5, speed=50.0, direction=1, w4=w4, parcel=(0, 0),
+                        child=(0, 0), next_a=b, next_b=a, pa=(0, 0), pb=(0, 0))
+        per = {(0, 0): [link(1, 2, 0x0002), link(2, 3, 0x7002), link(3, 4, 0x7004), link(4, 5, 0x3002), link(5, 6, 0x3002)]}
+        lev_graph.collapse(per)
+        self.assertEqual(sorted((l['w4'] >> 12, l['length']) for l in per[(0, 0)]), [(0, 100.0), (3, 200.0), (7, 200.0)])
+
 
 if __name__ == '__main__':
     unittest.main()
