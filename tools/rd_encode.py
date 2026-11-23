@@ -253,7 +253,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         lst = extras.setdefault((nd, ti), [])
         if w in lst or regulation_word(ALL_ENTRIES) in lst:
             build_record_edges.regs_covered += 1; continue   # already prohibited
-        if len(lst) >= 14:          # w5 bits 6-11 hold the count; 14 is as far as this was tested
+        if len(lst) >= 14:          # w5 bits 6-13 hold the count; 14 is as far as this was tested
             build_record_edges.regs_dropped += 1; continue
         lst.append(w); build_record_edges.regs_written += 1
     body = []

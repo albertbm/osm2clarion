@@ -7,10 +7,15 @@ Record: parcel code, two zero dwords, five unit pairs, then country codes up to 
 eleven (nodes, link ends) pairs per class group (rd_check.slot), then the nodes: entry count
 and class in x/y's top nibbles, then per entry other node index, w4, w5, link id (0x2000 =
 drawn last point), class word (far node's class high byte, link's class low nibble), travel
-time, length, regulation words. An entry's class word with bit 15 set is a parcel-edge
+time, length, then extra words: w5 bits 6-13 regulation words, plus w5 bits 0-5, w4 bit 0
+and the id word's top two bits more. An entry's class word with bit 15 set is a parcel-edge
 connection; the top three bits give the side.
 """
 import struct
+
+def reg_count(w5):
+    """Regulation words of an entry: w5 bits 6-13. They come first among its extra words."""
+    return (w5 >> 6) & 0xff
 
 def parse_record(pl):
     w = list(struct.unpack('>%dH' % (len(pl) // 2), pl[:len(pl) // 2 * 2]))
@@ -33,7 +38,7 @@ def parse_record(pl):
             if p + 7 > len(u): out['error'] = f'entry runs past the unit at node {len(out["nodes"])}'; break
             other, w4, w5 = u[p:p + 3]; p += 3
             eid, cls, a, b = u[p:p + 4]; p += 4
-            extra = ((w5 >> 6) & 0x3f) + (w5 & 0xf)
+            extra = reg_count(w5) + (w4 & 1) + (w5 & 0x3f) + (eid >> 14)
             node['entries'].append(dict(other=other, w4=w4, w5=w5, id=eid, cls=cls, a=a, b=b, extra=u[p:p + extra])); p += extra
         out['nodes'].append(node)
         if 'error' in out: break

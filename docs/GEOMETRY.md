@@ -175,8 +175,8 @@ in the pair of its own class: classes 0-2 at u6, 3-7 at u8, 8 at u10, 9 at u12, 
 (ferries) at u24; u4 and u14..u23 stay zero. Its link ends are its entries less any
 parcel-edge entry, and the totals are the sums, so edge entries are never counted.
 Measured 18 Oct 2026 by `tools/rd_check.py` on 183,567 records of 14 tiles from three cards
-(214-062, 214-066, 218-120), both levels, with no exception; 115 records in the two densest
-tiles do not parse yet. Unit 2, in about 4% of records, is `0102 9800 ff00 0018 d801 ff00 0018`.
+(214-062, 214-066, 218-120), both levels, with no exception; 115 records in the two
+densest tiles did not parse under the narrower extra-word masks used then. Unit 2, in about 4% of records, is `0102 9800 ff00 0018 d801 ff00 0018`.
 
 Node, in ascending x: `u16 x` with the entry count in the top nibble and the parcel
 coordinate in the low 11 bits, `u16 y` with the node's class in the top nibble (the lowest
@@ -184,7 +184,9 @@ link class among its entries) and the coordinate in the low 11 bits, a flag word
 level-1 node that also exists at level 2: 4,822 of 4,822 flagged nodes in three tiles have a
 level-2 twin, 98 of 44,662 unflagged ones do),
 then per entry `other node index, w4, w5, link id, class, a, b` and
-`((w5 >> 6) & 0x3f) + (w5 & 0xf)` extra words. The class word is the far node's class in the
+`((w5 >> 6) & 0xff) + (w5 & 0x3f) + (w4 & 1) + (id >> 14)` extra words, the regulation words
+(the first count) first. This is the size the unit's own walk gives a link. Every record of a
+QY8 and a QY7 B48R060R frames with it, 135,174 in all; the last two terms are 0 on both. The class word is the far node's class in the
 high byte and the link's class word in the low byte (`0x0598` is a class-8 link reaching a
 class-5 node). The link id restarts at 1 per class, numbered in the order the parcel's
 section-1 shapes list the links, so (class, id) names a link in both sections; it carries

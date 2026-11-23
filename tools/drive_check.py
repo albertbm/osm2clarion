@@ -53,6 +53,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import card_check
 import clarion_bg
+import clarion_rd
 import fa_encode
 import rd_check
 import rd_encode
@@ -261,7 +262,7 @@ class Graph:
             nd = L1[pc]['nodes'][k]
             self.place[i] = where((pc, nd['x'], nd['y']))
             for t, e in enumerate(nd['entries']):
-                regs = e.get('extra', ())[:(e.get('w5', 0) >> 6) & 0x3f]
+                regs = e.get('extra', ())[:clarion_rd.reg_count(e.get('w5', 0))]
                 barred = {w >> 12 for w in regs if w & 0xff == 0xff}
                 self.st['L1 regulation words other than 0xff'] += sum(w & 0xff != 0xff for w in regs)
                 if barred:

@@ -713,7 +713,7 @@ class TestRoadGraph(unittest.TestCase):
             ents = nd['entries']
             leaving = [k << 12 | 0xff for k, e in enumerate(ents) if e['w5'] & 0xc000 == 0x4000]
             for k, e in enumerate(ents):
-                regs = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                regs = e['extra'][:clarion_rd.reg_count(e['w5'])]
                 self.assertEqual(regs, [rd_check.NO_ENTRY] if e['w5'] & 0xc000 == 0x8000 else leaving)
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
                                                 country=352, dirs=[1, -1, 0], oneway_regs=False)
@@ -730,7 +730,7 @@ class TestRoadGraph(unittest.TestCase):
                          'every restriction not written is counted')
         self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
         rec = clarion_rd.parse_record(plain)
-        words = {(nd['x'], e['id'] & 0x1fff): e['extra'][:(e['w5'] >> 6) & 0x3f] for nd in rec['nodes'] for e in nd['entries']}
+        words = {(nd['x'], e['id'] & 0x1fff): e['extra'][:clarion_rd.reg_count(e['w5'])] for nd in rec['nodes'] for e in nd['entries']}
         self.assertEqual(words[(100, 1)], [0x10ff, 0x00ff], 'link 1 leaves node 0: the turn from entry 1, then itself')
         self.assertEqual(words[(900, 1)], [rd_check.NO_ENTRY])
 
@@ -752,7 +752,7 @@ class TestRoadGraph(unittest.TestCase):
             leaving = [k for k, e in enumerate(ents) if e['w5'] & 0xc000 == 0x4000]
             for k, e in enumerate(ents):
                 self.assertEqual(e['cls'] & 0xf0, 0x10)
-                regs = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                regs = e['extra'][:clarion_rd.reg_count(e['w5'])]
                 want = [] if e['w5'] & 0xc000 == 0x8000 else [j << 12 | 0x3ff for j in leaving if j != k]
                 self.assertEqual(regs, want)
 

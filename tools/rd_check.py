@@ -58,7 +58,7 @@ def oneway_links(rec):
                 if e['w5'] & 0xc000: bad.append('node %d edge entry with one-way bits %04x' % (i, e['w5']))
                 continue
             if e['other'] & 0x4000: continue
-            regs = [x & 0xf0ff for x in e['extra'][:(e['w5'] >> 6) & 0x3f]]   # X08-02 sets bits 8-11
+            regs = [x & 0xf0ff for x in e['extra'][:clarion_rd.reg_count(e['w5'])]]   # X08-02 sets bits 8-11
             if e['w5'] & 0xc000 == 0x8000:
                 if NO_ENTRY in regs: oneway_links.no_entry += 1
             elif leaving:

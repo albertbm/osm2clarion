@@ -779,7 +779,7 @@ def check_graph_words(L1, L2, lev4, lev5, fmt=None):
                     wrong = []
                     if e['cls'] & 0xf0 != fmt.class_flag | (0x10 if cls < fmt.class_plain else 0):
                         wrong.append('class word')
-                    words = e['extra'][:(e['w5'] >> 6) & 0x3f]
+                    words = e['extra'][:clarion_rd.reg_count(e['w5'])]
                     if any(w >> 8 & 0xf != fmt.reg_exit for w in words):
                         wrong.append('regulation exit nibble')
                     arriving, leaving = e['w5'] & 0xc000 == 0x8000, e['w5'] & 0xc000 == 0x4000
