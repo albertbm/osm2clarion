@@ -46,6 +46,21 @@ back byte for byte; it skips without one:
 OSM2CLARION_QY7_TILE=B68R048R.DAT python3 -m unittest tests.test_format
 ```
 
+## test_factory_tiles.py
+
+The readers against factory tiles: every section-2 record frames under the unit's link-size
+rule, a tile with extended slots round-trips through `clarion_tile`, and `bg_decode` and
+`tile_grid` read a QY7 tile. Five cases are built in code. The rest skip without a tile:
+
+```
+OSM2CLARION_FACTORY_TILE=B48R060R.DAT OSM2CLARION_QY7_TILE=B58R050R.DAT python3 -m unittest tests.test_factory_tiles
+```
+
+## test_cli_help.py
+
+Runs `--help` and `-h` on every tool that reads `sys.argv` itself and expects its docstring,
+exit 0 and no file written.
+
 ## test_signposts.py
 
 Section 4 signposts: `sec4_write.encode` against the measured record layout, the
