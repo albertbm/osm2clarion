@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""The link code of a one-way slip road: shape word 3's top nibble, 3 on QY8 and absent on QY7."""
+"""The link code of a one-way slip road: shape word 3's top nibble, 3 on both formats."""
 import os, sys, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tools'))
 import clarion_format, fa_encode, rd_build
@@ -55,8 +55,17 @@ class LinkCode(unittest.TestCase):
         self.assertEqual(self.words(clarion_format.X08_03)[3], 0x0004)
         self.assertEqual(self.words(clarion_format.X08_03, ring=True, slip=True)[3], 0x7004)
 
-    def test_qy7_unchanged(self):
-        self.assertEqual(self.words(clarion_format.X08_02, slip=True), self.words(clarion_format.X08_02))
+    def test_qy7_word3(self):
+        self.assertEqual(self.words(clarion_format.X08_02, slip=True)[3], 0x3000)
+        self.assertEqual(self.words(clarion_format.X08_02)[3], 0x0000)
+        self.assertEqual(self.words(clarion_format.X08_02, ring=True, slip=True)[3], 0x7000)
+
+    def test_qy7_graph_code_is_the_shape_code(self):
+        rd_build.FMT = clarion_format.X08_02; rd_build.SLIP_WAYS = frozenset({1})
+        try:
+            self.assertEqual(rd_build.link_code(link('primary_link', 1)), 0x3000)
+        finally:
+            rd_build.FMT = clarion_format.DEFAULT; rd_build.SLIP_WAYS = frozenset()
 
 
 if __name__ == '__main__':

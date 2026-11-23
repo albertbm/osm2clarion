@@ -340,8 +340,8 @@ holds a rule for each unless noted.
   3,812,205 level-1 links, 187,373 of 187,373 at level 2) and no shape has links of two
   codes. At levels 4 and 5 the same holds (699,090 of 699,120 on QY8, 499,073 of 499,085 on
   QY7), and a level-4 link has the code of its level-2 links (24,373 of 24,373). The writer
-  sets 7 from `junction=roundabout|circular`, and 3 on QY8 for a `motorway_link` or a one-way
-  `*_link` on a connector of 120 m or more. That last rule matches the factory on 87.1% of a
+  sets 7 from `junction=roundabout|circular`, and 3 on both formats for a `motorway_link` or a
+  one-way `*_link` on a connector of 120 m or more. That last rule matches the factory on 87.1% of a
   UK sample and 88.2% of a Finnish QY7 one; code 1 follows no rule found yet.
 - Level-2 part B, link triples. The third word names the level-1 node next along the
   link from the node's level-1 twin: the far end of the twin's level-1 link under that

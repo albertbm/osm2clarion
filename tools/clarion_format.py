@@ -80,7 +80,7 @@ class Format:
         self.level_count = level_count  # a link's w4 bits 1-2 and a level-2 node's flag count the levels above; else 1 for any
         self.refer_v5 = refer_v5        # REFER files in the V05 layout: see addre_io
         self.style_every_link = style_every_link  # a level-1 link header repeats an unchanged style word
-        self.slip_code = slip_code      # link code of a one-way slip road, in shape word 3 and graph w4; 0 leaves it out
+        self.slip_code = slip_code      # link code of a one-way slip road, in shape word 3 and graph w4, the same on both (0 would leave it out)
         self.colon_names = colon_names  # a street file keeps a name's colon; else the label's apostrophe (KAARLE IX'N KATU)
         self.class_flag = class_flag    # bit 7 of a link class word's low byte
         self.class_plain = class_plain  # the first link class whose word lacks 0x10
@@ -140,7 +140,7 @@ X08_02 = Format(
     levels={1: _SEC1, 2: [(5, 0x91), (4, 0x91), (2, 0x91), (1, 0x90)], 4: _SEC4},
     zmagic=b'\x78\x9c', wbits=15, pad=4, x_base=1024, codec='latin-1', shape_w19=0, ends_by_link=True,
     shape_w3=0, shape_w5=0, twoway=0x2000, ferry_style=0x201e, tail_runs=False, area_items=True, label_flags=0x2800, coarse_unnamed=(0, 0), l3_points=0x8000, marker_shift=1,
-    level_count=False, refer_v5=True, style_every_link=True, colon_names=True, slip_code=0,
+    level_count=False, refer_v5=True, style_every_link=True, colon_names=True,
     class_flag=0, class_plain=11, reg_exit=3, oneway_end_words=False, pairing_by_child=True, next_across=True)
 
 FORMATS = {f.name: f for f in (X08_03, X08_02)}
