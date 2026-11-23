@@ -24,9 +24,22 @@ instead of tiles.
 | House numbers drawn along streets | Works |
 | POI icons and search | Works with bugs: in a municipality with no town of its own, a POI can show a nearby town |
 | Names on unnamed ramps | Works |
+| Link code 3 on slip roads (connector rule) | Works |
+| Slip-road guidance calls on a city expressway | Works |
+| Junction pictures on unmarked roads | Works; the unit's own angle rule picks them, as on factory cards |
+| Level-2 edge triples at tile edges, and the next level-1 node along a link | Built and checked, not yet driven |
+| Both sides of a short split road | Built and checked, not yet driven |
+| Link codes kept apart in shapes and the coarse graph | Built and checked, not yet driven |
+| POI search keys: Greek and Cyrillic (QY8), the factory's spelling of non-Latin-1 letters (QY7) | Built and checked, not yet driven |
+| House numbers on same-name streets and on links shared by two municipalities | Built and checked, not yet driven |
 | Signposts | Not built |
 | Lake, fjord and river names | Not built |
 | The card's own map version on screen | Not working |
+
+Checking tools: `tools/card_check.py` holds its limits to what the factory cards measure.
+`tools/drive_check.py` routes only where one-way bits and turn bans allow. `tools/diag/junction_view.py`
+lists a card's junctions by arm type, and `tools/diag/crossing_type.py` is a hand port of the
+unit's crossing classifier.
 
 Addresses come from a CSV import. The only reader today is for Iceland's address register;
 another country needs its columns mapped in `tools/addr/addr_csv.py`. See
@@ -154,29 +167,31 @@ The unit must also accept a car position west of 20 W first; see the shipment bo
 ### Finland (QY7, area mode)
 
 The base card keeps its own map. The roads are stripped from every tile, and the roads of one
-town are rebuilt from OSM. For a stock European Clarion QY7221NL card (2014 database) and
-Geofabrik's `finland-latest.osm.pbf`. `profiles/finland.toml` names the town (`jyvaskyla`).
+town, or of all Finland, are rebuilt from OSM. For a stock European Clarion QY7221NL card
+(2014 database) and Geofabrik's `finland-latest.osm.pbf`. `profiles/finland.toml` has two
+areas: `jyvaskyla` (one town) and `finland` (the whole country).
 
 ```
 uv run build.py --profile finland --base STOCK-CARD.img \
-    --osm finland-latest.osm.pbf --out NEW-CARD.img --work work/finland
+    --osm finland-latest.osm.pbf --out NEW-CARD.img --work work/finland --area finland
 ```
 
-`--area NAME` picks the town if the profile lists more than one. A second area is one more
+`--area NAME` is required because the profile lists two. A further area is one more
 `[areas.NAME]` table: an OSM relation, the one tile cell it sits in, and a bbox. The `[grid]`
 cells are left out of the profile: build.py takes every tile on the base card that the
 `[grid]` boxes touch.
 
 Limits of the Finland card:
 
-- Roads exist only inside the built area. Elsewhere in Europe the card draws the map but no
-  roads, and cannot route.
+- Roads exist only inside the built area: one town, or Finland. Elsewhere in Europe the card
+  draws the map but no roads, and cannot route.
 - Street search works for the built area only: Finland's street file is rewritten from the
   OSM addresses inside it, under the municipality `[addr] municipality` names. Not yet
   confirmed on a unit.
 - Postcode, intersection and POI search, and every other country's address search, still
   read the factory data, which points at roads that are now gone. They are likely to crash.
-- Guidance has not been tried on a unit.
+- Routes and guidance have been tried on a QY7 unit.
+- Setting a destination near Oulu crashes the unit. Not fixed.
 
 ## Try a card before the car
 
