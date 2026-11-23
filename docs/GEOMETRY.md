@@ -214,8 +214,8 @@ is a chain of consecutive link ids along one way: `u16 length in words (itself i
 `0x8000 | points` (sometimes with 0x4000), `0x8000`, `0004 000c 8004` (or `0144 ffff 8004`),
 `0`, the start node `(0x0800 | x, 0x2800 | y)`, then per link `style, value, link id` (style
 0x1031 roads, 0x001e ferry; value unknown; from the second link only `value, id` unless the
-style changes, see below; a QY7 tile repeats the style on every link, and without it FI-019's
-house-number screen for KAUPPAKATU stopped at the first row on such a link), the link's
+style changes, see below; a QY7 tile repeats the style on every link, and without it an early
+Finland card's house-number screen for KAUPPAKATU stopped at the first row on such a link), the link's
 points `(0x1000 | x, y)` with the first point of a link flagged 0x7000 (first link) or 0x5000,
 the link's end node with `0x0800 | y` unless it ends the shape, and one trailer word. Points
 are absolute parcel coordinates. Curves are the shape points; the graph only has the ends.

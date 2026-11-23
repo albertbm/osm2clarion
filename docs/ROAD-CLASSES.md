@@ -75,7 +75,7 @@ A road that reaches level 2 has the same class at level 1: on the factory tile B
 graph's class (ids pair per class), and classes 8 and 9 hold level-1-only roads. The level-2 layer is 7 for classes 1 and 2, otherwise 6; levels 3 and 4 are always layer 6.
 Only motorway, trunk and primary reach level 4 by default, and `tertiary` is the lowest value
 that reaches level 3 at all: `lev_roads.py` drops unclassified and below whatever level-3 class
-the table gives them. `service` is excluded from level 2 by `rd_build.L2CLASSES`, so its 7
+the table gives them. `service` is excluded from level 2 by `clarion_profile.L2CLASSES_WIDE`, so its 7
 there never fires. Class follows the road's standard, not its route prefix, since in the 2014
 data every layer-6 class-4 and class-5 level-1 shape carries a route number and nothing
 numbered sits below class 5. `fa_encode.CLASSES` also holds a level-3 column that
@@ -134,7 +134,7 @@ level 2   layer 4            0 shapes in any class
 ```
 
 Class 9 is level-1 only in shipped data and layer 4 is empty at level 2 in all 52 tiles, hence
-the `L2CLASSES` exclusion. At level 1 `service` costs about 8% of tile size. Over
+the exclusion from `L2CLASSES_WIDE`. At level 1 `service` costs about 8% of tile size. Over
 Iceland, whose four tiles cover the whole country, `service` is 34,104 of 62,439 ways, 4,979.9
 of 22,734.4 km and 241,699 of 690,696 raw points. The four tiles grow by 128,768, 459,776,
 1,025,792 and 1,899,008 B, 43,896,320 to 47,409,664 B in all: +3,513,344 B, +8.0%, or 3,538,944
@@ -205,7 +205,9 @@ cluster. A refresh that adds one more way there now fails instead of misplacing 
 
 `rd_build.py --no-l2-graph` is what the builds measured here used. Level-2 shapes draw without
 the section-2 level-2 directories, the graph is routing data, no router runs at level 2, and
-adding four directories would change the section-2 layout. Shapes first, graph later.
+adding four directories would change the section-2 layout. Shapes first, graph later. The graph
+has since gone in: `build_gen_lev.py` runs `rd_build.py --l2-graph` on every generated tile, and
+the Finland profile sets `[roads] l2_graph = true`.
 
 `trunk` is level-1 class 4 and level-2 class 3, the heaviest numbered style. That suits a dual
 carriageway; on a single-carriageway national route it can look overdone. The change is one

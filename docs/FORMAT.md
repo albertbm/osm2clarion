@@ -7,8 +7,8 @@ declare format version `X08-03-00` and the structures below hold on both, though
 differ. Every figure is from the 2017 card unless the line says otherwise. The `.cmp`/`.ind`
 container is dfj's, from his gist "Clarion Maps structure + decompressor of CMP files"; for
 what is inside a tile see [GEOMETRY.md](GEOMETRY.md), as this file stops at the tile header.
-The earlier QY7 is a different platform, SH-4 with a monolithic map and no `MAPAL001` grid,
-and its data is not this format.
+A European QY7 card (format `X08-02-00`, measured on the 2014 card `QSD-357-101`) has the same
+container, grid and record layouts; `tools/clarion_format.py` lists the fields that differ.
 
 ## Card layout
 
@@ -51,8 +51,8 @@ one slices to the next offset and writes one output file per input.
 52 tiles plus `LEV3456R.DAT`, 4.81 GiB in total, largest tile `B48R060R.DAT` at 477 MB. Every
 tile opens with the same UTF-16BE magic, `0043 004c 0041 0052 0049 004f 004e` for `CLARION`,
 then 0xFF padding to the next field. `LEV3456R.DAT` sits outside the grid; the B in `BLEV...`
-listings is the grid prefix, not part of its name, and the name suggests zoom levels 3 to 6,
-still a guess.
+listings is the grid prefix, not part of its name. It holds whole-map directories for levels 3
+to 6; see [LEVEL5.md](LEVEL5.md).
 
 ### The grid is hexadecimal
 
@@ -140,7 +140,9 @@ pair, POI by administrative area, motorway junctions, postcodes. Each decompress
 with a schema block of length-prefixed ASCII names, uint16 length first, so the data names its
 own fields: `06 00 "STREET"` for the table, `09 00 "area code"` and `0b 00 "street name"` for
 its columns. `area code` appears in every family and is presumably the join key to the
-administrative hierarchy. The records between header and schema are packed binary, not decoded.
+administrative hierarchy. The records between header and schema are packed binary; the tools
+that read and write them are `addre_io.py` (streets), `inter_io.py` (intersections),
+`point_io.py` (POIs), `zcode_io.py` (postcodes) and `icode_io.py` (the area tree).
 
 A QY7 card (X08-02-00) packs every `REFER001` file, `ICODE001.DAT` included, and its
 `CMP.LST` is the folder name alone. Its street file has a third column, `dndc-id`, and keeps
@@ -221,8 +223,6 @@ replaced.
 ## Not established
 
 - The 7 metadata bytes at `0x09` of each `.ind`.
-- The record schemas inside a decompressed `REFER001` file; the container yields bytes, not
-  records. `ZCODE` has no schema block in the tail window; `COORD` and `ZIPFR` are unexamined.
-- `REFER002/ICODE001.DAT`, the place-name index, and what `LEV3456R.DAT` holds beyond the guess
-  in its name.
-- Whether the unit validates the database beyond `DB_INFO.TXT` line 2.
+- `COORD`, `ZIPFR` and `FRWAY` are unexamined. `ZCODE` has no schema block in the tail window.
+- Whether the unit validates the database beyond `DB_INFO.TXT` line 2 and the DATA VERSION
+  stamp of each map file. `LEV3456R.DAT` is covered in [LEVEL5.md](LEVEL5.md).

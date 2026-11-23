@@ -149,8 +149,8 @@ Level 5 stays 11 columns, level 4 stays 44, and the database runs -28 to 60 east
 level-5 sea parcels over Kazakhstan. `lev_coarse.py --shift` and `lev_l6.py --shift` do it; the
 level-6 record is shifted and clipped, not rescaled.
 
-Cards 6 to 10 drew Europe and the whole of the new region at every zoom from 640 km to 200 m. The
-grid pair at 0x5d4 stays (11, 11), so its byte order never mattered. Level 5 (the 64 km view) and
+The next five cards, on the shifted grid, drew Europe and the whole of the new region at every
+zoom from 640 km to 200 m. The grid pair at 0x5d4 stays (11, 11), so its byte order never mattered. Level 5 (the 64 km view) and
 level 4 still have to be rebuilt for the new cells even where shipped parcels exist, because the
 shipped ones are sea only. `lev_coarse.py` replaces them.
 
@@ -173,12 +173,14 @@ and write the result over the sheet. So a profile is a whole-database statement 
 to 6, not an addition to one. Every record in the result inflates: 16,347 in the coarse file
 and 69,639 in the tile, none failed. The chain runs; the output is not a card.
 
-That replacement is untested over a populated cell. Only four cells have ever been built, the
-four over Iceland, and they were the easy case: their level-4 and level-5 parcels shipped
-empty or sea-only, so there was nothing to preserve. `lev_coarse.py` replaces a coarse parcel
-outright, and nothing has checked what that does where the shipped parcel already holds a
-populated European cell. Expect to lose whatever was there. The level-3 and tile levels are
-built fresh per cell and should be fine.
+That replacement is untested over a populated cell. `lev_coarse.py` has only built the four
+cells over Iceland, and they were the easy case: their level-4 and level-5 parcels shipped
+empty or sea-only, so there was nothing to preserve. It replaces a coarse parcel outright, and
+nothing has checked what that does where the shipped parcel already holds a populated European
+cell. Expect to lose whatever was there. The level-3 and tile levels are built fresh per cell
+and should be fine. Area mode, the Finland build, does not go this way: `road_strip.py` takes
+the roads out of the factory coarse file and `lev_add_roads.py` adds the new ones, so the
+factory background stays.
 
 ## The shipment bound
 

@@ -130,9 +130,11 @@ another; a stopped pull starts again at its last whole page, and a failed reques
 
 ## A factory card with one rebuilt area (QY7)
 
-An area-mode card keeps the factory area tree, so there is no ICODE, ZCODE or POINT to
-write. `tools/addr/build_addr_country.py` rewrites one file, the country's `ADDRE`, from the
-addresses inside the area's relations:
+An area-mode card keeps the factory area tree and postcode file, so there is no ICODE or
+ZCODE to write. `tools/addr/build_addr_country.py` rewrites the country's `ADDRE` from the
+addresses inside the area's relations. With `[build] inter` and `[build] point`,
+`build_inter.py` and `build_point.py` also rewrite its `INTER` and `POINT` files from the
+rebuilt roads. The `ADDRE` file is built like this:
 
 - with `[areas.NAME] municipality`, the ladder is the row it names one level above the
   deepest tier of the card's own `ICODE001.DAT`, plus the settlement under it that the
@@ -157,8 +159,8 @@ addresses inside the area's relations:
 - a row runs from one junction to the next. Where a parcel line cuts the link, the row
   goes on in the next parcel behind a hop group (0x40 north, 0x50 east, 0x60 south, 0x70
   west). The factory does not end a row on the line (8 of 10,903 two-group rows under
-  Jyväskylä do). FI-019 did, and its street search could not find SARPATINTIE, whose two
-  rows both stopped there. A link that cannot be followed over the line is left out and
+  Jyväskylä do). An earlier Finland card did, and its street search could not find
+  SARPATINTIE, whose two rows both stopped there. A link that cannot be followed over the line is left out and
   listed in `addr_skipped.json`;
 - a street with no road of its name in the rebuilt tile is left out (`addr_skipped.json`);
 - the file is the card's own layout. A QY7 card's is described at the top of `addre_io.py`.

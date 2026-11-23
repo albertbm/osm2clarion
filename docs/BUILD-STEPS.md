@@ -30,13 +30,15 @@ today only the emptied stage dirs keep one out.
 | `factory` | copies the base card's map files into `--work`, clearing those of an earlier base |
 | `osm` | turn restrictions and the area's roads from the OSM extract |
 | `strip` | `road_strip.py`: removes the roads from every tile and from the coarse file |
-| `roads` | `rd_build.py`: the area's roads into its one cell |
+| `roads` | `rd_build.py`: the area's roads into each of its cells, from one `roads.json` so roads meet at cell edges |
 | `coarse` | `lev_add_roads.py`: coarse roads, and the level-2 graph when `coarse_graph` is set |
-| `sec4` | `sec4_write.py`: section-4 country records on the rebuilt tile |
+| `sec4` | `sec4_write.py`: section-4 country records on each rebuilt tile when `[build] sec4` is set; without it the tile is copied as is |
 | `addr` | with an `[addr]` table: checks the shape index against the finished tile, then `addr/build_addr_country.py` writes the country's street search from the addresses inside the area, or inside `--addr-area` when that names a smaller one |
+| `inter` | with `[build] inter`: `addr/build_inter.py` writes the country's intersection search from the rebuilt roads |
+| `point` | with `[build] point`: `extract_pois.py` reads the OSM facilities, then `addr/build_point.py` writes the country's POI search on the rebuilt tiles |
 | `master` | `make_mmain.py`: MMAIN001.DAT from the tile headers |
-| `card` | a copy of the base card with the tiles, the coarse file, MMAIN and the street-search file written on |
-| `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cell, the coarse file and the area's `roads.json` (never on a factory tile), `drive_check.py` on the same files, `addr_resolve.py` on the rewritten street-search file (every record must land on a point of its own road), then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
+| `card` | a copy of the base card with the tiles, the coarse file, MMAIN and the street, intersection and POI search files written on |
+| `check` | reads every written file back off the image, runs `card_check.py` on the rebuilt cells, the coarse file and the area's `roads.json` (never on a factory tile), `drive_check.py` on the same files, `addr_resolve.py` on the rewritten street-search file (every record must land on a point of its own road), `inter_resolve.py` on the intersection file (every crossing on a node both streets share) and `point_resolve.py` on the POI file (every place on a link of the rebuilt roads), then `card_verify.py`'s version, index and MMAIN checks; renames the card on a pass |
 
 ## build_gen_lev.py
 
