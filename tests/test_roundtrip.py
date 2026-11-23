@@ -726,6 +726,8 @@ class TestRoadGraph(unittest.TestCase):
         plain, _ = rd_encode.build_record_edges(1, 96, 898, 7, 9, self.NODES, self.LINKS, {},
                                                 country=352, dirs=[1, 0, 0], regs=[(0, 2, 0), (0, 2, 0), (1, 1, 0)])
         self.assertEqual(rd_encode.build_record_edges.regs_written, 1)
+        self.assertEqual((rd_encode.build_record_edges.regs_covered, rd_encode.build_record_edges.regs_dropped), (2, 0),
+                         'every restriction not written is counted')
         self.assertEqual(rd_check.check(plain, 1, 352), ([], []))
         rec = clarion_rd.parse_record(plain)
         words = {(nd['x'], e['id'] & 0x1fff): e['extra'][:(e['w5'] >> 6) & 0x3f] for nd in rec['nodes'] for e in nd['entries']}
@@ -2523,3 +2525,23 @@ class TestHouse(unittest.TestCase):
         self.assertEqual(struct.unpack_from('>HH', r, g), (2, 5))       # 300 shapes, two sub-groups
         self.assertEqual((r[g + 4], r[g + 5], r[g + 8], r[g + 9]), (0x80, 255, 0x80, 45))
         self.assertEqual(struct.unpack_from('>5H', r, g + 10), (5, cls, 2, 0, 0xffff))
+
+
+class TestMapTurns(unittest.TestCase):
+    def parcels(self, ring):
+        import rd_build
+        via = (-21.9, 64.1)
+        pc = rd_build.parcel_of(*via)
+        k0, k1, k2 = rd_build.quant(via, pc), (5, 5), (6, 6)
+        links = [(k0, k1, 1.0, 10), (k0, k2, 1.0, 20)]
+        return rd_build, pc, {pc: dict(index={k0: 0, k1: 1, k2: 2}, links=links, ring=ring)}, [dict(via=list(via), **{'from': 10, 'to': 20})]
+
+    def test_a_restriction_at_a_node_of_the_cell_is_mapped(self):
+        rd_build, pc, parcels, turns = self.parcels(False)
+        out, stats = rd_build.map_turns(parcels, turns)
+        self.assertEqual((out, dict(stats)), ({pc: [(0, 0, 1)]}, {'mapped': 1}))
+
+    def test_one_in_a_ring_parcel_is_another_cells(self):
+        rd_build, pc, parcels, turns = self.parcels(True)
+        out, stats = rd_build.map_turns(parcels, turns)
+        self.assertEqual((out, dict(stats)), ({}, {'via outside this cell': 1}))

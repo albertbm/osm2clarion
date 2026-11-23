@@ -484,7 +484,7 @@ def map_turns(parcels, turns, level=1):
         lon, lat = r['via']
         pc = parcel_of(lon, lat, level)
         P = parcels.get(pc)
-        if P is None: stats['via outside this cell'] += 1; continue
+        if P is None or P.get('ring'): stats['via outside this cell'] += 1; continue   # a ring parcel is another cell's to write
         nd = P['index'].get(quant((lon, lat), pc, level))
         if nd is None: stats['via is not a graph node'] += 1; continue
         cand = inc[pc].get(nd, [])
@@ -807,7 +807,7 @@ l1_next_node.by_heading = 0
 
 def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, oneway_regs=True, l2_geo=None,
                    l1_index=None, signs=None, l1_adj=None, l2_hw=None, upper=None, coarse=False, l2_keys=frozenset()):
-    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.no_twin = 0
+    out = {}; encode_parcels.regs_written = encode_parcels.regs_dropped = encode_parcels.regs_covered = encode_parcels.no_twin = 0
     encode_parcels.l1_missing = encode_parcels.l1_mismatch = encode_parcels.l1_near = encode_parcels.l1_next_missing = 0
     encode_parcels.unpaired = []
     encode_parcels.index = {}; encode_parcels.signposts = {}
@@ -894,6 +894,7 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
                                                l1_next=l1_next)
         encode_parcels.regs_written += rd_encode.build_record_edges.regs_written
         encode_parcels.regs_dropped += rd_encode.build_record_edges.regs_dropped
+        encode_parcels.regs_covered += rd_encode.build_record_edges.regs_covered
         groups = link_groups(P['links'], chain, up)
         chains = chains_of(P['links'], idx, chain, ids, groups)
         L = P['links']
@@ -1214,8 +1215,8 @@ def main():
                           f'mean {sum(pts)/len(pts):.2f} max {pts[-1]}, '
                           f'multi-link {100 * multi / len(shapes):.1f}%')
         if tstats is not None:
-            report.append('  turn restrictions: %d of %d written, %d dropped in the encoder; %s'
-                          % (encode_parcels.regs_written, len(turns), encode_parcels.regs_dropped,
+            report.append('  turn restrictions: %d of %d written, %d already barred by a one-way or a twin, %d dropped in the encoder; %s'
+                          % (encode_parcels.regs_written, len(turns), encode_parcels.regs_covered, encode_parcels.regs_dropped,
                              ', '.join('%s %d' % kv for kv in tstats.most_common()) or 'none mapped'))
     nw, _, _ = clarion_tile.table_words(sec2); sec2['count'] = -(-2 * nw // 256)
     hdr = bytearray(t['header'])

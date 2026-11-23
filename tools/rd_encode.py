@@ -239,6 +239,7 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
     extras = {}
     build_record_edges.regs_written = 0
     build_record_edges.regs_dropped = 0
+    build_record_edges.regs_covered = 0
     if oneway_regs and dirs:
         for (nd, k), words in oneway_regulations(adj, real).items():
             extras[(nd, k)] = words
@@ -247,10 +248,11 @@ def build_record_edges(level, y0, x0, row, col, nodes, links, edges, compress=Tr
         if fi is None or ti is None or fi > 14 or ti > 14:
             build_record_edges.regs_dropped += 1; continue
         if not FMT.oneway_end_words and (adj[nd][ti][5] == 0x8000 or fi == ti and adj[nd][fi][5] == 0x4000):
-            continue   # no traffic makes that turn: X08-02 writes no word for it
+            build_record_edges.regs_covered += 1; continue   # no traffic makes that turn: X08-02 writes no word for it
         w = regulation_word(fi)
         lst = extras.setdefault((nd, ti), [])
-        if w in lst or regulation_word(ALL_ENTRIES) in lst: continue   # already prohibited
+        if w in lst or regulation_word(ALL_ENTRIES) in lst:
+            build_record_edges.regs_covered += 1; continue   # already prohibited
         if len(lst) >= 14:          # w5 bits 6-11 hold the count; 14 is as far as this was tested
             build_record_edges.regs_dropped += 1; continue
         lst.append(w); build_record_edges.regs_written += 1
