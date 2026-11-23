@@ -645,6 +645,17 @@ def generate_steps(P, prof, base, out, work, areas, osm, local, args):
             ('consent', consent), ('check', check)], clear_stale
 
 
+def build_mode(P):
+    """The profile's build mode, refused where the chain cannot write the profile's format."""
+    mode = P.build.get('mode')
+    if mode not in ('generate', 'area'):
+        raise SystemExit('profile %s sets no [build] mode (generate or area)' % P.name)
+    # the background, coarse, camera, badge and POI steps of generate mode write QY8 records only
+    if mode == 'generate' and P.fmt.name != 'x08-03':
+        raise SystemExit('profile %s: generate mode writes x08-03 (QY8) cards only, not %s' % (P.name, P.fmt.name))
+    return mode
+
+
 def main():
     argv = sys.argv[1:]
     P = clarion_profile.take_arg(argv)
@@ -656,9 +667,7 @@ def main():
             i = argv.index(flag)
             args[flag[2:]] = argv[i + 1]
             del argv[i:i + 2]
-    mode = P.build.get('mode')
-    if mode not in ('generate', 'area'):
-        raise SystemExit('profile %s sets no [build] mode (generate or area)' % P.name)
+    mode = build_mode(P)
     names = GENERATE_STEPS if mode == 'generate' else AREA_STEPS
     if '--list' in argv:
         short = [k for k in ('map-from', 'restamp-from') if k in args]

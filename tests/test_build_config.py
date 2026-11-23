@@ -27,6 +27,25 @@ def config(local=None):
     return build.make_config(P, build.merge(LOCAL, local or {}), P.cells, '/cards/bases/base.img', None, '/work')
 
 
+class TestBuildMode(unittest.TestCase):
+    @staticmethod
+    def profile(fmt, mode):
+        return clarion_profile.Profile(dict(name='x', format=fmt, build=dict(mode=mode)))
+
+    def test_each_format_has_its_mode(self):
+        self.assertEqual(build.build_mode(self.profile('x08-03', 'generate')), 'generate')
+        self.assertEqual(build.build_mode(self.profile('x08-02', 'area')), 'area')
+        self.assertEqual(build.build_mode(self.profile('x08-03', 'area')), 'area')
+
+    def test_generate_mode_refuses_a_qy7_profile(self):
+        with self.assertRaises(SystemExit):
+            build.build_mode(self.profile('x08-02', 'generate'))
+
+    def test_no_mode_is_refused(self):
+        with self.assertRaises(SystemExit):
+            build.build_mode(self.profile('x08-03', None))
+
+
 class TestInterpreters(unittest.TestCase):
     def test_plain_steps_use_this_interpreter(self):
         text = (ROOT / 'tools' / 'build_gen_lev.py').read_text(encoding='utf-8')
