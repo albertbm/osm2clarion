@@ -4,9 +4,9 @@ Builds map cards for Clarion QY7 and QY8 navigation units from OpenStreetMap, fr
 down to building scale (25 m). Nissan no longer ships map updates for these units.
 
 Tested on QY8 units in the Nissan Leaf 2016-2019 (QY8202NA, QY8602NB, QY8600NE) and the
-Nissan e-NV200 (QY8202PB), European and US market. QY7 cards (QY7221NL) have only run in an
-emulator so far. The format is undocumented; [docs/](docs/) was measured off 2014 and 2017
-European cards. No card data ships here.
+Nissan e-NV200 (QY8202PB), European and US market. QY7 cards (QY7221NL) have run in an
+emulator and on one unit. The format is undocumented; [docs/](docs/) was measured off 2014
+and 2017 European cards. No card data ships here.
 
 Japanese units are not supported, QY7 or QY8. Their cards hold the map as one large file
 instead of tiles.
@@ -41,12 +41,13 @@ Checking tools: `tools/card_check.py` holds its limits to what the factory cards
 lists a card's junctions by arm type, and `tools/diag/crossing_type.py` is a hand port of the
 unit's crossing classifier.
 
-Addresses come from a CSV import. The only reader today is for Iceland's address register;
-another country needs its columns mapped in `tools/addr/addr_csv.py`. See
+Addresses come from a national register's CSV or from the OSM extract's `addr:*` tags. There
+are readers for Iceland's register (Staðfangaskrá) and Finland's (Ryhti); another register
+needs its own reader in `tools/addr/addr_sources.py`. See
 [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md).
 
-Iceland is a country added to a card that lacked it. Finland replaces the roads of one town on
-a card that already has the country. Updating a whole country is untested.
+Iceland is a country added to a card that lacked it. Finland replaces the roads of one town,
+or of the whole country, on a card that already has it. Updating a whole country is untested.
 
 ## Install
 
@@ -107,17 +108,19 @@ uv run build.py --profile NAME --base BASE-CARD.img --out OUT.img [options]
 |---|---|
 | `--work DIR` | where generated files go (default `build/` and the name of `--out`); a rerun reuses the steps whose inputs did not change |
 | `--osm FILE` | the OSM extract, instead of the profile's `pbf` |
-| `--area A,B` | build only these `[areas.NAME]` tables |
-| `--local FILE` | the local file (see below) |
+| `--area A,B` | build only these `[areas.NAME]` tables; area mode takes exactly one |
+| `--local FILE` | Iceland: the local file (see below) |
 | `--list` | print the steps |
 | `--only STEP` | run one step |
 | `--from STEP` | run from one step to the end |
-| `--what TEXT` | the description for the card's row in the cards log |
-| `--prev IMG` | an earlier card the check step compares against |
+| `--what TEXT` | Iceland: the description for the card's row in the cards log |
+| `--prev IMG` | Iceland: an earlier card the check step compares against |
 | `--stage DIR` | Iceland: where the POI steps keep their in-between images (default `WORK/stage`) |
 | `--write GROUPS` | Iceland: what the cards step writes onto the card, overriding the profile's `[build] write` |
 | `--map-from CARD` | Iceland: copy the map of a finished card with the same DATA VERSION onto this unit's base |
 | `--restamp-from CARD` | Iceland: the same for a card with another DATA VERSION; every stamp is rewritten |
+| `--addr-area NAME` | Finland: write street search for this smaller area only, inside the roads of `--area` |
+| `--addresses CSV` | Finland: the register CSV, instead of the profile's `[data] addresses` |
 
 Each step prints the command it runs, so a step can be repeated by hand. The card is written
 as `OUT.img.partial` and renamed to `OUT.img` only after the check step passes. A failed card
@@ -125,7 +128,8 @@ stays at `.partial`.
 
 Paths and values that belong to one machine go in a local file, merged over the profile table
 by table. The profile's `[build] local` names it (`local/NAME.toml`, ignored by git), and
-`--local FILE` overrides that. Relative data paths are read from the repository root.
+`--local FILE` overrides that. Relative data paths are read from the repository root. Only
+generate mode reads it; area mode reads the profile alone.
 
 ### Iceland (QY8, generate mode)
 
@@ -168,8 +172,10 @@ The unit must also accept a car position west of 20 W first; see the shipment bo
 
 The base card keeps its own map. The roads are stripped from every tile, and the roads of one
 town, or of all Finland, are rebuilt from OSM. For a stock European Clarion QY7221NL card
-(2014 database) and Geofabrik's `finland-latest.osm.pbf`. `profiles/finland.toml` has two
-areas: `jyvaskyla` (one town) and `finland` (the whole country).
+(2014 database), Geofabrik's `finland-latest.osm.pbf` and a Ryhti address CSV at
+`build/ryhti-finland.csv`, made with `tools/addr/pull_ryhti.py` (see
+[ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md)). `profiles/finland.toml` has two areas:
+`jyvaskyla` (one town) and `finland` (the whole country).
 
 ```
 uv run build.py --profile finland --base STOCK-CARD.img \
@@ -177,7 +183,7 @@ uv run build.py --profile finland --base STOCK-CARD.img \
 ```
 
 `--area NAME` is required because the profile lists two. A further area is one more
-`[areas.NAME]` table: an OSM relation, the one tile cell it sits in, and a bbox. The `[grid]`
+`[areas.NAME]` table: its OSM relations, the tile cells it sits in, and a bbox. The `[grid]`
 cells are left out of the profile: build.py takes every tile on the base card that the
 `[grid]` boxes touch.
 
@@ -186,10 +192,13 @@ Limits of the Finland card:
 - Roads exist only inside the built area: one town, or Finland. Elsewhere in Europe the card
   draws the map but no roads, and cannot route.
 - Street search works for the built area only: Finland's street file is rewritten from the
-  OSM addresses inside it, under the municipality `[addr] municipality` names. Not yet
-  confirmed on a unit.
-- Postcode, intersection and POI search, and every other country's address search, still
-  read the factory data, which points at roads that are now gone. They are likely to crash.
+  Ryhti addresses inside it. Each address goes under the kunta and settlement where the
+  card's factory street file has that street (`tools/addr/settle.py`); an area that sets
+  `[areas.NAME] municipality` puts every address under that row instead. Not yet confirmed
+  on a unit.
+- Finland's intersection and POI search are rewritten from the rebuilt roads.
+- Postcode search, and every other country's address search, still read the factory data,
+  which points at roads that are now gone. They are likely to crash.
 - Routes and guidance have been tried on a QY7 unit.
 - Setting a destination near Oulu crashes the unit. Not fixed.
 

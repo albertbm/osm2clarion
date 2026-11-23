@@ -139,7 +139,7 @@ cells = ["B58R080R", "B60R080R"]
 bbox = [-21.913085, 63.8197256, -20.9192135, 64.1450656]   # lon_min, lat_min, lon_max, lat_max
 
 [areas.sudurland]
-# Floahreppur, Asahreppur, Rangarthing ytra (Hella), Rangarthing eystra (Hvolsvollur, Skogar, Landeyjahofn), Myrdalshreppur (Vik), Vestmannaeyjabaer (Heimaey, reached by the Herjolfur car ferry from Landeyjahofn/Thorlakshofn, card 083 on); first area east of lon -20, needs the R078 column cell alongside R080
+# Floahreppur, Asahreppur, Rangarthing ytra (Hella), Rangarthing eystra (Hvolsvollur, Skogar, Landeyjahofn), Myrdalshreppur (Vik), Vestmannaeyjabaer (Heimaey, reached by the Herjolfur car ferry from Landeyjahofn/Thorlakshofn, which the build keeps as a road); first area east of lon -20, needs the R078 column cell alongside R080
 relations = [8810681, 8809518, 8808785, 8803280, 56206, 14433161]
 cells = ["B58R078R", "B58R080R"]
 bbox = [-20.9854781, 63.2960926, -18.654022, 64.0]   # lon_min, lat_min, lon_max, lat_max
