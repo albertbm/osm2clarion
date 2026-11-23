@@ -328,6 +328,53 @@ for no name; word 3 is 0x0004 or 0x0144. The second sub-table (pair 2 of the nam
 `0008 count ffff 0000 x3`) has one item per shape in shape order, `8000 0009 80xx 0006 0bc0
 017c 000e 0008 000d` with `80xx = 0x8000 | 2*(points - 2)`.
 
+#### Graph rules measured in November 2026
+
+Counted on the stock 2014 QY7 card (tiles B60R050R, B50R068R, B58R050R and its LEV3456R.DAT)
+and a stock 2017 QY8 card (B50R068R, B58R060R, B68R050R and its LEV3456R.DAT). `card_check.py`
+holds a rule for each unless noted.
+
+- Link code. The top nibble of shape word 3 and of graph w4 is one code per link: 0 plain,
+  1 carriageway, 3 slip road, 7 roundabout ring, with 2, 5, 6, 8 and 9 seen and not named. At
+  levels 1 and 2 every link of a shape carries the shape's code in the graph (3,812,205 of
+  3,812,205 level-1 links, 187,373 of 187,373 at level 2) and no shape has links of two
+  codes. At levels 4 and 5 the same holds (699,090 of 699,120 on QY8, 499,073 of 499,085 on
+  QY7), and a level-4 link has the code of its level-2 links (24,373 of 24,373). The writer
+  sets 7 from `junction=roundabout|circular`, and 3 on QY8 for a `motorway_link` or a one-way
+  `*_link` on a connector of 120 m or more. That last rule matches the factory on 87.1% of a
+  UK sample and 88.2% of a Finnish QY7 one; code 1 follows no rule found yet.
+- Level-2 part B, link triples. The third word names the level-1 node next along the
+  link from the node's level-1 twin: the far end of the twin's level-1 link under that
+  level-2 link (344,147 of 344,147 link ends with such a link). No level-2 link walks down
+  into a dead end (0 of 372,268). On QY7, where the twin is a level-1 edge node and the link
+  runs on across the line, the triple names the node at the same point in the next parcel,
+  with that parcel's cell word: 2,348 of 34,976 triples on B60R050R and 2,191 of 182,194 on
+  B50R068R, every triple whose cell word is not the node's own. QY8 has none (0 of 54,440 on
+  B58R060R). The writer puts no level-2 node on a level-1 line and writes the node's own
+  cell on both. No card rule for the QY7 form.
+- Level-2 part B, edge triples. An edge triple carries the far node's own block: its
+  cell word and level-1 child (31,826 of 31,826 on four QY7 tiles, 5,324 of 5,324 on four
+  QY8 tiles).
+- Level-2 part B, block order. By cell, then child node, in both formats (QY7 2,948 of
+  2,948 records, QY8 2,005 of 2,005). Coarse part B goes by upper node on QY8 (556 of 556)
+  and by child node on QY7 (419 of 419).
+- Node order. Every record lists its nodes by class (level 1 and 2: all of 105,488
+  records; level 4: 509 of 513 and 380 of 385). QY8 orders a class by x (level 1: 47,192 of
+  47,192 with y after it; level 2: 1,689 of 1,689; level 4: 509 of 513), and from level 2 up
+  y is not ordered. QY7 does not order a class by x (2,996 of 38,987 level-1 records). The
+  writer orders by class, x, y on both.
+- QY7 graph words. A link class word has bit 7 clear, a ferry keeps 0x10 (10,920 of
+  10,930). A prohibition word is 0x3ff under the entry nibble where QY8 has 0x0ff. The
+  arriving end of a one-way link has no word (402,607 of 402,608) and a leaving end none
+  from itself.
+- Coarse direction. A level-4 link and its end level-2 links are all one-way or all
+  two-way (24,373 of 24,373). A level-3 shape is drawn one-way where the level-4 link at the
+  same place is (QY8 30,685 of 31,114, QY7 27,538 of 27,583), with 0x4000 for traffic along
+  the drawn points.
+- Names items. On QY8 the last three words of a level-1 item vary by area, as on QY7:
+  B58R060R has 514,772 items and no value on more than 0.7% of them. The writer's fixed
+  `000e 0008 000d` is one such value, not a constant of the format. No card rule.
+
 ### LEV3456R.DAT
 
 Same container. Section 1 holds levels 6, 5 and 4 as one directory each covering the whole
