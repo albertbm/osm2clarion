@@ -206,8 +206,8 @@ cluster. A refresh that adds one more way there now fails instead of misplacing 
 `rd_build.py --no-l2-graph` is what the builds measured here used. Level-2 shapes draw without
 the section-2 level-2 directories, the graph is routing data, no router runs at level 2, and
 adding four directories would change the section-2 layout. Shapes first, graph later. The graph
-has since gone in: `build_gen_lev.py` runs `rd_build.py --l2-graph` on every generated tile, and
-the Finland profile sets `[roads] l2_graph = true`.
+has since gone in: `[roads] l2_graph` in the profile turns it on, both profiles set it, and it
+is on when a profile leaves the key out. `rd_build.py --l2-graph` and `--no-l2-graph` override it.
 
 `trunk` is level-1 class 4 and level-2 class 3, the heaviest numbered style. That suits a dual
 carriageway; on a single-carriageway national route it can look overdone. The change is one

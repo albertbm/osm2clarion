@@ -66,6 +66,22 @@ class TestInterpreters(unittest.TestCase):
         build.need_deps()
 
 
+class TestLevel2Graph(unittest.TestCase):
+    def test_the_profile_decides(self):
+        """The road step passes no --l2-graph, so [roads] l2_graph is what rd_build goes by."""
+        for name in ('iceland', 'finland'):
+            self.assertTrue(clarion_profile.load(str(ROOT / 'profiles' / (name + '.toml'))).l2_graph, name)
+        self.assertNotIn("'--l2-graph'", (ROOT / 'tools' / 'build_gen_lev.py').read_text())
+
+    def test_off_when_the_profile_says_so(self):
+        raw = (ROOT / 'profiles' / 'iceland.toml').read_text()
+        with tempfile.TemporaryDirectory() as d:
+            for text, want in ((raw.replace('l2_graph = true', 'l2_graph = false'), False),
+                               ('\n'.join(l for l in raw.splitlines() if not l.startswith('l2_graph')), True)):
+                Path(d, 'p.toml').write_text(text)
+                self.assertIs(clarion_profile.load(str(Path(d, 'p.toml'))).l2_graph, want)
+
+
 class TestConfig(unittest.TestCase):
     def test_profile_has_no_machine_paths(self):
         for name in ('iceland', 'finland'):

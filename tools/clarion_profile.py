@@ -77,7 +77,7 @@ class Profile:
         l2s = rd.get('l2_simplify_metres')        # level-2 drawn shapes; level 1's when unset
         self.l2_simplify_metres = float(l2s) if l2s is not None else None
         self.skip = set(rd.get('skip', []))
-        self.l2_graph = bool(rd.get('l2_graph', False))
+        self.l2_graph = bool(rd.get('l2_graph', True))
         self.l2_classes = l2_classes(rd.get('l2_classes', 'wide'))
         self.coarse_classes = set(rd.get('coarse_classes', COARSE_CLASSES))
         self.coarse_simplify_metres = float(rd.get('coarse_simplify_metres', 20))

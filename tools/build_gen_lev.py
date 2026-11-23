@@ -138,7 +138,7 @@ def road_steps(B, also, to=None, by=None, area=None, coarse_graph=False):
     for c in CELLS:
         dest = R + '/%s.DAT' % c if c not in sec4 else R + '/%s.nosec4.DAT' % c
         cmds.append([sys.executable, t + '/rd_build.py', '--profile', PROFILE, '--simplify', '2',
-                     '--l2-graph', '--upper-names'] + (['--coarse-words'] if area and coarse_graph else [])   # lev fills them
+                     '--upper-names'] + (['--coarse-words'] if area and coarse_graph else [])   # lev fills them
                     + ['--turn-restrictions', turns, B + '/tiles/%s.DAT' % c, dest, c, roads,
                        '--shape-index', R + '/%s.shapes.json' % c])
         if c in sec4:
