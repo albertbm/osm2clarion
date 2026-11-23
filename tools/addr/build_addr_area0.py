@@ -51,7 +51,7 @@ import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parent.parent)) + '/tools')
+sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parents[2])) + '/tools')
 import addr_links  # noqa: E402
 import addre_io  # noqa: E402
 import frames  # noqa: E402

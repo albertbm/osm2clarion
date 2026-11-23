@@ -82,6 +82,17 @@ class TestLevel2Graph(unittest.TestCase):
                 self.assertIs(clarion_profile.load(str(Path(d, 'p.toml'))).l2_graph, want)
 
 
+class TestAddrScriptPaths(unittest.TestCase):
+    def test_tools_are_found_without_the_variable(self):
+        """With OSM2CLARION unset the two scripts fall back to this checkout's tools/."""
+        env = {k: v for k, v in os.environ.items() if k not in ('OSM2CLARION', 'O2C_CONFIG')}
+        for name in ('build_icode_clean', 'build_addr_area0'):
+            code = "import sys; sys.path.insert(0, %r); sys.argv = ['x']; import %s" % (str(ROOT / 'tools' / 'addr'), name)
+            with tempfile.TemporaryDirectory() as d:
+                r = subprocess.run([sys.executable, '-c', code], cwd=d, env=env, capture_output=True, text=True)
+            self.assertNotRegex(r.stderr, r"No module named '(icode_io|addre_io|frames|point_io|refer_header|addr_csv)'", name)
+
+
 class TestConfig(unittest.TestCase):
     def test_profile_has_no_machine_paths(self):
         for name in ('iceland', 'finland'):

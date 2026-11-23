@@ -28,7 +28,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parent.parent)) + '/tools')
+sys.path.insert(0, os.environ.get('OSM2CLARION', str(Path(__file__).resolve().parents[2])) + '/tools')
 import icode_io  # noqa: E402
 import addr_csv  # noqa: E402
 import iceland_card  # noqa: E402
