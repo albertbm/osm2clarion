@@ -941,6 +941,15 @@ def encode_parcels(parcels, level=1, no_names=False, chain=True, regs=None, onew
         out[pc] = out[pc] + fa + (None if no_names else section,)
     return out
 
+def pairing_fault():
+    """Why the level-2 records cannot ship, or None: nodes with no level-1 node at their
+    place, paired with the nearest one at any distance. The descent follows what they name."""
+    n = encode_parcels.l1_missing + encode_parcels.l1_mismatch
+    if not n: return None
+    first = '; '.join(f'{pc} key {key} at {g[1]:.6f},{g[0]:.6f}' for pc, key, side, g in encode_parcels.unpaired[:3])
+    return (f'level 2: {n} nodes have no level-1 node at their place ({encode_parcels.l1_missing} with none near, '
+            f'{encode_parcels.l1_mismatch} with theirs outside the parcel){": " + first if first else ""}')
+
 def shape_index_record(level, pc, ix, groups, ids, links, label_of, no_names):
     """One record of the shape index (shape_index.py): where each chain's points landed."""
     lon0, lat0, w, h = parcel_geo(level, *pc)
@@ -1150,6 +1159,7 @@ def main():
                               l1_index=(l1_index if level == 2 else None), signs=signs,
                               l1_adj=(l1_adj if level == 2 else None), l2_hw=(set(l2) if level == 1 else None),
                               upper=upper, coarse=coarse, l2_keys=(l2_keys if level == 1 else frozenset()))
+        if level == 2 and not no_l2_graph and pairing_fault(): raise SystemExit(pairing_fault())
         if level == 1:
             index = [encode_parcels.index[pc] for pc in sorted(encode_parcels.index)]
             signposts = [dict(y=pc[0], x=pc[1], row=pc[2], col=pc[3], subs=subs)

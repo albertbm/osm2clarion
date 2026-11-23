@@ -38,5 +38,27 @@ class L1Next(unittest.TestCase):
         self.assertIsNone(rd_build.l1_next_node((0, 9), PC, self.adj, self.frm, self.to, (7, 5)))
 
 
+class PairingFault(unittest.TestCase):
+    def tearDown(self):
+        rd_build.encode_parcels.l1_missing = rd_build.encode_parcels.l1_mismatch = 0
+        rd_build.encode_parcels.unpaired = []
+
+    def test_every_node_paired_is_no_fault(self):
+        rd_build.encode_parcels.l1_missing = rd_build.encode_parcels.l1_mismatch = 0
+        rd_build.encode_parcels.unpaired = []
+        self.assertIsNone(rd_build.pairing_fault())
+
+    def test_a_node_with_no_level_1_node_near_stops_the_build(self):
+        rd_build.encode_parcels.l1_missing, rd_build.encode_parcels.l1_mismatch = 1, 0
+        rd_build.encode_parcels.unpaired = [(PC, (5, 5), None, (25.0, 65.0))]
+        self.assertIn('1 nodes have no level-1 node at their place', rd_build.pairing_fault())
+        self.assertIn('65.000000,25.000000', rd_build.pairing_fault())
+
+    def test_one_whose_twin_is_outside_the_parcel_does_too(self):
+        rd_build.encode_parcels.l1_missing, rd_build.encode_parcels.l1_mismatch = 0, 2
+        rd_build.encode_parcels.unpaired = []
+        self.assertIn('2 with theirs outside the parcel', rd_build.pairing_fault())
+
+
 if __name__ == '__main__':
     unittest.main()
