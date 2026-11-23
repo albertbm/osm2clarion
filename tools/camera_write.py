@@ -34,7 +34,7 @@ CAMERA = 0x0050
 def find_parcel(t, lon, lat, level):
     """Directory, row, col and local x,y of the parcel at a level that covers a point -
     checks every directory at the level rather than assuming the mesh bucket (a level-2
-    directory's mesh x can land a couple of units off, measured build 019)."""
+    directory's mesh x can land a couple of units off, measured on an Iceland build)."""
     for sec in t['sections']:
         if sec['id'] != 1:
             continue

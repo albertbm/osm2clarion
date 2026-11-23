@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Build the capital-area POI card: the base map untouched, plus every real OSM POI in
-the selected area (icon + POINT search facility), plus the x-first settlement fix
+the selected area (icon + POINT search facility), plus the x-first settlement fix.
 No whole-country towns here - that tooling is untouched.
 
 --house-ranges mode swaps in per-link house-number ranges instead (--all-streets for
@@ -52,7 +52,7 @@ def restore_slots(out, old):
     sub-category 279, nearby 15, ADM 280/287). Put each live pointer back shifted by
     however far assemble() moved the base structure - the name/tel frames compress to a
     different size whenever their content changes, so the boundary before the extra
-    frames is not fixed even when nothing reorders them. Card 036 shipped with all five
+    frames is not fixed even when nothing reorders them. An earlier card shipped with all five
     pointers at the default because this used to copy the old table unshifted."""
     old_extra_off = point_io.Point(old).extra_off
     delta = len(out) - old_extra_off
@@ -83,7 +83,7 @@ def _in_bounds(off, size, plain_len, extra_off, what):
 
 def check_poi_slots(plain):
     """Fail loudly if any POI search slot is empty or points at something unparseable,
-    rather than ship a card where every POI keyboard greys out silently (card 036's bug):
+    rather than ship a card where every POI keyboard greys out silently (an earlier card's bug):
     walk slot 15's nearby table and decode slots 278/279 through point_io.category_table,
     rather than just checking the pointers are non-default."""
     p = point_io.Point(plain)
@@ -328,7 +328,7 @@ def add_icons(tile_plains, pois_json, allow_placeholder_refs=False):
 
 
 def build_house_ranges(workdir, args):
-    """Card 037/038: the base card untouched except ADDRE001, rebuilt with per-link
+    """House-range card: the base card untouched except ADDRE001, rebuilt with per-link
     house-number ranges. Everything else stays whatever the base card already carries."""
     run = lambda *a: subprocess.run(a, check=True)
     cardcopy.clone(BASE_IMG, OUT_IMG)
@@ -482,7 +482,7 @@ def parser():
     p.add_argument('--area', default='capital', metavar='NAME[,NAME...]',
                    help='named municipality areas to include (default: capital)')
     p.add_argument('--house-ranges', metavar='STREET[,STREET...]',
-                   help='build card 037 instead: swap in an ADDRE with per-link house number '
+                   help='make a house-range card: swap in an ADDRE with per-link house number '
                         'ranges for these streets (upper case), or ALL, everything else untouched')
     p.add_argument('--no-ranges-town', default='', metavar='TOWN[,TOWN...]',
                    help='--house-ranges ALL: these towns keep the generic street row')

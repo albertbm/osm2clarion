@@ -1,6 +1,16 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py. --public keeps drivable public roads, named service roads included, nothing closed to cars or tagged as an area. A route=ferry way open to cars (motor_vehicle=yes or motorcar=yes) is kept too, as the synthetic highway class 'ferry'. --relations/--box clip ways to a region, adding a point at each crossing so two ways sharing a point still share it after clipping. --ramp-names names unnamed *_link ways after the road they lead to."""
+"""Highway ways of an OSM extract as JSON for rd_build.py, lev_roads.py and lev_build.py.
+
+    osm_roads.py PBF OUT.json [--public] [--relations ID,ID | --box lon0,lat0,lon1,lat1]
+                 [--buffer METRES] [--turns TURNS_ALL.json TURNS_OUT.json] [--ramp-names]
+
+--public keeps drivable public roads, named service roads included, nothing closed to cars or
+tagged as an area. A route=ferry way open to cars (motor_vehicle=yes or motorcar=yes) is kept
+too, as the synthetic highway class 'ferry'. --relations/--box clip ways to a region, grown by
+--buffer, adding a point at each crossing so two ways sharing a point still share it after
+clipping. --turns keeps the restrictions of osm_turns.py's output whose ways both survive.
+--ramp-names names unnamed *_link ways after the road they lead to."""
 import collections, json, math, sys
 
 KEEP = {'motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'unclassified', 'residential',

@@ -27,7 +27,8 @@ Each row points at a link of the street's own drawn shape in the rebuilt tile, t
 shape index rd_build.py --shape-index wrote. A street with no road of its name in the tile
 is left out and listed in addr_skipped.json; one whose road carries its name in the other
 language goes to addr_other_language.json.
-The country's other address files (ZCODE, INTER, POINT) are not written and stay the card's.
+No other address file is written here: ZCODE stays the card's, and build_inter.py and
+build_point.py write INTER and POINT.
 
     build_addr_country.py OUTDIR --profile NAME --area AREA --card CARD.img --shapes TILE.shapes.json
                           --pbf FILE [--addresses FILE.csv]

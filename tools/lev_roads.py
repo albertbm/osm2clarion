@@ -11,6 +11,7 @@ data that nothing on this card reads at those levels.
     ./lev_roads.py --profile iceland IN.DAT OUT.DAT [roads.json]
     --classes motorway,trunk,primary   overrides the profile's coarse set
     --simplify METRES                  level-4 tolerance; level 3 uses a quarter of it
+    --west-meshes N                    overrides the profile's
 
 That in-place pass edits an existing coarse file, appending what it rewrites. The
 clean-room coarse file is written whole by lev_build.py, which calls build() below for

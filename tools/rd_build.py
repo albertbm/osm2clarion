@@ -110,7 +110,7 @@ def off_parcel_lines(ways):
     into the parcel east or north of it. A factory parcel-edge node has exactly one real link (113,466 of
     113,466 L1 and 69,498 of 69,498 L2 nodes on B30R070R/B48R060R): a junction never sits on a line.
     Left there, the hierarchy pass takes the edge entry's twin index for a node of the own record
-    (card 065/066, PC 0x364d44)."""
+    (seen on two test cards, PC 0x364d44)."""
     shared = collections.Counter(tuple(p) for w in ways for p in w['nodes'])
     def off(v, per):
         # within half a unit of a line at this level's scale (32 x 48 parcels per degree at level 1,

@@ -14,6 +14,7 @@ are written at the end of the file; the section table entry (box, address) is up
     --shift            keep the column count: drop as many columns on the east as are
                        added on the west. The unit assumes 44 level-4 and 11 level-5
                        columns and never reads the count, so a widened one is refused.
+    --no-shift         add no columns, whatever the profile says
     --bounds latmax,latmin,lonmin,lonmax
     --labels TYPE:FLAGS:lon,lat:TEXT[:ID];...   text labels for the rebuilt parcels (level 5 only)
 """

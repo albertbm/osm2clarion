@@ -3,8 +3,8 @@
 """HOUSE001 building files: the level-0 map the unit draws at building scale, one file per
 level-2 parcel (7.5' x 5'), named B<mesh y><row><1024-mesh x><col>, section 5 level 0.
 
---jobs N spreads the polygon unions and the files over N forked processes (default 6). The
-files come out the same for any N.
+--jobs N spreads the polygon unions and the files over N forked processes (default 6, or the
+CPU count if lower). The files come out the same for any N.
 """
 import os, struct, sys, zlib
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

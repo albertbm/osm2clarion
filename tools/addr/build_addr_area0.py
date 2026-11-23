@@ -22,6 +22,8 @@ build_icode_clean.py puts the town. Display names keep their accents; search key
 folded to ASCII, Þ to TH and Ð to D.
 
     python3 tools/addr/build_addr_area0.py <out dir> --shapes TILE.shapes.json [...] [--area NAME[,NAME...]]
+        [--only STREET,...] [--house-ranges STREET,...|ALL [--no-ranges-town TOWN,...]]
+        [--addresses CSV] [--postcodes CSV]
 
 --area writes the named areas instead: for example, capital includes every Staðfangaskrá address of Reykjavík
 (SVFNR 0000), Kópavogur (1000), Seltjarnarnes (1100), Garðabær (1300), Hafnarfjörður (1400)

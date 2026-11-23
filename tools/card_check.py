@@ -3,8 +3,10 @@
 """Check a built card's road graph and coarse routing file against every format rule
 measured off factory tiles, and diff a card against the previous one field by field.
 
-    card_check.py --card A.img [--cells C,C...] [--roads roads.json] [--prev B.img] [--factory TILE ...] [--json]
-    card_check.py --tiles TILE ... [--lev LEV3456R.DAT] [--roads roads.json] [--factory TILE ...] [--json]
+    card_check.py --card A.img [--cells C,C...] [--roads roads.json] [--prev B.img]
+                  [--factory TILE ... [--factory-lev LEV3456R.DAT]] [--json]
+    card_check.py --tiles TILE ... [--lev LEV3456R.DAT] [--roads roads.json]
+                  [--factory TILE ... [--factory-lev LEV3456R.DAT]] [--json]
 
 With --card, MAPAL001/*.DAT and LEV3456R.DAT are read straight off the FAT image (no
 mount, no full-image load). With --tiles, the files are given directly - useful for a
@@ -566,7 +568,7 @@ def L2nodes(L2):
 def check_no_junction_on_parcel_line(L1, L2):
     """No junction (a node with more than one real link) sits on a parcel boundary - it
     would need an edge entry there and the factory never gives a border node more than
-    one real link (the generic form of the card-068 'junctions quantized onto
+    one real link (the generic form of an earlier card's 'junctions quantized onto
     a parcel line' bug, without Iceland-specific coordinates)."""
     st = collections.Counter()
     bad = []

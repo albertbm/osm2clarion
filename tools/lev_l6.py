@@ -13,6 +13,7 @@ file with its directory header, slot and section-table box updated.
     --shift            move the box west instead of widening it: shapes are shifted and
                        clipped on the east. Widening the box with the record left at 904
                        blanks level 6 from 640 km to 10 km.
+    --no-shift         neither move nor widen the box, whatever the profile says
     --points TYPE:lon,lat;...   label points (layer 25) after the move, e.g. country codes
     --labels TYPE:FLAGS:lon,lat:TEXT[:ID];...   text labels (names section)
 """

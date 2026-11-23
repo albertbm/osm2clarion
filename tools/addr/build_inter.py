@@ -11,7 +11,7 @@ The card keeps its ICODE area tree. A street's ladder at a junction is the ladde
 nearest record of the same name in the card's own INTER file within NEAR_KM, else the
 ladder of the nearest record of any name: the tree has no geometry of its own.
 
-    build_inter.py OUTDIR --profile NAME --card CARD.img --tiles TILE.DAT ...
+    build_inter.py OUTDIR --profile NAME --card CARD.img --tiles TILE.DAT ... [--roads roads.json]
 
 Writes INTER<ordinal + 1>.DAT, as a .cmp/.ind pair when the card stores it packed, and
 card.json naming what goes on the card.

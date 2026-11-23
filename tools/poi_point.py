@@ -21,7 +21,7 @@ to the POINT settlement row of the same name (ladder_leaf). Without --municipali
 old nearest-settlement ladder stands instead, for callers with no OSM extract on hand - it
 picks the wrong town 39% of the time on the factory data and is kept
 only for that case. --settlements-yfirst reads the existing settlement positions swapped,
-for a POINT file whose settlements were written y first (card 030 and earlier). The position words are
+for a POINT file whose settlements were written y first (by older builds). The position words are
 its own level-1 parcel (x first, our own convention).
 
 Refs are the start/end nodes of the street link nearest the facility in its own parcel's
@@ -280,7 +280,7 @@ def merge(d, pois, fold=None, adm_lang=20, ref_base=0x8000, lang=point_io.LANG_L
     has no road record, the old placeholder ref is kept and this raises unless
     --allow-placeholder-refs lets it through. settlements_yfirst reads the existing
     settlement records' position words swapped for the area ladder, for a POINT file
-    written y first (card 030 and 032/033's bug: the ladder picked
+    written y first (a bug of older builds: the ladder picked
     MOSFELLSBÆR for a hospital at (64.1410, -21.7590), 0.0444 against REYKJAVÍK's 0.0452, because the
     settlements decoded mirrored).
 

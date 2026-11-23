@@ -593,10 +593,10 @@ class TestFactoryNearestLink(unittest.TestCase):
 
 class TestLadderConvention(unittest.TestCase):
     """merge()'s ladder() reads x before y; --settlements-yfirst undoes a POINT file whose
-    settlements were written the other way (card 030)."""
+    settlements were written the other way (older builds)."""
 
     FOLD = {'Þ': 'TH', 'þ': 'th', 'Ð': 'D', 'ð': 'd'}
-    # the 8 capital-area towns, positions read off card 030's own POINT001 the way
+    # the 8 capital-area towns, positions read off an older card's own POINT001
     # as they were written (swapped); real municipality centroids, not
     # geographic centres, which is why GRINDAVÍK round-trips through here too
     TOWNS = [
@@ -612,7 +612,7 @@ class TestLadderConvention(unittest.TestCase):
 
     def base_file_yfirst(self):
         """A POINT file with the capital's settlements written with position words swapped,
-        as the address build wrote them up to card 030."""
+        as older address builds wrote them."""
         kw, cr = 2, 14
         names, hits = [], {}
         for i, (name, lv, (lat, lon)) in enumerate(self.TOWNS):

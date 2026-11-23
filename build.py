@@ -4,7 +4,7 @@
 
     ./build.py --profile NAME --base CARD --out OUT.img [--work DIR] [--osm PBF] [--area NAME,...]
                [--addr-area NAME] [--addresses CSV] [--local FILE] [--what TEXT] [--prev IMG] [--stage DIR]
-               [--map-from CARD | --restamp-from CARD] [--only STEP | --from STEP] [--list]
+               [--write GROUPS] [--map-from CARD | --restamp-from CARD] [--only STEP | --from STEP] [--list]
 
 Everything specific to a region, a unit or a data source is in profiles/NAME.toml. [build] mode
 picks the chain:

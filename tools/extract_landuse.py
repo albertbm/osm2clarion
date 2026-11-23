@@ -5,6 +5,12 @@
 Tag rules follow Geofabrik's Shortbread schema (land and water_polygons layers), cut down to
 the kinds clarion_bg.AREA_CLASSES can draw. Holes are kept in the GeoJSON, though the
 encoder draws outer rings only. Needs osmium and shapely.
+
+    extract_landuse.py PBF OUT.geojson [--bbox lon0,lat0,lon1,lat1] [--kinds KIND,KIND]
+                       [--buildings] [--populated]
+
+--buildings adds building footprints; --populated adds residential, commercial, industrial
+and retail landuse and place nodes, for the populated-area test of the building-scale map.
 """
 import json
 import sys

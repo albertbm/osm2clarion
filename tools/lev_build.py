@@ -18,8 +18,9 @@ Parcels outside the profile's cells are left absent. The sea label goes on level
 
 --roads adds road shapes at levels 3, 4 and 5 (lev_roads.build): the road-shape record in the
 even pair of a level-3 or level-4 column, a road block inside a level-5 record, and route
-numbers in the background records' names sections. It also writes the level-4 and level-5
-section-2 graphs and their down-pointers (lev_graph.build). --graph-bbox keeps only the L2
+numbers in the background records' names sections. With --l2-tile it also writes the level-4
+and level-5 section-2 graphs and their down-pointers (lev_graph.build), and levels 4 and 5
+take their shapes from the graph's links instead. --graph-bbox keeps only the L2
 links fully inside that box, for a minimal test graph; it also skips patching the L2 tiles.
 """
 import os
@@ -160,7 +161,8 @@ def build(P, coast_path, data_version, ways=None, l2_tiles=None, graph_bbox=None
         only = (3,) if l2_tiles else (3, 4, 5)
         for level, (nrec, nsh, npt, nlab) in sorted(lev_roads.build(levels, ways, (dby0, dbx0), P.country, only=only).items()):
             print('level %d roads: %d records, %d shapes, %d points, %d route labels' % (level, nrec, nsh, npt, nlab))
-    # Off unless --l2-tile is given: the graph crashes the unit (cards 051-053) and rewrites the L2 tiles.
+    # Off unless --l2-tile is given: the graph crashed the unit on three test cards, and it
+    # rewrites the L2 tiles.
     if ways and l2_tiles:
         graph_dirs, graph_stats = lev_graph.build(ways, P, l2_tiles, bbox=graph_bbox)
         for level in (4, 5):

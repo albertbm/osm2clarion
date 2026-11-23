@@ -9,7 +9,7 @@ the card's manifest. build.py runs it; docs/BUILD-STEPS.md explains every option
                      [--roads [--also NAME,NAME] [--to NAME,NAME [--by time]] | --area NAME[,NAME...] [--coarse-graph]]
                      [--write lev|tiles,addr] [--addr-only NAME,NAME]
                      [--landuse lon0,lat0,lon1,lat1 [--landuse-kinds forest,water,...] [--buildings LAYER:CLASS]
-                      [--house]]
+                      [--house [--house-city-buffer M] [--house-landuse-buffer M]]]
 """
 import fnmatch
 import hashlib
@@ -66,7 +66,7 @@ SEC4_CELLS = CONFIG['sec4_cells']     # the tiles that carry roads get the build
 AREAS = {name: dict(relations=a['relations'], cells=a['cells'], bbox=tuple(a['bbox']))
           for name, a in CONFIG['areas'].items()}
 # A HOUSE001 parcel whose buildings pass this many vertices gets the coarser blocks; the
-# busiest Grafarholt parcel of build 010 has 1,790 vertices in all layers
+# busiest Grafarholt parcel of an early capital build has 1,790 vertices in all layers
 HOUSE_DENSE = 900
 ADDR_ONLY = None      # --addr-only: the streets ADDRE keeps (build_addr_area0.py --only)
 PBF = os.path.expanduser(CONFIG['data']['pbf'])

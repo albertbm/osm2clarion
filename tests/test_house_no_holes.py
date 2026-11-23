@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
 """house_encode.no_holes: a real hole gets cut out, a floating-point sliver hole does not
-send the recursion into the card 082 build's infinite loop (measured hole area 1e-29 deg^2
+send the recursion into the infinite loop one Iceland build hit (measured hole area 1e-29 deg^2
 on a 1e-08 deg^2 polygon)."""
 import sys
 import unittest
