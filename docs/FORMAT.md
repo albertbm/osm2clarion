@@ -116,15 +116,20 @@ Windows form with a `\SystemSD\` prefix to strip; a single entry means a directo
 ```
 0x00  uint32 LE   uncompressed size
 0x04  uint32 LE   compressed size
-0x08  uint8       block count
-0x09  7 bytes     metadata, unidentified
+0x08  uint32 LE   block count
+0x0c  uint32 LE   block size when decompressed, 0x10000 in every file
 0x10  uint32 LE[] one offset per zlib block, running to the end of the file
 ```
 
-Every offset points at the start of a zlib stream in the `.cmp`. A block ends where the next
-starts, the last at the end of the file; decompress each and concatenate. The byte at `0x08`
-matches the number of offsets on small files, but it cannot hold the roughly 4,600 blocks of a
-300 MB file, so take the block count from the length of the offset table. Checked on
+The fields at `0x08` and `0x0c` are two 32-bit values, not a byte and seven unknown bytes. The
+low byte of the count is the byte that matches the number of offsets on small files; a file
+of more than 255 blocks carries the rest in the next bytes, which is why an 8-bit reading
+fails on the roughly 4,600 blocks of a 300 MB file. Measured on all 194 `.ind` files of a 2011
+European QY7 card (`QSD-309-101`, image SHA-256 `105e2032…76307`): block size 0x10000 in 194
+of 194, the count equals `(len(ind) - 16) / 4` in 194 of 194, 36 files hold more than 255
+blocks, and every file decompresses to exactly the size in its first field. Not measured on a
+QY8 card. Every offset points at the start of a zlib stream in the `.cmp`. A block ends where
+the next starts, the last at the end of the file; decompress each and concatenate. Checked on
 `REFER001/ADDRE001.DAT`: 29 blocks, each 64 KiB uncompressed, rebuilding to 1,870,080 bytes,
 exactly the size in the header. Across all of `REFER001`, 3.37 GiB of `.cmp` becomes 8.85 GiB.
 
@@ -222,7 +227,6 @@ replaced.
 
 ## Not established
 
-- The 7 metadata bytes at `0x09` of each `.ind`.
-- `COORD`, `ZIPFR` and `FRWAY` are unexamined. `ZCODE` has no schema block in the tail window.
+- `COORD`, `ZIPFR`, `FRWAY` and `ZCODE` are described for the 2011 QY7 cards in [REFER-FILES.md](REFER-FILES.md); their layout on QY8 cards is not measured.
 - Whether the unit validates the database beyond `DB_INFO.TXT` line 2 and the DATA VERSION
   stamp of each map file. `LEV3456R.DAT` is covered in [LEVEL5.md](LEVEL5.md).
