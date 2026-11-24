@@ -247,6 +247,8 @@ tools will read. The keys are explained in comments in `profiles/iceland.toml` a
 | [ROAD-CLASSES.md](docs/ROAD-CLASSES.md) | road widths and the OSM mapping |
 | [LEVEL5.md](docs/LEVEL5.md) | the coarse levels |
 | [ADDRESS-IMPORT.md](docs/ADDRESS-IMPORT.md) | addresses: the register reader and the shape another source needs |
+| [REFER-FILES.md](docs/REFER-FILES.md) | `COORD001`, `ZIPFR001`, `FRWAY`, the second `ZCODE` layout and the `ICADM` tier table, measured on two 2011 QY7 cards |
+| [QY7-UNIT.md](docs/QY7-UNIT.md) | what a 2011 QY7 unit checks at start, and how a card from another market is made to run on it |
 
 ## Licence
 
